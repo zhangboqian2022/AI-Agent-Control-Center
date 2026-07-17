@@ -39,6 +39,9 @@ class StateStore:
                     (task.id, initial.model_dump_json()),
                 )
 
+    def register(self, task: TaskConfig) -> None:
+        self.initialize([task])
+
     def get(self, task_id: str) -> TaskState:
         with self._lock:
             row = self._connection.execute(

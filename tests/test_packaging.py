@@ -10,7 +10,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_required_scripts_exist_are_executable_and_parse() -> None:
-    for name in ("install.sh", "uninstall.sh", "build_app.sh", "start.sh"):
+    for name in ("install.sh", "uninstall.sh", "build_app.sh", "build_dmg.sh", "start.sh"):
         path = ROOT / "scripts" / name
         assert path.exists(), name
         assert os.access(path, os.X_OK), name
@@ -55,6 +55,14 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
     assert "CFBundleVersion" in script
     assert "--exclude-module mypy" in script
     assert "--hidden-import Quartz" in script
+
+
+def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
+    script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
+    assert "path to desktop folder" in script
+    assert "AACC-1.0.0.dmg" in script
+    assert "dist/AACC.app" in script
+    assert "hdiutil create" in script
 
 
 def test_installer_quits_running_copy_before_replacement() -> None:

@@ -20,10 +20,15 @@ class TaskManager:
         self._lock = threading.RLock()
 
     def task_config(self, task_id: str) -> TaskConfig:
-        try:
-            return self._tasks[task_id]
-        except KeyError as error:
-            raise KeyError(f"Unknown task: {task_id}") from error
+        with self._lock:
+            try:
+                return self._tasks[task_id]
+            except KeyError as error:
+                raise KeyError(f"Unknown task: {task_id}") from error
+
+    def task_configs(self) -> list[TaskConfig]:
+        with self._lock:
+            return sorted(self._tasks.values(), key=lambda item: item.slot)
 
     def get(self, task_id: str) -> TaskState:
         self.task_config(task_id)
@@ -31,9 +36,7 @@ class TaskManager:
 
     def list(self) -> list[TaskState]:
         states = {state.task_id: state for state in self.store.list()}
-        return [
-            states[task.id] for task in sorted(self._tasks.values(), key=lambda item: item.slot)
-        ]
+        return [states[task.id] for task in self.task_configs()]
 
     def update(self, candidate: TaskState) -> TaskState:
         self.task_config(candidate.task_id)
@@ -49,6 +52,26 @@ class TaskManager:
             except Exception:
                 continue
         return saved
+
+    def register(self, task: TaskConfig, state: TaskState | None = None) -> TaskState:
+        """Register a local runtime task without rewriting the YAML configuration."""
+        with self._lock:
+            is_new = task.id not in self._tasks
+            self._tasks[task.id] = task
+            self.store.register(task)
+        if state is None:
+            return self.store.get(task.id)
+        if is_new:
+            with self._lock:
+                saved = self.store.update(state)
+                subscribers = tuple(self._subscribers)
+            for callback in subscribers:
+                try:
+                    callback(saved)
+                except Exception:
+                    continue
+            return saved
+        return self.update(state)
 
     def reset(self, task_id: str) -> TaskState:
         return self.update(

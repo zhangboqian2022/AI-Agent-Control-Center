@@ -54,6 +54,7 @@ class AppSettings(BaseModel):
     start_at_login: bool = False
     blink_attention: bool = True
     keyboard_injection: bool = True
+    visible_agent_types: list[str] = Field(default_factory=lambda: ["codex_cli"])
     api: APIConfig = Field(default_factory=APIConfig)
 
 

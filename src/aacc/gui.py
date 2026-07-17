@@ -13,6 +13,7 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFrame,
     QGraphicsOpacityEffect,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QPushButton,
+    QScrollArea,
     QSizeGrip,
     QSlider,
     QSystemTrayIcon,
@@ -237,6 +239,23 @@ class SettingsDialog(QDialog):
         top = QPushButton("切换始终置顶")
         top.clicked.connect(window.toggle_always_on_top)
         layout.addWidget(top)
+        dock = QPushButton("停靠到桌面右上角")
+        dock.clicked.connect(window.dock_top_right)
+        layout.addWidget(dock)
+        layout.addWidget(QLabel("显示哪些程序"))
+        labels = {
+            "codex_cli": "Codex",
+            "claude_code": "Claude Code",
+            "kimi_code": "Kimi Code",
+            "generic_cli": "Z Code / 通用 CLI",
+        }
+        for agent_type, label in labels.items():
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(agent_type in window.visible_agent_types)
+            checkbox.toggled.connect(
+                lambda checked, value=agent_type: window.set_agent_visible(value, checked)
+            )
+            layout.addWidget(checkbox)
         close = QPushButton("完成")
         close.clicked.connect(self.accept)
         layout.addWidget(close)
@@ -245,7 +264,7 @@ class SettingsDialog(QDialog):
 class MainWindow(QWidget):
     state_received = Signal(object)
     external_action = Signal(str, str)
-    settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity"}
+    settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity", "visible_agents"}
 
     def __init__(
         self,
@@ -264,6 +283,13 @@ class MainWindow(QWidget):
         self._drag_position: QPoint | None = None
         self._quitting = False
         self._settings = QSettings("AACC", "AACC")
+        saved_agents = self._settings.value("visible_agents")
+        if isinstance(saved_agents, str):
+            self.visible_agent_types = {saved_agents}
+        elif isinstance(saved_agents, list):
+            self.visible_agent_types = {str(value) for value in saved_agents}
+        else:
+            self.visible_agent_types = set(self.config.app.visible_agent_types)
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
@@ -312,15 +338,18 @@ class MainWindow(QWidget):
         layout.addLayout(header)
 
         self.cards: dict[str, TaskCard] = {}
-        states = {state.task_id: state for state in manager.list()}
-        for task in sorted(self.config.tasks, key=lambda item: item.slot):
-            if not task.enabled:
-                continue
-            card = TaskCard(task, states[task.id], self.config.app.blink_attention)
-            card.action_requested.connect(self._perform_action)
-            self.cards[task.id] = card
-            layout.addWidget(card)
-        layout.addStretch()
+        self.cards_container = QWidget()
+        self.cards_layout = QVBoxLayout()
+        self.cards_layout.setSpacing(9)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.addStretch()
+        self.cards_container.setLayout(self.cards_layout)
+        self.cards_scroll = QScrollArea()
+        self.cards_scroll.setObjectName("cardsScroll")
+        self.cards_scroll.setWidgetResizable(True)
+        self.cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.cards_scroll.setWidget(self.cards_container)
+        layout.addWidget(self.cards_scroll, 1)
         footer = QHBoxLayout()
         self.connection_label = QLabel("● API 127.0.0.1")
         self.connection_label.setObjectName("footer")
@@ -333,6 +362,8 @@ class MainWindow(QWidget):
         saved_geometry = self._settings.value("geometry")
         if saved_geometry:
             self.restoreGeometry(saved_geometry)
+        else:
+            QTimer.singleShot(0, self.dock_top_right)
         self.set_compact(bool(self._settings.value("compact_mode", self.compact_mode, type=bool)))
         saved_opacity = self._settings.value("opacity", self.windowOpacity())
         if isinstance(saved_opacity, (int, float, str)):
@@ -344,6 +375,7 @@ class MainWindow(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
         self._timer.start(1000)
+        self.sync_cards()
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
@@ -364,6 +396,7 @@ class MainWindow(QWidget):
               background: rgba(40, 50, 70, 235);
               border-color: rgba(91, 158, 255, 110);
             }
+            #cardsScroll { background: transparent; border: none; }
             #slotLabel { color: #77879f; font-size: 12px; font-weight: 800; }
             #agentLabel { color: #eef3fc; font-size: 13px; font-weight: 800; }
             #timerLabel { color: #8f9cb0; font-family: Menlo; font-size: 11px; }
@@ -408,8 +441,42 @@ class MainWindow(QWidget):
         self.tray.show()
 
     def refresh(self) -> None:
+        self.sync_cards()
         for state in self.manager.list():
             self._apply_state(state)
+
+    def _visible_tasks(self) -> list[TaskConfig]:
+        tasks = [
+            task
+            for task in self.manager.task_configs()
+            if task.enabled and task.agent.type in self.visible_agent_types
+        ]
+        has_discovered_codex = any(task.id.startswith("codex:") for task in tasks)
+        if has_discovered_codex:
+            tasks = [
+                task
+                for task in tasks
+                if task.id.startswith("codex:") or task.agent.type != "codex_cli"
+            ]
+        return tasks
+
+    def sync_cards(self) -> None:
+        states = {state.task_id: state for state in self.manager.list()}
+        visible = self._visible_tasks()
+        desired_ids = {task.id for task in visible}
+        for task_id, card in tuple(self.cards.items()):
+            if task_id not in desired_ids:
+                self.cards_layout.removeWidget(card)
+                card.deleteLater()
+                del self.cards[task_id]
+        for task in visible:
+            existing_card = self.cards.get(task.id)
+            if existing_card is None:
+                new_card = TaskCard(task, states[task.id], self.config.app.blink_attention)
+                new_card.action_requested.connect(self._perform_action)
+                new_card.set_compact(self.compact_mode)
+                self.cards[task.id] = new_card
+                self.cards_layout.insertWidget(self.cards_layout.count() - 1, new_card)
 
     def _apply_state(self, state: TaskState) -> None:
         card = self.cards.get(state.task_id)
@@ -433,6 +500,22 @@ class MainWindow(QWidget):
             card.set_compact(compact)
         self.adjustSize()
         self._settings.setValue("compact_mode", compact)
+
+    def set_agent_visible(self, agent_type: str, visible: bool) -> None:
+        if visible:
+            self.visible_agent_types.add(agent_type)
+        else:
+            self.visible_agent_types.discard(agent_type)
+        self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
+        self.sync_cards()
+
+    def dock_top_right(self) -> None:
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        self.move(available.right() - self.width() - 18, available.top() + 18)
+        self._settings.remove("geometry")
 
     def toggle_always_on_top(self) -> None:
         self.always_on_top = not self.always_on_top

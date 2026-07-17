@@ -1,6 +1,6 @@
 # AI Agent Control Center（AACC）
 
-AACC 是一个仅在本机运行的 macOS 多 AI Coding Agent 悬浮状态与控制中心。它默认显示四个任务，支持 Codex CLI、Codex App、Claude Code、Kimi Code 和通过 Generic CLI 配置的 Z Code，提供状态灯、菜单栏、窗口聚焦、白名单按键、系统听写、本地 API 与命令行工具。
+AACC 是一个仅在本机运行的 macOS 多 AI Coding Agent 悬浮状态与控制中心。它默认自动识别并显示 Codex 任务，可在设置中筛选 Codex CLI、Claude Code、Kimi Code 和 Z Code / 通用 CLI，提供状态灯、菜单栏、窗口聚焦、白名单按键、系统听写、本地 API 与命令行工具。
 
 ## 直接安装
 
@@ -16,6 +16,8 @@ AACC 是一个仅在本机运行的 macOS 多 AI Coding Agent 悬浮状态与控
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+需要发给其他 Mac 或留存安装包时，执行 `./scripts/build_dmg.sh`；它会在桌面生成 `AACC-1.0.0.dmg`。
+
 开发模式可执行：
 
 ```bash
@@ -24,7 +26,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## 第一次使用
 
-1. 启动后，桌面右上区域出现四张任务卡片，菜单栏也会出现 AACC 图标。
+1. 启动后，桌面右上区域出现自动发现的 Codex 任务卡片，菜单栏也会出现 AACC 图标。
 2. 打开 `~/Library/Application Support/AACC/config.yaml`，为任务填写稳定的 `window_title`、`tab_title` 或 App `bundle_id`。
 3. 在“系统设置 → 隐私与安全性 → 辅助功能”中允许 AACC；窗口切换还可能触发“自动化”授权。
 4. 用包装器启动 Agent，或从 CLI/API 更新状态。
@@ -73,4 +75,3 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:17650/api/v1/tasks
 ```
 
 卸载脚本将 App、命令链接和数据移动到废纸篓内带时间戳的备份目录，不直接永久删除。
-

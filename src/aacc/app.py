@@ -13,6 +13,7 @@ from aacc.api import create_api
 from aacc.automation import MacAutomation
 from aacc.config import load_config
 from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH, DEFAULT_DATABASE_PATH
+from aacc.discovery_service import CodexDiscoveryService
 from aacc.gui import MainWindow
 from aacc.hotkeys import GlobalHotkeys
 from aacc.logging_setup import configure_logging
@@ -26,8 +27,10 @@ class Runtime:
     config: AppConfig
     manager: TaskManager
     automation: MacAutomation
+    discovery: CodexDiscoveryService
 
     def close(self) -> None:
+        self.discovery.stop()
         self.manager.close()
 
 
@@ -36,7 +39,12 @@ def build_runtime(config_path: Path, database_path: Path) -> Runtime:
     store = StateStore(database_path)
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    return Runtime(config=config, manager=manager, automation=MacAutomation(config))
+    return Runtime(
+        config=config,
+        manager=manager,
+        automation=MacAutomation(config),
+        discovery=CodexDiscoveryService(manager),
+    )
 
 
 class APIServerThread:
@@ -92,6 +100,7 @@ def main() -> int:
     qt_app.setQuitOnLastWindowClosed(False)
     window = MainWindow(runtime.manager, runtime.automation)
     window.show()
+    runtime.discovery.start()
 
     api_server: APIServerThread | None = None
     if runtime.config.app.api.enabled:

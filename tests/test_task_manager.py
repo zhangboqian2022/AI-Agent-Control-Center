@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from aacc.config import default_config
-from aacc.models import TaskState, TaskStatus
+from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
 
@@ -47,4 +47,24 @@ def test_unknown_task_is_rejected(tmp_path: Path) -> None:
         assert "task-99" in str(error)
     else:
         raise AssertionError("unknown task should fail")
+    service.close()
+
+
+def test_runtime_task_registration_persists_state_and_notifies(tmp_path: Path) -> None:
+    service = manager(tmp_path)
+    seen: list[str] = []
+    service.subscribe(lambda state: seen.append(state.task_id))
+    task = TaskConfig(
+        id="codex:abc",
+        slot=5,
+        name="自动发现的 Codex 任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+
+    saved = service.register(task, TaskState.new(task.id, "running", source="codex_local"))
+
+    assert service.task_config(task.id).name == task.name
+    assert service.get(task.id).status is TaskStatus.RUNNING
+    assert saved.task_id == task.id
+    assert seen == [task.id]
     service.close()
