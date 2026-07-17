@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import sqlite3
 import threading
 from pathlib import Path
@@ -69,7 +70,7 @@ class StateStore:
             )
         return state
 
-    def history(self, task_id: str, limit: int = 100) -> list[TaskState]:
+    def history(self, task_id: str, limit: int = 100) -> builtins.list[TaskState]:
         safe_limit = min(max(limit, 1), 1000)
         with self._lock:
             rows = self._connection.execute(
@@ -81,4 +82,3 @@ class StateStore:
     def close(self) -> None:
         with self._lock:
             self._connection.close()
-

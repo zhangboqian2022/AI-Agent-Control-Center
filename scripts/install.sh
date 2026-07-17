@@ -14,6 +14,14 @@ QT_QPA_PLATFORM=offscreen uv run pytest -q
 
 mkdir -p "$user_apps" "$user_bin"
 if [[ -d "$user_apps/AACC.app" ]]; then
+  /usr/bin/osascript -e 'tell application id "com.aacc.controlcenter" to quit' \
+    >/dev/null 2>&1 || true
+  for attempt in {1..20}; do
+    if ! pgrep -f "$user_apps/AACC.app/Contents/MacOS/AACC" >/dev/null; then
+      break
+    fi
+    sleep 0.2
+  done
   backup="$user_root/.Trash/AACC.app.backup.$(date +%Y%m%d-%H%M%S)"
   mv "$user_apps/AACC.app" "$backup"
 fi
@@ -25,4 +33,3 @@ open "$user_apps/AACC.app"
 
 echo "AACC 已安装并启动：$user_apps/AACC.app"
 echo "命令行工具：$user_bin/aacc"
-

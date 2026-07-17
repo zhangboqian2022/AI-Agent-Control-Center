@@ -26,4 +26,3 @@ def test_initialize_creates_idle_state_for_each_configured_task(tmp_path: Path) 
     assert len(store.list()) == 4
     assert all(item.status is TaskStatus.IDLE for item in store.list())
     store.close()
-

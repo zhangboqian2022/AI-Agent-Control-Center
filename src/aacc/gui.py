@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCloseEvent, QGuiApplication, QIcon, QMouseEvent, QPainter, QPixmap
+from PySide6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QMouseEvent,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -89,7 +96,9 @@ class TaskCard(QFrame):
         self.dot.setObjectName("statusDot")
         self.slot_label = QLabel(f"{task.slot:02d}")
         self.slot_label.setObjectName("slotLabel")
-        self.agent_label = QLabel(task.agent.display_name or task.agent.type.replace("_", " ").title())
+        self.agent_label = QLabel(
+            task.agent.display_name or task.agent.type.replace("_", " ").title()
+        )
         self.agent_label.setObjectName("agentLabel")
         self.timer_label = QLabel("00:00")
         self.timer_label.setObjectName("timerLabel")
@@ -139,7 +148,8 @@ class TaskCard(QFrame):
         self.message_label.setText(state.message or "暂无状态说明")
         self.timer_label.setText(_elapsed(state))
         self.setToolTip(
-            f"{self.task.name}\n{STATUS_NAMES[state.status]} · {state.source} · {state.confidence:.0%}\n"
+            f"{self.task.name}\n{STATUS_NAMES[state.status]} · {state.source} · "
+            f"{state.confidence:.0%}\n"
             f"更新：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
         )
         attention = state.status in {TaskStatus.WAITING_INPUT, TaskStatus.WAITING_APPROVAL}
@@ -152,7 +162,9 @@ class TaskCard(QFrame):
 
     def set_compact(self, compact: bool) -> None:
         self.details.setVisible(not compact)
-        self.layout().setContentsMargins(13, 7 if compact else 12, 13, 7 if compact else 12)
+        card_layout = self.layout()
+        if card_layout is not None:
+            card_layout.setContentsMargins(13, 7 if compact else 12, 13, 7 if compact else 12)
 
     def create_context_menu(self) -> QMenu:
         menu = QMenu(self)
@@ -168,7 +180,9 @@ class TaskCard(QFrame):
         for label, command in actions:
             action = menu.addAction(label)
             action.triggered.connect(
-                lambda _checked=False, value=command: self.action_requested.emit(value, self.task.id)
+                lambda _checked=False, value=command: self.action_requested.emit(
+                    value, self.task.id
+                )
             )
         menu.addSeparator()
         state_menu = menu.addMenu("手动标记状态")
@@ -187,9 +201,7 @@ class TaskCard(QFrame):
                 )
             )
         copy_action = menu.addAction("复制任务信息")
-        copy_action.triggered.connect(
-            lambda: self.action_requested.emit("copy", self.task.id)
-        )
+        copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
         return menu
 
     def contextMenuEvent(self, event: object) -> None:
@@ -322,7 +334,9 @@ class MainWindow(QWidget):
         if saved_geometry:
             self.restoreGeometry(saved_geometry)
         self.set_compact(bool(self._settings.value("compact_mode", self.compact_mode, type=bool)))
-        self.setWindowOpacity(float(self._settings.value("opacity", self.windowOpacity())))
+        saved_opacity = self._settings.value("opacity", self.windowOpacity())
+        if isinstance(saved_opacity, (int, float, str)):
+            self.setWindowOpacity(float(saved_opacity))
 
         self.tray: QSystemTrayIcon | None = None
         if enable_tray and QSystemTrayIcon.isSystemTrayAvailable():
@@ -334,18 +348,34 @@ class MainWindow(QWidget):
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
-            #panel { background: rgba(18, 23, 34, 238); border: 1px solid rgba(122, 145, 180, 70); border-radius: 18px; }
+            #panel {
+              background: rgba(18, 23, 34, 238);
+              border: 1px solid rgba(122, 145, 180, 70);
+              border-radius: 18px;
+            }
             #title { color: #f2f6ff; font-size: 14px; font-weight: 800; letter-spacing: 1.2px; }
             #subtitle { color: #5fd7ce; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
-            #taskCard { background: rgba(31, 39, 55, 220); border: 1px solid rgba(112, 132, 165, 48); border-radius: 13px; }
-            #taskCard:hover { background: rgba(40, 50, 70, 235); border-color: rgba(91, 158, 255, 110); }
+            #taskCard {
+              background: rgba(31, 39, 55, 220);
+              border: 1px solid rgba(112, 132, 165, 48);
+              border-radius: 13px;
+            }
+            #taskCard:hover {
+              background: rgba(40, 50, 70, 235);
+              border-color: rgba(91, 158, 255, 110);
+            }
             #slotLabel { color: #77879f; font-size: 12px; font-weight: 800; }
             #agentLabel { color: #eef3fc; font-size: 13px; font-weight: 800; }
             #timerLabel { color: #8f9cb0; font-family: Menlo; font-size: 11px; }
             #taskName { color: #d6deea; font-size: 13px; font-weight: 600; }
             #messageLabel { color: #8997aa; font-size: 11px; }
             #footer { color: #65758b; font-size: 10px; }
-            #headerButton { color: #aab6c7; background: rgba(255,255,255,12); border: none; border-radius: 7px; }
+            #headerButton {
+              color: #aab6c7;
+              background: rgba(255,255,255,12);
+              border: none;
+              border-radius: 7px;
+            }
             #headerButton:hover { color: white; background: rgba(78,158,255,70); }
             QMenu { background: #1d2635; color: #e7edf7; border: 1px solid #38465b; padding: 6px; }
             QMenu::item { padding: 6px 22px; border-radius: 5px; }
@@ -386,10 +416,15 @@ class MainWindow(QWidget):
         if card is not None:
             previous = card.state.status
             card.set_state(state)
-            if self.tray is not None and previous != state.status and state.status in {
-                TaskStatus.COMPLETED,
-                TaskStatus.ERROR,
-            }:
+            if (
+                self.tray is not None
+                and previous != state.status
+                and state.status
+                in {
+                    TaskStatus.COMPLETED,
+                    TaskStatus.ERROR,
+                }
+            ):
                 self.tray.showMessage(card.task.name, state.message or STATUS_NAMES[state.status])
 
     def set_compact(self, compact: bool) -> None:

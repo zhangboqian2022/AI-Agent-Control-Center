@@ -18,8 +18,6 @@ def configure_logging(log_dir: Path, debug: bool = False) -> logging.Logger:
         handler = RotatingFileHandler(
             log_dir / "app.log", maxBytes=2_000_000, backupCount=5, encoding="utf-8"
         )
-        handler.setFormatter(
-            RedactingFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-        )
+        handler.setFormatter(RedactingFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
         logger.addHandler(handler)
     return logger

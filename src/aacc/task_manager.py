@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import threading
 from collections.abc import Callable
 
@@ -30,7 +31,9 @@ class TaskManager:
 
     def list(self) -> list[TaskState]:
         states = {state.task_id: state for state in self.store.list()}
-        return [states[task.id] for task in sorted(self._tasks.values(), key=lambda item: item.slot)]
+        return [
+            states[task.id] for task in sorted(self._tasks.values(), key=lambda item: item.slot)
+        ]
 
     def update(self, candidate: TaskState) -> TaskState:
         self.task_config(candidate.task_id)
@@ -52,7 +55,7 @@ class TaskManager:
             TaskState.new(task_id, TaskStatus.IDLE, message="已重置", source="manual")
         )
 
-    def history(self, task_id: str, limit: int = 100) -> list[TaskState]:
+    def history(self, task_id: str, limit: int = 100) -> builtins.list[TaskState]:
         self.task_config(task_id)
         return self.store.history(task_id, limit)
 
@@ -69,4 +72,3 @@ class TaskManager:
 
     def close(self) -> None:
         self.store.close()
-

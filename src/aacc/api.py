@@ -3,10 +3,12 @@ from __future__ import annotations
 import secrets
 from typing import Annotated, Literal, Protocol
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from aacc import __version__
+from aacc.automation import AutomationError
 from aacc.models import AppConfig, TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
 
@@ -50,10 +52,16 @@ def create_api(
 ) -> FastAPI:
     app = FastAPI(title="AACC Local API", version=__version__, docs_url=None, redoc_url=None)
 
+    @app.exception_handler(AutomationError)
+    async def automation_error(_request: Request, error: AutomationError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(error)})
+
     def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
         prefix = "Bearer "
         if authorization is None or not authorization.startswith(prefix):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required"
+            )
         supplied = authorization[len(prefix) :]
         if not secrets.compare_digest(supplied, config.app.api.token):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
@@ -130,7 +138,11 @@ def create_api(
     @app.get("/api/v1/adapters", dependencies=[authorized])
     def adapters() -> list[dict[str, str]]:
         return [
-            {"task_id": task.id, "type": task.agent.type, "name": task.agent.display_name or task.agent.type}
+            {
+                "task_id": task.id,
+                "type": task.agent.type,
+                "name": task.agent.display_name or task.agent.type,
+            }
             for task in config.tasks
         ]
 
@@ -139,4 +151,3 @@ def create_api(
         return {"result": "Restart AACC to load configuration changes"}
 
     return app
-

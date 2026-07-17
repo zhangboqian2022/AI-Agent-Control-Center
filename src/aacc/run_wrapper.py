@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 import httpx
@@ -19,17 +20,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _status(config_path: Path, task_id: str, state: str, message: str, pid: int | None = None) -> None:
+def _status(
+    config_path: Path, task_id: str, state: str, message: str, pid: int | None = None
+) -> None:
     config = load_config(config_path)
-    try:
+    with suppress(httpx.HTTPError):
         httpx.post(
             f"http://{config.app.api.host}:{config.app.api.port}/api/v1/tasks/{task_id}/status",
             headers={"Authorization": f"Bearer {config.app.api.token}"},
             json={"status": state, "message": message, "source": "wrapper", "confidence": 0.95},
             timeout=1.5,
         )
-    except httpx.HTTPError:
-        pass
 
 
 def main(argv: list[str] | None = None) -> int:

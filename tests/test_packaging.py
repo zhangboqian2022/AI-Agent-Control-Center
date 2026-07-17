@@ -47,3 +47,16 @@ def test_console_entry_points_are_registered() -> None:
     assert 'aacc = "aacc.cli:main"' in pyproject
     assert 'aacc-run = "aacc.run_wrapper:main"' in pyproject
     assert 'aacc-gui = "aacc.app:main"' in pyproject
+
+
+def test_app_build_sets_release_version_and_excludes_development_tools() -> None:
+    script = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
+    assert "CFBundleShortVersionString" in script
+    assert "CFBundleVersion" in script
+    assert "--exclude-module mypy" in script
+    assert "--hidden-import Quartz" in script
+
+
+def test_installer_quits_running_copy_before_replacement() -> None:
+    script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    assert 'tell application id "com.aacc.controlcenter" to quit' in script

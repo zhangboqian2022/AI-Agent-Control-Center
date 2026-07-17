@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from abc import ABC
 from collections.abc import AsyncIterator
 
 import psutil
@@ -18,7 +17,7 @@ def strip_ansi(value: str) -> str:
     return ANSI_PATTERN.sub("", value)
 
 
-class BaseAgentAdapter(ABC):
+class BaseAgentAdapter:
     def __init__(self, task_id: str, config: AgentConfig) -> None:
         self.task_id = task_id
         self.config = config
@@ -84,7 +83,10 @@ class GenericCLIAdapter(BaseAgentAdapter):
             getattr(config, field) for field, _ in self._ORDER
         )
         self._compiled = {
-            field: [safe_regex.compile(pattern, safe_regex.IGNORECASE) for pattern in getattr(config, field)]
+            field: [
+                safe_regex.compile(pattern, safe_regex.IGNORECASE)
+                for pattern in getattr(config, field)
+            ]
             for field, _ in self._ORDER
         }
 

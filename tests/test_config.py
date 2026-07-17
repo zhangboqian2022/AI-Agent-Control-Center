@@ -21,7 +21,10 @@ def test_default_config_has_four_agents_and_random_token(tmp_path: Path) -> None
 
 def test_load_config_rejects_non_loopback_api(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
-    path.write_text("app:\n  api:\n    host: 0.0.0.0\n    token: abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+    path.write_text(
+        "app:\n  api:\n    host: 0.0.0.0\n    token: abcdefghijklmnopqrstuvwxyz123456\n",
+        encoding="utf-8",
+    )
     with pytest.raises(ValueError, match="127.0.0.1"):
         load_config(path)
 
@@ -35,4 +38,3 @@ def test_load_config_rejects_invalid_adapter_regex(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="regular expression"):
         load_config(path)
-

@@ -81,4 +81,3 @@ def load_config(path: Path) -> AppConfig:
         if "regular expression" in str(error) or "127.0.0.1" in str(error):
             raise ValueError(str(error)) from error
         raise ValueError(f"Invalid AACC configuration: {error}") from error
-

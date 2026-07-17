@@ -48,4 +48,3 @@ def test_unknown_task_is_rejected(tmp_path: Path) -> None:
     else:
         raise AssertionError("unknown task should fail")
     service.close()
-

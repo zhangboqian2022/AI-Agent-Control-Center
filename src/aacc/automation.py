@@ -80,7 +80,8 @@ class MacAutomation:
         if title:
             lines.extend(
                 [
-                    f"set targetWindow to first window whose name contains {applescript_quote(title)}",
+                    "set targetWindow to first window whose name contains "
+                    + applescript_quote(title),
                     "set index of targetWindow to 1",
                 ]
             )
@@ -122,10 +123,7 @@ class MacAutomation:
             raise AutomationError("Text must contain 1 to 2000 characters")
         self.focus(task)
         self._sleep(self.config.voice.focus_delay_ms / 1000)
-        statement = (
-            'tell application "System Events" to keystroke '
-            f"{applescript_quote(text)}"
-        )
+        statement = f'tell application "System Events" to keystroke {applescript_quote(text)}'
         self._run(["/usr/bin/osascript", "-e", statement])
         return "文本已发送"
 
@@ -143,4 +141,3 @@ class MacAutomation:
         )
         self._run(["/usr/bin/osascript", "-e", statement])
         return "已触发系统听写"
-

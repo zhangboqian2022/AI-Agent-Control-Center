@@ -85,7 +85,8 @@ def main() -> int:
     configure_logging(data_dir / "logs")
     runtime = build_runtime(config_path, database_path)
 
-    qt_app = QApplication.instance() or QApplication(sys.argv)
+    existing_app = QApplication.instance()
+    qt_app = existing_app if isinstance(existing_app, QApplication) else QApplication(sys.argv)
     qt_app.setApplicationName("AACC")
     qt_app.setOrganizationName("AACC")
     qt_app.setQuitOnLastWindowClosed(False)

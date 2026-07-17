@@ -51,9 +51,7 @@ class GlobalHotkeys:
 
             def callback(_proxy: Any, event_type: int, event: Any, _refcon: Any) -> Any:
                 if event_type == Quartz.kCGEventKeyDown:
-                    code = Quartz.CGEventGetIntegerValueField(
-                        event, Quartz.kCGKeyboardEventKeycode
-                    )
+                    code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
                     action = self._actions_by_code.get(code)
                     if action is not None:
                         action()
@@ -73,9 +71,7 @@ class GlobalHotkeys:
                 raise RuntimeError("Accessibility permission is required for global hotkeys")
             source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
             self._run_loop = Quartz.CFRunLoopGetCurrent()
-            Quartz.CFRunLoopAddSource(
-                self._run_loop, source, Quartz.kCFRunLoopCommonModes
-            )
+            Quartz.CFRunLoopAddSource(self._run_loop, source, Quartz.kCFRunLoopCommonModes)
             Quartz.CGEventTapEnable(tap, True)
             self._ready.set()
             Quartz.CFRunLoopRun()
@@ -87,7 +83,7 @@ class GlobalHotkeys:
     def stop(self) -> None:
         if self._run_loop is not None:
             try:
-                import Quartz  # type: ignore[import-untyped]
+                import Quartz
 
                 Quartz.CFRunLoopStop(self._run_loop)
             except Exception:

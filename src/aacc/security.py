@@ -16,4 +16,3 @@ def redact(value: str) -> str:
         else:
             cleaned = pattern.sub("[REDACTED]", cleaned)
     return cleaned
-

@@ -12,4 +12,3 @@ def test_new_state_records_normalized_status() -> None:
     assert state.task_id == "task-1"
     assert state.message == "working"
     assert state.confidence == 1.0
-

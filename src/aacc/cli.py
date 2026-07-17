@@ -42,7 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _request(config_path: Path, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
+def _request(
+    config_path: Path, method: str, path: str, payload: dict[str, Any] | None = None
+) -> Any:
     config = load_config(config_path)
     url = f"http://{config.app.api.host}:{config.app.api.port}{path}"
     headers = {"Authorization": f"Bearer {config.app.api.token}"}
@@ -60,7 +62,11 @@ def _doctor(config_path: Path) -> int:
     except ValueError as error:
         checks.append(("配置文件", False, str(error)))
         config = None
-    db_path = DEFAULT_DATABASE_PATH if config_path == DEFAULT_CONFIG_PATH else config_path.with_name("aacc.db")
+    db_path = (
+        DEFAULT_DATABASE_PATH
+        if config_path == DEFAULT_CONFIG_PATH
+        else config_path.with_name("aacc.db")
+    )
     try:
         connection = sqlite3.connect(db_path)
         connection.execute("PRAGMA quick_check").fetchone()
@@ -120,4 +126,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

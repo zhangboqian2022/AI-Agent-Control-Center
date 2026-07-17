@@ -65,4 +65,3 @@ def test_failed_focus_stops_before_key_injection() -> None:
     automation = MacAutomation(config, runner=fail)
     with pytest.raises(AutomationError, match="window missing"):
         automation.send_key(config.tasks[0], "ENTER")
-

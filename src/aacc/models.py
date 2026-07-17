@@ -158,11 +158,12 @@ class TaskState(BaseModel):
             status=normalized,
             message=message[:2000],
             source=source,
-            confidence=confidence if confidence is not None else (1.0 if source == "manual" else 0.8),
+            confidence=confidence
+            if confidence is not None
+            else (1.0 if source == "manual" else 0.8),
             started_at=now if normalized in active else None,
             updated_at=now,
             finished_at=now if normalized in terminal else None,
             pid=pid,
             metadata=metadata or {},
         )
-

@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QApplication
 
 from aacc.automation import MacAutomation
 from aacc.config import default_config
-from aacc.gui import MainWindow, STATUS_COLORS, TaskCard
+from aacc.gui import STATUS_COLORS, MainWindow, TaskCard
 from aacc.models import TaskState, TaskStatus
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -34,9 +34,7 @@ def test_all_statuses_have_a_color() -> None:
 def test_refresh_updates_card_text_and_color(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     manager.update(
-        TaskState.new(
-            "task-2", "waiting-approval", message="等待批准 npm test", source="manual"
-        )
+        TaskState.new("task-2", "waiting-approval", message="等待批准 npm test", source="manual")
     )
     window.refresh()
     card = window.cards["task-2"]

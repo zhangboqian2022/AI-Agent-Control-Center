@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from aacc.api import create_api
+from aacc.automation import AutomationError
 from aacc.config import default_config
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -53,15 +54,24 @@ def test_status_update_round_trip(tmp_path: Path) -> None:
 def test_api_validates_task_status_key_and_text(tmp_path: Path) -> None:
     client, token, manager = api_client(tmp_path)
     assert client.get("/api/v1/tasks/nope", headers=auth(token)).status_code == 404
-    assert client.post(
-        "/api/v1/tasks/task-1/status", headers=auth(token), json={"status": "made-up"}
-    ).status_code == 422
-    assert client.post(
-        "/api/v1/tasks/task-1/send-key", headers=auth(token), json={"key": "CMD_Q"}
-    ).status_code == 422
-    assert client.post(
-        "/api/v1/tasks/task-1/send-text", headers=auth(token), json={"text": "x" * 2001}
-    ).status_code == 422
+    assert (
+        client.post(
+            "/api/v1/tasks/task-1/status", headers=auth(token), json={"status": "made-up"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/tasks/task-1/send-key", headers=auth(token), json={"key": "CMD_Q"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/tasks/task-1/send-text", headers=auth(token), json={"text": "x" * 2001}
+        ).status_code
+        == 422
+    )
     manager.close()
 
 
@@ -78,3 +88,24 @@ def test_reset_and_events(tmp_path: Path) -> None:
     assert [item["status"] for item in events] == ["ERROR", "IDLE"]
     manager.close()
 
+
+def test_automation_failure_returns_actionable_conflict_response(tmp_path: Path) -> None:
+    class FailingController:
+        def focus(self, _task: object) -> str:
+            raise AutomationError("window missing")
+
+        send_key = focus
+        send_text = focus
+        start_voice = focus
+
+    config = default_config()
+    store = StateStore(tmp_path / "api.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    client = TestClient(
+        create_api(config, manager, FailingController()), raise_server_exceptions=False
+    )
+    response = client.post("/api/v1/tasks/task-1/focus", headers=auth(config.app.api.token))
+    assert response.status_code == 409
+    assert response.json() == {"detail": "window missing"}
+    manager.close()
