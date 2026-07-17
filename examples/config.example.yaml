@@ -1,0 +1,78 @@
+app:
+  language: zh-CN
+  theme: system
+  always_on_top: true
+  opacity: 0.94
+  compact_mode: false
+  start_at_login: false
+  blink_attention: true
+  keyboard_injection: true
+  api:
+    enabled: true
+    host: 127.0.0.1
+    port: 17650
+    token: replace-with-a-random-token-generated-on-first-launch
+voice:
+  hotkey: FN_FN
+  focus_delay_ms: 250
+  voice_delay_ms: 200
+hotkeys:
+  focus_task_1: F13
+  focus_task_2: F14
+  focus_task_3: F15
+  focus_task_4: F16
+  send_enter: F17
+  send_1: F18
+  send_2: F19
+  voice: F20
+tasks:
+  - id: task-1
+    slot: 1
+    name: Codex 任务
+    agent:
+      type: codex_cli
+      display_name: Codex CLI
+    terminal:
+      type: terminal_app
+      app_bundle_id: com.apple.Terminal
+      window_title: AACC-TASK-1
+    enabled: true
+  - id: task-2
+    slot: 2
+    name: Claude 任务
+    agent:
+      type: claude_code
+      display_name: Claude Code
+    terminal:
+      type: iterm2
+      app_bundle_id: com.googlecode.iterm2
+      window_title: AACC-TASK-2
+    enabled: true
+  - id: task-3
+    slot: 3
+    name: Kimi 任务
+    agent:
+      type: kimi_code
+      display_name: Kimi Code
+    terminal:
+      type: terminal_app
+      app_bundle_id: com.apple.Terminal
+      window_title: AACC-TASK-3
+    enabled: true
+  - id: task-4
+    slot: 4
+    name: Z Code 任务
+    agent:
+      type: generic_cli
+      display_name: Z Code
+      process_patterns: [zcode]
+      running_patterns: ['^working']
+      waiting_approval_patterns: ['^approve command:']
+      completed_patterns: ['^task completed']
+      error_patterns: ['^(error|failed):']
+    terminal:
+      type: terminal_app
+      app_bundle_id: com.apple.Terminal
+      window_title: AACC-TASK-4
+    enabled: true
+
