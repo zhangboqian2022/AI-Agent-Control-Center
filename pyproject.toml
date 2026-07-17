@@ -15,6 +15,7 @@ dependencies = [
   "psutil>=7,<8",
   "pydantic>=2.11,<3",
   "pyside6>=6.9,<7",
+  "pyobjc-framework-quartz>=11,<13; sys_platform == 'darwin'",
   "pyyaml>=6,<7",
   "uvicorn>=0.35,<1",
 ]
@@ -41,7 +42,7 @@ packages = ["src/aacc"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated:DeprecationWarning"]
+filterwarnings = ["ignore:Using .*starlette\\.testclient.*:DeprecationWarning"]
 
 [tool.ruff]
 line-length = 100
