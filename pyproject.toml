@@ -17,6 +17,7 @@ dependencies = [
   "pyside6>=6.9,<7",
   "pyobjc-framework-quartz>=11,<13; sys_platform == 'darwin'",
   "pyyaml>=6,<7",
+  "regex>=2025,<2027",
   "uvicorn>=0.35,<1",
 ]
 
@@ -42,7 +43,7 @@ packages = ["src/aacc"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-filterwarnings = ["ignore:Using .*starlette\\.testclient.*:DeprecationWarning"]
+filterwarnings = ["ignore:Using .*starlette\\.testclient.*"]
 
 [tool.ruff]
 line-length = 100
