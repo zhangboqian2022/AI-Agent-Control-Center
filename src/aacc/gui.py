@@ -72,6 +72,8 @@ STATUS_NAMES = {
     TaskStatus.UNKNOWN: "状态未知",
 }
 
+STATUS_LIGHT_FONT_SIZE = 95
+
 
 def _elapsed(state: TaskState) -> str:
     anchor = state.started_at or state.updated_at
@@ -100,6 +102,8 @@ class TaskCard(QFrame):
         top = QHBoxLayout()
         self.dot = QLabel("●")
         self.dot.setObjectName("statusDot")
+        self.dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dot.setFixedSize(100, 100)
         self.slot_label = QLabel(f"{task.slot:02d}")
         self.slot_label.setObjectName("slotLabel")
         self.agent_label = QLabel(
@@ -148,7 +152,7 @@ class TaskCard(QFrame):
     def set_state(self, state: TaskState) -> None:
         self.state = state
         color = STATUS_COLORS[state.status]
-        self.dot.setStyleSheet(f"color: {color}; font-size: 19px;")
+        self.dot.setStyleSheet(f"color: {color}; font-size: {STATUS_LIGHT_FONT_SIZE}px;")
         self.status_label.setText(STATUS_NAMES[state.status])
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
         self.message_label.setText(state.message or "暂无状态说明")
@@ -374,6 +378,7 @@ class MainWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowTitle("AI Agent Control Center")
         self.setMinimumWidth(350)
+        self.setMinimumHeight(300)
         self.resize(420, 590)
         self.setWindowOpacity(self.config.app.opacity)
 

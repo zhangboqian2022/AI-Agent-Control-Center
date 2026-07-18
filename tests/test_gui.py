@@ -35,6 +35,24 @@ def test_all_statuses_have_a_color() -> None:
     assert set(STATUS_COLORS) == set(TaskStatus)
 
 
+def test_status_light_is_five_times_larger_for_fast_visual_scanning(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:large-light",
+        slot=1,
+        name="大状态灯任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.set_codex_selected_ids({"large-light"})
+
+    assert "font-size: 95px" in window.cards[task.id].dot.styleSheet()
+    assert window.minimumHeight() >= 270
+    manager.close()
+
+
 def test_refresh_updates_card_text_and_color(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     window.set_agent_visible("claude_code", True)
