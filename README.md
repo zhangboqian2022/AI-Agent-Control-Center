@@ -1,77 +1,115 @@
-# AI Agent Control Center（AACC）
+# AI Agent Control Center (AACC)
 
-AACC 是一个仅在本机运行的 macOS 多 AI Coding Agent 悬浮状态与控制中心。它默认自动识别并显示 Codex 任务，可在设置中筛选 Codex CLI、Claude Code、Kimi Code 和 Z Code / 通用 CLI，提供状态灯、菜单栏、窗口聚焦、白名单按键、系统听写、本地 API 与命令行工具。
+> A local-first macOS desktop control center for the AI coding agents you choose to monitor.
 
-## 直接安装
+[中文文档](README.zh-CN.md) · [Download AACC 1.0.0](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.0.0/AACC-1.0.0.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.0.0) · [Product design](docs/product-design.md)
 
-要求 macOS 13+，并已安装 [uv](https://docs.astral.sh/uv/)。在本目录执行：
+AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative focus/input automation.
+
+![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-black) ![License](https://img.shields.io/badge/license-MIT-blue) ![Local first](https://img.shields.io/badge/privacy-local--first-18a999)
+
+## Highlights
+
+- **Explicit task selection.** Choose only the Codex conversations you want on the panel; unselected tasks are not monitored.
+- **Fast visual scanning.** Large status lights distinguish running, waiting, completed, warning, error, and unknown states.
+- **Local-first by design.** AACC reads only the local task metadata needed for status detection and never uploads task content.
+- **Reliable status boundaries.** Codex session `task_started` and `task_complete` events take priority over file activity to avoid stale “running” indicators.
+- **Desktop control without blind input.** Cards select a task; the explicit context action focuses the target app. Keyboard injection is restricted to a small allowlist.
+- **Extensible integration.** Use the local API, `aacc` CLI, `aacc-run` wrapper, or configurable adapters for Codex CLI/App, Claude Code, Kimi Code, and generic CLIs.
+
+## Install
+
+### Recommended: download the DMG
+
+Download [AACC-1.0.0.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.0.0/AACC-1.0.0.dmg), open it, and drag `AACC.app` to Applications.
+
+The public build is ad-hoc signed and is not notarized by Apple. If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** only after confirming that the DMG came from this release page.
+
+### Build from source
+
+Requirements: macOS 13+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
+git clone https://github.com/zhangboqian2022/AI-Agent-Control-Center.git
+cd AI-Agent-Control-Center
 ./scripts/install.sh
 ```
 
-安装脚本会解析依赖、运行测试、构建 `AACC.app`、安装到 `~/Applications/AACC.app`，并把 `aacc`、`aacc-run` 放到 `~/.local/bin`。完成后程序自动启动。若终端找不到 `aacc`，把下面一行加入 `~/.zshrc`：
+The installer resolves dependencies, runs tests, builds `AACC.app`, installs it under `~/Applications/AACC.app`, and adds `aacc` and `aacc-run` to `~/.local/bin`.
+
+To create a distributable image:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+./scripts/build_dmg.sh
 ```
 
-需要发给其他 Mac 或留存安装包时，执行 `./scripts/build_dmg.sh`；它会在桌面生成 `AACC-1.0.0.dmg`。
+## Use AACC with Codex
 
-开发模式可执行：
+1. Launch AACC. Open its settings with the gear icon.
+2. Select **Choose Codex tasks to monitor** and check the conversations you want to see.
+3. Click **Start monitoring**. Only checked tasks are displayed and polled.
+4. Drag the panel to a fixed location; use settings to toggle always-on-top and return it to the desktop’s top-right corner.
 
-```bash
-./scripts/start.sh
-```
+A single click selects a card and keeps AACC visible. Use the card’s context menu and **Switch to task** when you intentionally want to focus Codex.
 
-## 第一次使用
+For selected Codex sessions, AACC reads task IDs, titles, timestamps, session-file modification times, event names, and matching process identifiers. It does **not** read prompts, code, commands, or conversation bodies. See the [English user guide](docs/user-guide.en.md) or [中文用户指南](docs/user-guide.md).
 
-1. 启动后，桌面右上区域出现自动发现的 Codex 任务卡片，菜单栏也会出现 AACC 图标。
-2. 打开 `~/Library/Application Support/AACC/config.yaml`，为任务填写稳定的 `window_title`、`tab_title` 或 App `bundle_id`。
-3. 在“系统设置 → 隐私与安全性 → 辅助功能”中允许 AACC；窗口切换还可能触发“自动化”授权。
-4. 用包装器启动 Agent，或从 CLI/API 更新状态。
+## CLI and local API
+
+Use the wrapper for process lifecycle reporting or update a task directly:
 
 ```bash
 aacc-run --task task-1 -- codex
-aacc status task-1 running --message "正在分析代码"
-aacc status task-1 waiting-approval --message "等待批准 npm test"
-aacc status task-1 completed --message "修改完成"
+aacc status task-1 running --message "Analyzing the repository"
+aacc status task-1 waiting-approval --message "Waiting for approval"
+aacc status task-1 completed --message "Changes complete"
 aacc list
 aacc doctor
 ```
 
-API 默认地址为 `http://127.0.0.1:17650`，随机 Token 在配置文件的 `app.api.token`。示例：
+The API is bound only to `http://127.0.0.1:17650` and requires a random token generated in the local config file. It is intentionally not a remote-control API.
 
-```bash
-TOKEN=$(python3 -c 'import pathlib,yaml; print(yaml.safe_load((pathlib.Path.home()/"Library/Application Support/AACC/config.yaml").read_text())["app"]["api"]["token"])')
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:17650/api/v1/tasks
+## Architecture and privacy
+
+```text
+Selected local agent tasks
+          ↓
+Task discovery / adapters / CLI wrapper
+          ↓
+State manager + SQLite history + confidence rules
+          ↓
+Floating PySide6 panel · menu bar · localhost API
 ```
 
-## 安全边界
+Task discovery, adapters, state management, UI, API, and macOS automation are isolated modules. AACC prefers structured local events; when confidence is insufficient it reports `UNKNOWN` or `WARNING` rather than inventing a result.
 
-- API 只允许 `127.0.0.1`，且必须使用随机 Bearer Token。
-- API 不接受 shell 命令；按键只允许 Enter、Esc、方向键、Ctrl+C、1、2。
-- 所有进程调用都使用参数数组与超时，不使用 `shell=True`。
-- 发送按键前必须成功激活目标应用/窗口；失败即停止。
-- 模糊日志不会被伪装成确定状态，正则匹配有行长限制与执行超时。
-- 日志会脱敏 Token、密码、Authorization 和常见 API Key。
+Security boundaries:
 
-## 文档
+- Loopback-only API with a random Bearer token.
+- No arbitrary shell command endpoint and no `shell=True` subprocess calls.
+- Allowed injected keys are limited to Enter, Esc, arrows, Ctrl+C, `1`, and `2`.
+- Target app/window activation must succeed before input is sent.
+- Logs redact common tokens, passwords, and Authorization headers.
 
-- [用户指南](docs/user-guide.md)
-- [Adapter 开发](docs/adapter-development.md)
-- [故障排查](docs/troubleshooting.md)
-- [测试报告](docs/test-report.md)
-- [执行规格](AI-Agent-Control-Center-Specification.md)
+Read the full [product design](docs/product-design.md), [security policy](SECURITY.md), and [troubleshooting guide](docs/troubleshooting.en.md).
 
-## 已知限制
-
-各 Agent 没有统一可靠事件接口。结构化 Hook 可通过本地 API 接入；否则使用 `aacc-run`、手动状态或保守正则。Terminal/iTerm2 的精确标签定位依赖稳定标题。首次使用键盘注入和全局快捷键必须由用户授予 macOS 辅助功能权限。本地构建使用 ad-hoc 签名，不包含 Apple Developer 公证。
-
-## 卸载
+## Development
 
 ```bash
-./scripts/uninstall.sh
+uv run pytest -q
+uv run ruff check src tests
+uv run mypy src
+./scripts/start.sh
 ```
 
-卸载脚本将 App、命令链接和数据移动到废纸篓内带时间戳的备份目录，不直接永久删除。
+See [adapter development](docs/adapter-development.en.md) to add a supported agent without coupling it to the UI.
+
+## Contributing and community
+
+Issues and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md) before participating.
+
+Author and maintainer: **zhangboqian** · <zhangboqian@hotmail.com> · [Changelog](CHANGELOG.md)
+
+## License
+
+Copyright © 2026 zhangboqian. Released under the [MIT License](LICENSE).
