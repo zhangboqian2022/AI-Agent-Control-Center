@@ -13,12 +13,21 @@ from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, Terminal
 
 PidExists = Callable[[int], bool]
 Clock = Callable[[], datetime]
+SessionModifiedAt = Callable[[Path], datetime]
+ProcessStartedAt = Callable[[int], int | None]
 
 
 @dataclass(frozen=True)
 class DiscoveredTask:
     config: TaskConfig
     state: TaskState
+
+
+@dataclass(frozen=True)
+class CodexSession:
+    conversation_id: str
+    title: str
+    updated_at: datetime
 
 
 class CodexLocalDiscovery:
@@ -28,9 +37,13 @@ class CodexLocalDiscovery:
         self,
         session_index_path: Path | None = None,
         process_manager_path: Path | None = None,
+        session_directory: Path | None = None,
         *,
         pid_exists: PidExists = psutil.pid_exists,
         now: Clock = lambda: datetime.now(UTC),
+        session_modified_at: SessionModifiedAt | None = None,
+        process_started_at: ProcessStartedAt | None = None,
+        activity_window_seconds: float = 90.0,
         max_tasks: int = 20,
     ) -> None:
         codex_home = Path.home() / ".codex"
@@ -38,23 +51,35 @@ class CodexLocalDiscovery:
         self.process_manager_path = process_manager_path or (
             codex_home / "process_manager" / "chat_processes.json"
         )
+        self.session_directory = session_directory or codex_home / "sessions"
         self.pid_exists = pid_exists
         self.now = now
+        self.session_modified_at = session_modified_at or self._session_modified_at
+        self.process_started_at = process_started_at or self._process_started_at
+        self.activity_window_seconds = max(10.0, activity_window_seconds)
         self.max_tasks = max(1, min(max_tasks, 20))
 
-    def discover(self) -> list[DiscoveredTask]:
+    def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
         sessions = self._sessions()
-        active_pids = self._active_pids()
+        if selected_ids is not None:
+            sessions = [session for session in sessions if session["id"] in selected_ids]
+        selected = {session["id"] for session in sessions}
+        active_sessions = self._active_sessions(selected)
+        active_pids = self._active_pids(selected)
         discovered: list[DiscoveredTask] = []
         for session in sessions:
             conversation_id = session["id"]
             pid = active_pids.get(conversation_id)
-            is_active = pid is not None
-            updated_at = session["updated_at"]
-            if is_active:
+            activity_at = active_sessions.get(conversation_id)
+            updated_at = activity_at or session["updated_at"]
+            if activity_at is not None:
+                status = TaskStatus.RUNNING
+                message = "检测到 Codex 会话活动"
+                confidence = 0.9
+            elif pid is not None:
                 status = TaskStatus.RUNNING
                 message = "检测到 Codex 正在运行"
-                confidence = 0.92
+                confidence = 0.88
             else:
                 status = TaskStatus.UNKNOWN
                 message = "最近更新，未检测到运行进程"
@@ -75,7 +100,7 @@ class CodexLocalDiscovery:
                         message=message,
                         source="codex_local",
                         confidence=confidence,
-                        started_at=updated_at if is_active else None,
+                        started_at=updated_at if status is TaskStatus.RUNNING else None,
                         updated_at=updated_at,
                         pid=pid,
                         session_id=conversation_id,
@@ -93,6 +118,18 @@ class CodexLocalDiscovery:
                 state=item.state,
             )
             for slot, item in enumerate(discovered[: self.max_tasks], start=1)
+        ]
+
+    def catalog(self) -> list[CodexSession]:
+        return [
+            CodexSession(
+                conversation_id=session["id"],
+                title=session["title"] or f"Codex 任务 {session['id'][:8]}",
+                updated_at=session["updated_at"],
+            )
+            for session in sorted(
+                self._sessions(), key=lambda item: item["updated_at"], reverse=True
+            )
         ]
 
     def _sessions(self) -> list[dict[str, Any]]:
@@ -126,7 +163,25 @@ class CodexLocalDiscovery:
             )
         return sessions
 
-    def _active_pids(self) -> dict[str, int]:
+    def _active_sessions(self, selected_ids: set[str]) -> dict[str, datetime]:
+        active: dict[str, datetime] = {}
+        if not selected_ids:
+            return active
+        now = self.now()
+        for conversation_id in selected_ids:
+            try:
+                files = self.session_directory.rglob(f"*{conversation_id}.jsonl")
+                latest = max((self.session_modified_at(path) for path in files), default=None)
+            except OSError:
+                continue
+            is_recent = latest is not None and (
+                now - latest
+            ).total_seconds() <= self.activity_window_seconds
+            if is_recent and latest is not None:
+                active[conversation_id] = latest
+        return active
+
+    def _active_pids(self, selected_ids: set[str]) -> dict[str, int]:
         try:
             raw = json.loads(self.process_manager_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -139,14 +194,37 @@ class CodexLocalDiscovery:
                 continue
             conversation_id = item.get("conversationId")
             pid = item.get("osPid")
-            if not isinstance(conversation_id, str) or not isinstance(pid, int) or pid <= 0:
+            if (
+                not isinstance(conversation_id, str)
+                or conversation_id not in selected_ids
+                or not isinstance(pid, int)
+                or pid <= 0
+            ):
                 continue
             try:
-                if self.pid_exists(pid):
+                record_started = item.get("startedAtMs")
+                process_started = self.process_started_at(pid)
+                process_matches = (
+                    not isinstance(record_started, int)
+                    or process_started is None
+                    or abs(process_started - record_started) <= 60_000
+                )
+                if self.pid_exists(pid) and process_matches:
                     pids[conversation_id] = pid
             except (OSError, psutil.Error):
                 continue
         return pids
+
+    @staticmethod
+    def _session_modified_at(path: Path) -> datetime:
+        return datetime.fromtimestamp(path.stat().st_mtime, UTC)
+
+    @staticmethod
+    def _process_started_at(pid: int) -> int | None:
+        try:
+            return round(psutil.Process(pid).create_time() * 1000)
+        except psutil.Error:
+            return None
 
     def _parse_time(self, raw: object) -> datetime | None:
         if not isinstance(raw, str):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSettings, Qt, QTimer, Signal
@@ -19,6 +20,8 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QPushButton,
     QScrollArea,
@@ -30,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from aacc.automation import AutomationError, MacAutomation
+from aacc.codex_discovery import CodexSession
 from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
@@ -211,7 +215,7 @@ class TaskCard(QFrame):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self.action_requested.emit("focus", self.task.id)
+            self.action_requested.emit("select", self.task.id)
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -242,6 +246,9 @@ class SettingsDialog(QDialog):
         dock = QPushButton("停靠到桌面右上角")
         dock.clicked.connect(window.dock_top_right)
         layout.addWidget(dock)
+        codex_tasks = QPushButton(f"选择监控的 Codex 任务（{len(window.codex_selected_ids)} 已选）")
+        codex_tasks.clicked.connect(window.open_codex_task_selector)
+        layout.addWidget(codex_tasks)
         layout.addWidget(QLabel("显示哪些程序"))
         labels = {
             "codex_cli": "Codex",
@@ -261,6 +268,57 @@ class SettingsDialog(QDialog):
         layout.addWidget(close)
 
 
+class CodexTaskSelectionDialog(QDialog):
+    def __init__(
+        self, sessions: list[CodexSession], selected_ids: set[str], parent: QWidget
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("选择监控的 Codex 任务")
+        self.setMinimumSize(540, 460)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("仅勾选的任务会读取活动状态并显示在面板中。"))
+        self.tasks = QListWidget()
+        for session in sessions:
+            item = QListWidgetItem(
+                f"{session.title}\n{session.updated_at.astimezone().strftime('%Y-%m-%d %H:%M')}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, session.conversation_id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if session.conversation_id in selected_ids
+                else Qt.CheckState.Unchecked
+            )
+            self.tasks.addItem(item)
+        layout.addWidget(self.tasks)
+        select_all = QPushButton("全选")
+        select_all.clicked.connect(lambda: self._set_all(Qt.CheckState.Checked))
+        clear_all = QPushButton("全部取消")
+        clear_all.clicked.connect(lambda: self._set_all(Qt.CheckState.Unchecked))
+        buttons = QHBoxLayout()
+        buttons.addWidget(select_all)
+        buttons.addWidget(clear_all)
+        buttons.addStretch()
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        apply = QPushButton("开始监控")
+        apply.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(apply)
+        layout.addLayout(buttons)
+
+    def selected_ids(self) -> set[str]:
+        return {
+            str(self.tasks.item(index).data(Qt.ItemDataRole.UserRole))
+            for index in range(self.tasks.count())
+            if self.tasks.item(index).checkState() is Qt.CheckState.Checked
+        }
+
+    def _set_all(self, state: Qt.CheckState) -> None:
+        for index in range(self.tasks.count()):
+            self.tasks.item(index).setCheckState(state)
+
+
 class MainWindow(QWidget):
     state_received = Signal(object)
     external_action = Signal(str, str)
@@ -272,6 +330,9 @@ class MainWindow(QWidget):
         automation: MacAutomation,
         *,
         enable_tray: bool = True,
+        codex_sessions: Callable[[], list[CodexSession]] | None = None,
+        set_codex_monitoring: Callable[[set[str]], None] | None = None,
+        settings: QSettings | None = None,
     ) -> None:
         super().__init__()
         self.manager = manager
@@ -282,7 +343,17 @@ class MainWindow(QWidget):
         self.always_on_top = self.config.app.always_on_top
         self._drag_position: QPoint | None = None
         self._quitting = False
-        self._settings = QSettings("AACC", "AACC")
+        self._settings = settings or QSettings("AACC", "AACC")
+        self._codex_sessions = codex_sessions or (lambda: [])
+        self._set_codex_monitoring = set_codex_monitoring or (lambda _ids: None)
+        saved_codex_tasks = self._settings.value("codex_selected_tasks")
+        if isinstance(saved_codex_tasks, str):
+            self.codex_selected_ids = {saved_codex_tasks}
+        elif isinstance(saved_codex_tasks, list):
+            self.codex_selected_ids = {str(value) for value in saved_codex_tasks}
+        else:
+            self.codex_selected_ids = set()
+        self._set_codex_monitoring(self.codex_selected_ids)
         saved_agents = self._settings.value("visible_agents")
         if isinstance(saved_agents, str):
             self.visible_agent_types = {saved_agents}
@@ -294,7 +365,9 @@ class MainWindow(QWidget):
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
 
-        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
+        saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
+        self.always_on_top = bool(saved_top)
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
         if self.always_on_top:
             flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
@@ -342,6 +415,10 @@ class MainWindow(QWidget):
         self.cards_layout = QVBoxLayout()
         self.cards_layout.setSpacing(9)
         self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.empty_tasks_label = QLabel("未选择 Codex 任务 · 点击 ⚙ 选择监控任务")
+        self.empty_tasks_label.setObjectName("emptyTasks")
+        self.empty_tasks_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cards_layout.addWidget(self.empty_tasks_label)
         self.cards_layout.addStretch()
         self.cards_container.setLayout(self.cards_layout)
         self.cards_scroll = QScrollArea()
@@ -397,6 +474,7 @@ class MainWindow(QWidget):
               border-color: rgba(91, 158, 255, 110);
             }
             #cardsScroll { background: transparent; border: none; }
+            #emptyTasks { color: #8997aa; padding: 40px 12px; }
             #slotLabel { color: #77879f; font-size: 12px; font-weight: 800; }
             #agentLabel { color: #eef3fc; font-size: 13px; font-weight: 800; }
             #timerLabel { color: #8f9cb0; font-family: Menlo; font-size: 11px; }
@@ -451,13 +529,15 @@ class MainWindow(QWidget):
             for task in self.manager.task_configs()
             if task.enabled and task.agent.type in self.visible_agent_types
         ]
-        has_discovered_codex = any(task.id.startswith("codex:") for task in tasks)
-        if has_discovered_codex:
-            tasks = [
-                task
-                for task in tasks
-                if task.id.startswith("codex:") or task.agent.type != "codex_cli"
-            ]
+        tasks = [
+            task
+            for task in tasks
+            if task.agent.type != "codex_cli"
+            or (
+                task.id.startswith("codex:")
+                and task.id.removeprefix("codex:") in self.codex_selected_ids
+            )
+        ]
         return tasks
 
     def sync_cards(self) -> None:
@@ -477,6 +557,7 @@ class MainWindow(QWidget):
                 new_card.set_compact(self.compact_mode)
                 self.cards[task.id] = new_card
                 self.cards_layout.insertWidget(self.cards_layout.count() - 1, new_card)
+        self.empty_tasks_label.setVisible(not self.cards)
 
     def _apply_state(self, state: TaskState) -> None:
         card = self.cards.get(state.task_id)
@@ -509,6 +590,17 @@ class MainWindow(QWidget):
         self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
         self.sync_cards()
 
+    def set_codex_selected_ids(self, selected_ids: set[str]) -> None:
+        self.codex_selected_ids = set(selected_ids)
+        self._settings.setValue("codex_selected_tasks", sorted(self.codex_selected_ids))
+        self._set_codex_monitoring(self.codex_selected_ids)
+        self.sync_cards()
+
+    def open_codex_task_selector(self) -> None:
+        dialog = CodexTaskSelectionDialog(self._codex_sessions(), self.codex_selected_ids, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_codex_selected_ids(dialog.selected_ids())
+
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
         if screen is None:
@@ -527,7 +619,9 @@ class MainWindow(QWidget):
         try:
             task = self.manager.task_config(task_id)
             self.selected_task_id = task_id
-            if action == "focus":
+            if action == "select":
+                result = f"已选择 {task.name}"
+            elif action == "focus":
                 result = self.automation.focus(task)
             elif action == "voice":
                 result = self.automation.start_voice(task)

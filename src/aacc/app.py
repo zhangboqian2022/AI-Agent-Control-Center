@@ -98,7 +98,12 @@ def main() -> int:
     qt_app.setApplicationName("AACC")
     qt_app.setOrganizationName("AACC")
     qt_app.setQuitOnLastWindowClosed(False)
-    window = MainWindow(runtime.manager, runtime.automation)
+    window = MainWindow(
+        runtime.manager,
+        runtime.automation,
+        codex_sessions=runtime.discovery.catalog,
+        set_codex_monitoring=runtime.discovery.set_selected_ids,
+    )
     window.show()
     runtime.discovery.start()
 

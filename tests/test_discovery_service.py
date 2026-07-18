@@ -11,8 +11,10 @@ from aacc.task_manager import TaskManager
 class StubDiscovery:
     def __init__(self, tasks: list[DiscoveredTask]) -> None:
         self.tasks = tasks
+        self.selected_ids: set[str] | None = None
 
-    def discover(self) -> list[DiscoveredTask]:
+    def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
+        self.selected_ids = selected_ids
         return self.tasks
 
 
@@ -27,13 +29,16 @@ def test_poll_registers_discovered_codex_task(tmp_path: Path) -> None:
         name="自动任务",
         agent=AgentConfig(type="codex_cli", display_name="Codex"),
     )
+    discovery = StubDiscovery([DiscoveredTask(task, TaskState.new(task.id, "running"))])
     service = CodexDiscoveryService(
         manager,
-        discovery=StubDiscovery([DiscoveredTask(task, TaskState.new(task.id, "running"))]),
+        discovery=discovery,  # type: ignore[arg-type]
     )
+    service.set_selected_ids({"task-1234"})
 
     count = service.poll_once()
 
     assert count == 1
+    assert discovery.selected_ids == {"task-1234"}
     assert manager.get(task.id).status.value == "RUNNING"
     manager.close()
