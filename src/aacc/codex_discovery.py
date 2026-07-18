@@ -30,6 +30,12 @@ class CodexSession:
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class SessionSignal:
+    status: TaskStatus
+    observed_at: datetime
+
+
 class CodexLocalDiscovery:
     """Reads only safe Codex task metadata from local index files."""
 
@@ -64,15 +70,19 @@ class CodexLocalDiscovery:
         if selected_ids is not None:
             sessions = [session for session in sessions if session["id"] in selected_ids]
         selected = {session["id"] for session in sessions}
-        active_sessions = self._active_sessions(selected)
+        session_signals = self._session_signals(selected)
         active_pids = self._active_pids(selected)
         discovered: list[DiscoveredTask] = []
         for session in sessions:
             conversation_id = session["id"]
             pid = active_pids.get(conversation_id)
-            activity_at = active_sessions.get(conversation_id)
-            updated_at = activity_at or session["updated_at"]
-            if activity_at is not None:
+            signal = session_signals.get(conversation_id)
+            updated_at = signal.observed_at if signal is not None else session["updated_at"]
+            if signal is not None and signal.status is TaskStatus.COMPLETED:
+                status = TaskStatus.COMPLETED
+                message = "Codex 回合已完成"
+                confidence = 0.96
+            elif signal is not None and signal.status is TaskStatus.RUNNING:
                 status = TaskStatus.RUNNING
                 message = "检测到 Codex 会话活动"
                 confidence = 0.9
@@ -102,6 +112,7 @@ class CodexLocalDiscovery:
                         confidence=confidence,
                         started_at=updated_at if status is TaskStatus.RUNNING else None,
                         updated_at=updated_at,
+                        finished_at=updated_at if status is TaskStatus.COMPLETED else None,
                         pid=pid,
                         session_id=conversation_id,
                         metadata={"discovered": True},
@@ -163,23 +174,55 @@ class CodexLocalDiscovery:
             )
         return sessions
 
-    def _active_sessions(self, selected_ids: set[str]) -> dict[str, datetime]:
-        active: dict[str, datetime] = {}
+    def _session_signals(self, selected_ids: set[str]) -> dict[str, SessionSignal]:
+        signals: dict[str, SessionSignal] = {}
         if not selected_ids:
-            return active
+            return signals
         now = self.now()
         for conversation_id in selected_ids:
             try:
-                files = self.session_directory.rglob(f"*{conversation_id}.jsonl")
-                latest = max((self.session_modified_at(path) for path in files), default=None)
+                files = list(self.session_directory.rglob(f"*{conversation_id}.jsonl"))
             except OSError:
                 continue
-            is_recent = latest is not None and (
-                now - latest
-            ).total_seconds() <= self.activity_window_seconds
-            if is_recent and latest is not None:
-                active[conversation_id] = latest
-        return active
+            if not files:
+                continue
+            latest_path = max(files, key=self.session_modified_at)
+            latest_at = self.session_modified_at(latest_path)
+            terminal_signal = self._read_session_signal(latest_path, latest_at)
+            if terminal_signal is not None:
+                signals[conversation_id] = terminal_signal
+                continue
+            if (now - latest_at).total_seconds() <= self.activity_window_seconds:
+                signals[conversation_id] = SessionSignal(TaskStatus.RUNNING, latest_at)
+        return signals
+
+    def _read_session_signal(self, path: Path, fallback: datetime) -> SessionSignal | None:
+        """Read only the tail event metadata, never prompts or response content."""
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, 2)
+                size = handle.tell()
+                handle.seek(max(0, size - 262_144))
+                lines = handle.read().decode("utf-8", errors="ignore").splitlines()
+        except OSError:
+            return None
+        for line in reversed(lines):
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(item, dict) or item.get("type") != "event_msg":
+                continue
+            payload = item.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            event_type = payload.get("type")
+            if event_type not in {"task_started", "task_complete"}:
+                continue
+            observed_at = self._parse_time(item.get("timestamp")) or fallback
+            status = TaskStatus.COMPLETED if event_type == "task_complete" else TaskStatus.RUNNING
+            return SessionSignal(status, observed_at)
+        return None
 
     def _active_pids(self, selected_ids: set[str]) -> dict[str, int]:
         try:

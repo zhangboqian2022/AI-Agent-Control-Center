@@ -133,3 +133,44 @@ def test_discovery_only_returns_explicitly_selected_tasks(tmp_path: Path) -> Non
     tasks = CodexLocalDiscovery(index, processes).discover({"chosen"})
 
     assert [task.state.session_id for task in tasks] == ["chosen"]
+
+
+def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "finished-session"
+    index.write_text(
+        json.dumps(
+            {
+                "id": conversation_id,
+                "thread_name": "已完成任务",
+                "updated_at": "2026-07-18T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    processes = tmp_path / "chat_processes.json"
+    processes.write_text("[]", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    completed_at = datetime(2026, 7, 18, 0, 1, tzinfo=UTC)
+    (sessions / f"rollout-2026-07-18T00-00-00-{conversation_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": completed_at.isoformat().replace("+00:00", "Z"),
+                "type": "event_msg",
+                "payload": {"type": "task_complete"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    tasks = CodexLocalDiscovery(
+        index,
+        processes,
+        session_directory=sessions,
+        now=lambda: datetime(2026, 7, 18, 0, 1, 30, tzinfo=UTC),
+        session_modified_at=lambda _path: completed_at,
+    ).discover({conversation_id})
+
+    assert tasks[0].state.status is TaskStatus.COMPLETED
+    assert tasks[0].state.message == "Codex 回合已完成"
