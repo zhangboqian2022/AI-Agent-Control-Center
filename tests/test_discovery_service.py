@@ -54,7 +54,7 @@ def test_poll_registers_discovered_codex_task(tmp_path: Path) -> None:
     manager.close()
 
 
-def test_poll_auto_monitors_active_tasks_and_honors_muted_ids(tmp_path: Path) -> None:
+def test_poll_auto_monitors_active_tasks_and_honors_inactive_muted_ids(tmp_path: Path) -> None:
     config = default_config()
     store = StateStore(tmp_path / "states.db")
     store.initialize(config.tasks)
@@ -70,15 +70,51 @@ def test_poll_auto_monitors_active_tasks_and_honors_muted_ids(tmp_path: Path) ->
     )
     service = CodexDiscoveryService(manager, discovery=discovery)  # type: ignore[arg-type]
 
-    service.set_monitoring_preferences(set(), set())
+    service.set_monitoring_preferences(set(), set(), set())
     service.poll_once()
 
     assert discovery.selected_ids == {"auto-running"}
     assert service.auto_active_ids() == {"auto-running"}
     assert manager.get(task.id).status.value == "RUNNING"
 
-    service.set_monitoring_preferences(set(), {"auto-running"})
+    discovery.active_ids = set()
+    service.set_monitoring_preferences(set(), set(), {"auto-running"})
     service.poll_once()
 
     assert discovery.selected_ids == set()
+    manager.close()
+
+
+def test_active_task_is_retained_and_reappears_after_removal(tmp_path: Path) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "states.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    task = TaskConfig(
+        id="codex:auto-retained",
+        slot=1,
+        name="自动保留任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    discovery = StubDiscovery(
+        [DiscoveredTask(task, TaskState.new(task.id, "running"))], active_ids={"auto-retained"}
+    )
+    service = CodexDiscoveryService(manager, discovery=discovery)  # type: ignore[arg-type]
+
+    service.poll_once()
+    discovery.active_ids = set()
+    service.poll_once()
+
+    assert service.retained_ids() == {"auto-retained"}
+    assert discovery.selected_ids == {"auto-retained"}
+
+    service.remove_task("auto-retained")
+    service.poll_once()
+
+    assert discovery.selected_ids == set()
+
+    discovery.active_ids = {"auto-retained"}
+    service.poll_once()
+
+    assert discovery.selected_ids == {"auto-retained"}
     manager.close()

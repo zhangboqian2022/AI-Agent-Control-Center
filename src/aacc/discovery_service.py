@@ -20,6 +20,7 @@ class CodexDiscoveryService:
         self.discovery = discovery or CodexLocalDiscovery()
         self.interval_seconds = max(0.5, interval_seconds)
         self._manual_ids: set[str] = set()
+        self._retained_ids: set[str] = set()
         self._muted_ids: set[str] = set()
         self._auto_active_ids: set[str] = set()
         self._selection_lock = threading.RLock()
@@ -30,19 +31,36 @@ class CodexDiscoveryService:
         auto_active_ids = self.discovery.active_session_ids()
         with self._selection_lock:
             self._auto_active_ids = set(auto_active_ids)
-            selected_ids = (self._manual_ids | self._auto_active_ids) - self._muted_ids
+            self._muted_ids -= auto_active_ids
+            self._retained_ids |= auto_active_ids
+            selected_ids = (
+                self._manual_ids | self._retained_ids | self._auto_active_ids
+            ) - self._muted_ids
         tasks = self.discovery.discover(selected_ids)
         for task in tasks:
             self.manager.register(task.config, task.state)
         return len(tasks)
 
     def set_selected_ids(self, selected_ids: set[str]) -> None:
-        self.set_monitoring_preferences(selected_ids, set())
+        self.set_monitoring_preferences(selected_ids, set(), set())
 
-    def set_monitoring_preferences(self, manual_ids: set[str], muted_ids: set[str]) -> None:
+    def set_monitoring_preferences(
+        self, manual_ids: set[str], retained_ids: set[str], muted_ids: set[str]
+    ) -> None:
         with self._selection_lock:
             self._manual_ids = set(manual_ids)
+            self._retained_ids = set(retained_ids) - self._manual_ids
             self._muted_ids = set(muted_ids) - self._manual_ids
+
+    def retained_ids(self) -> set[str]:
+        with self._selection_lock:
+            return set(self._retained_ids)
+
+    def remove_task(self, session_id: str) -> None:
+        with self._selection_lock:
+            self._manual_ids.discard(session_id)
+            self._retained_ids.discard(session_id)
+            self._muted_ids.add(session_id)
 
     def auto_active_ids(self) -> set[str]:
         with self._selection_lock:
