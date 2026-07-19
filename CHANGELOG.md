@@ -2,6 +2,13 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.2.0 — 2026-07-19
+
+- Retained terminal Codex cards until explicit removal, so completed green lights no longer disappear automatically.
+- Added per-card `×` removal, a matching context-menu action, and confirmation-backed bulk cleanup for retained terminal tasks.
+- Added running/retained grouping, compact task counts, and last-activity time to improve scanning.
+- Restored a removed task automatically when a later verified Codex run is detected.
+
 ## 1.1.0 — 2026-07-19
 
 - Added automatic monitoring for up to four recent verified Codex tasks, persistent task muting, stale-start protection, and duplicate-index cleanup.

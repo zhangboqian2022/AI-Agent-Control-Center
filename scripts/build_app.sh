@@ -19,7 +19,7 @@ uv run pyinstaller \
   --exclude-module pytest \
   "$project_root/src/aacc/__main__.py"
 
-/usr/bin/plutil -replace CFBundleShortVersionString -string "1.1.0" \
+/usr/bin/plutil -replace CFBundleShortVersionString -string "1.2.0" \
   "$project_root/dist/AACC.app/Contents/Info.plist"
 /usr/bin/plutil -replace CFBundleVersion -string "1" \
   "$project_root/dist/AACC.app/Contents/Info.plist"

@@ -503,8 +503,8 @@ class MainWindow(QWidget):
         self.running_cards_layout = QVBoxLayout(self.running_cards_widget)
         self.running_cards_layout.setContentsMargins(0, 0, 0, 0)
         self.running_cards_layout.setSpacing(9)
-        retained_header = QWidget()
-        retained_header_layout = QHBoxLayout(retained_header)
+        self.retained_header = QWidget()
+        retained_header_layout = QHBoxLayout(self.retained_header)
         retained_header_layout.setContentsMargins(0, 0, 0, 0)
         self.retained_group_label = QLabel("已完成 · 保留直到移除")
         self.retained_group_label.setObjectName("taskGroupLabel")
@@ -522,7 +522,7 @@ class MainWindow(QWidget):
         self.cards_layout.addWidget(self.empty_tasks_label)
         self.cards_layout.addWidget(self.running_group_label)
         self.cards_layout.addWidget(self.running_cards_widget)
-        self.cards_layout.addWidget(retained_header)
+        self.cards_layout.addWidget(self.retained_header)
         self.cards_layout.addWidget(self.retained_cards_widget)
         self.cards_layout.addStretch()
         self.cards_container.setLayout(self.cards_layout)
@@ -587,11 +587,15 @@ class MainWindow(QWidget):
             #messageLabel { color: #8997aa; font-size: 11px; }
             #updatedLabel { color: #687890; font-size: 10px; }
             #taskSummary { color: #94a3b8; font-size: 11px; font-weight: 700; }
-            #taskGroupLabel { color: #8fa1bb; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+            #taskGroupLabel {
+              color: #8fa1bb; font-size: 10px; font-weight: 800; letter-spacing: 1px;
+            }
             #removeTaskButton, #clearRetainedButton {
               color: #94a3b8; background: transparent; border: none; border-radius: 7px;
             }
-            #removeTaskButton:hover, #clearRetainedButton:hover { color: #ffffff; background: rgba(255,255,255,25); }
+            #removeTaskButton:hover, #clearRetainedButton:hover {
+              color: #ffffff; background: rgba(255,255,255,25);
+            }
             #footer { color: #65758b; font-size: 10px; }
             #headerButton {
               color: #aab6c7;
@@ -691,7 +695,7 @@ class MainWindow(QWidget):
         self.task_summary_label.setVisible(bool(self.cards))
         self.running_group_label.setVisible(bool(running_tasks))
         self.running_cards_widget.setVisible(bool(running_tasks))
-        self.retained_group_label.parentWidget().setVisible(bool(terminal_tasks))
+        self.retained_header.setVisible(bool(terminal_tasks))
         self.retained_cards_widget.setVisible(bool(terminal_tasks))
         self.clear_retained_button.setVisible(
             any(task.id.startswith("codex:") for task in terminal_tasks)
@@ -718,8 +722,11 @@ class MainWindow(QWidget):
     def _rebuild_card_layout(self, layout: QVBoxLayout, tasks: list[TaskConfig]) -> None:
         while layout.count():
             item = layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().setParent(None)
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
         for task in tasks:
             layout.addWidget(self.cards[task.id])
 

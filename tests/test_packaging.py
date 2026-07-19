@@ -61,15 +61,15 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-1.1.0.dmg" in script
+    assert "AACC-1.2.0.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
 
 
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
-    assert __version__ == "1.1.0"
-    assert 'version = "1.1.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'CFBundleShortVersionString -string "1.1.0"' in (
+    assert __version__ == "1.2.0"
+    assert 'version = "1.2.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'CFBundleShortVersionString -string "1.2.0"' in (
         ROOT / "scripts" / "build_app.sh"
     ).read_text(encoding="utf-8")
 

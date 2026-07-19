@@ -2,7 +2,7 @@
 
 > A local-first macOS desktop control center for the AI coding agents you choose to monitor.
 
-[中文文档](README.zh-CN.md) · [Download AACC 1.1.0](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.1.0/AACC-1.1.0.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.1.0) · [Product design](docs/product-design.md)
+[中文文档](README.zh-CN.md) · [Download AACC 1.2.0](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.2.0/AACC-1.2.0.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.2.0) · [Product design](docs/product-design.md)
 
 AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative focus/input automation.
 
@@ -11,6 +11,7 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 ## Highlights
 
 - **Automatic active-task discovery.** Recent, verified running Codex tasks appear automatically; mute any task you do not want AACC to observe.
+- **Results stay visible.** Completed, failed, stopped, and cancelled Codex tasks stay on the panel until you remove them, so a green result light is never lost automatically.
 - **Fast visual scanning.** Large status lights distinguish running, waiting, completed, warning, error, and unknown states.
 - **Local-first by design.** AACC reads only the local task metadata needed for status detection and never uploads task content.
 - **Reliable status boundaries.** Codex session `task_started` and `task_complete` events take priority over file activity to avoid stale “running” indicators.
@@ -21,7 +22,7 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 
 ### Recommended: download the DMG
 
-Download [AACC-1.1.0.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.1.0/AACC-1.1.0.dmg), open it, and drag `AACC.app` to Applications.
+Download [AACC-1.2.0.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.2.0/AACC-1.2.0.dmg), open it, and drag `AACC.app` to Applications.
 
 The public build is ad-hoc signed and is not notarized by Apple. If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** only after confirming that the DMG came from this release page.
 
@@ -48,8 +49,9 @@ To create a distributable image:
 1. Launch AACC. Open its settings with the gear icon.
 2. Recent, verified running Codex tasks are automatically checked and added to the panel (up to four at a time).
 3. Open **Choose Codex tasks to monitor** to keep inactive tasks manually, or uncheck an automatic task to mute it. Use **Restore automatic detection** to undo mutes.
-4. Click **Start monitoring**. Only manually selected or unmuted active tasks are displayed and polled.
-5. Drag the panel to a fixed location; use settings to toggle always-on-top and return it to the desktop’s top-right corner.
+4. A completed task stays in the retained section with its terminal status light. Use its `×`, the **Remove from panel** context action, or confirmed **Clear retained tasks** to remove it.
+5. If a removed task has verified new activity later, AACC automatically shows it again.
+6. Drag the panel to a fixed location; use settings to toggle always-on-top and return it to the desktop’s top-right corner.
 
 A single click selects a card and keeps AACC visible. Use the card’s context menu and **Switch to task** when you intentionally want to focus Codex.
 
