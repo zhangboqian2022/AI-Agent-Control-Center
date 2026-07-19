@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizeGrip,
@@ -146,6 +147,9 @@ class TaskCard(QFrame):
         status_line.addWidget(self.message_label, 1)
         details_layout.addWidget(self.name_label)
         details_layout.addLayout(status_line)
+        self.updated_label = QLabel()
+        self.updated_label.setObjectName("updatedLabel")
+        details_layout.addWidget(self.updated_label)
         root.addWidget(self.details)
 
         self._effect = QGraphicsOpacityEffect(self.dot)
@@ -165,6 +169,9 @@ class TaskCard(QFrame):
         self.status_label.setText(STATUS_NAMES[state.status])
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
         self.message_label.setText(state.message or "暂无状态说明")
+        self.updated_label.setText(
+            f"最后活动：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
+        )
         self.timer_label.setText(_elapsed(state))
         self.setToolTip(
             f"{self.task.name}\n{STATUS_NAMES[state.status]} · {state.source} · "
@@ -480,14 +487,43 @@ class MainWindow(QWidget):
         layout.addLayout(header)
 
         self.cards: dict[str, TaskCard] = {}
+        self._card_order_ids: list[str] = []
         self.cards_container = QWidget()
         self.cards_layout = QVBoxLayout()
         self.cards_layout.setSpacing(9)
         self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.task_summary_label = QLabel("运行中：0 · 已完成：0 · 显示：0")
+        self.task_summary_label.setObjectName("taskSummary")
         self.empty_tasks_label = QLabel("未选择 Codex 任务 · 点击 ⚙ 选择监控任务")
         self.empty_tasks_label.setObjectName("emptyTasks")
         self.empty_tasks_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.running_group_label = QLabel("运行中")
+        self.running_group_label.setObjectName("taskGroupLabel")
+        self.running_cards_widget = QWidget()
+        self.running_cards_layout = QVBoxLayout(self.running_cards_widget)
+        self.running_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.running_cards_layout.setSpacing(9)
+        retained_header = QWidget()
+        retained_header_layout = QHBoxLayout(retained_header)
+        retained_header_layout.setContentsMargins(0, 0, 0, 0)
+        self.retained_group_label = QLabel("已完成 · 保留直到移除")
+        self.retained_group_label.setObjectName("taskGroupLabel")
+        self.clear_retained_button = QPushButton("全部清除")
+        self.clear_retained_button.setObjectName("clearRetainedButton")
+        self.clear_retained_button.clicked.connect(self.clear_retained_tasks)
+        retained_header_layout.addWidget(self.retained_group_label)
+        retained_header_layout.addStretch()
+        retained_header_layout.addWidget(self.clear_retained_button)
+        self.retained_cards_widget = QWidget()
+        self.retained_cards_layout = QVBoxLayout(self.retained_cards_widget)
+        self.retained_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.retained_cards_layout.setSpacing(9)
+        self.cards_layout.addWidget(self.task_summary_label)
         self.cards_layout.addWidget(self.empty_tasks_label)
+        self.cards_layout.addWidget(self.running_group_label)
+        self.cards_layout.addWidget(self.running_cards_widget)
+        self.cards_layout.addWidget(retained_header)
+        self.cards_layout.addWidget(self.retained_cards_widget)
         self.cards_layout.addStretch()
         self.cards_container.setLayout(self.cards_layout)
         self.cards_scroll = QScrollArea()
@@ -549,6 +585,13 @@ class MainWindow(QWidget):
             #timerLabel { color: #8f9cb0; font-family: Menlo; font-size: 11px; }
             #taskName { color: #d6deea; font-size: 13px; font-weight: 600; }
             #messageLabel { color: #8997aa; font-size: 11px; }
+            #updatedLabel { color: #687890; font-size: 10px; }
+            #taskSummary { color: #94a3b8; font-size: 11px; font-weight: 700; }
+            #taskGroupLabel { color: #8fa1bb; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+            #removeTaskButton, #clearRetainedButton {
+              color: #94a3b8; background: transparent; border: none; border-radius: 7px;
+            }
+            #removeTaskButton:hover, #clearRetainedButton:hover { color: #ffffff; background: rgba(255,255,255,25); }
             #footer { color: #65758b; font-size: 10px; }
             #headerButton {
               color: #aab6c7;
@@ -625,7 +668,7 @@ class MainWindow(QWidget):
         desired_ids = {task.id for task in visible}
         for task_id, card in tuple(self.cards.items()):
             if task_id not in desired_ids:
-                self.cards_layout.removeWidget(card)
+                card.setParent(None)
                 card.deleteLater()
                 del self.cards[task_id]
         for task in visible:
@@ -636,8 +679,52 @@ class MainWindow(QWidget):
                 new_card.remove_requested.connect(self.remove_codex_task)
                 new_card.set_compact(self.compact_mode)
                 self.cards[task.id] = new_card
-                self.cards_layout.insertWidget(self.cards_layout.count() - 1, new_card)
+        running_tasks, terminal_tasks = self._grouped_tasks(visible, states)
+        self._rebuild_card_layout(self.running_cards_layout, running_tasks)
+        self._rebuild_card_layout(self.retained_cards_layout, terminal_tasks)
+        self._card_order_ids = [task.id for task in running_tasks + terminal_tasks]
+        self.task_summary_label.setText(
+            f"运行中：{len(running_tasks)} · 已完成：{len(terminal_tasks)} · "
+            f"显示：{len(self._card_order_ids)}"
+        )
         self.empty_tasks_label.setVisible(not self.cards)
+        self.task_summary_label.setVisible(bool(self.cards))
+        self.running_group_label.setVisible(bool(running_tasks))
+        self.running_cards_widget.setVisible(bool(running_tasks))
+        self.retained_group_label.parentWidget().setVisible(bool(terminal_tasks))
+        self.retained_cards_widget.setVisible(bool(terminal_tasks))
+        self.clear_retained_button.setVisible(
+            any(task.id.startswith("codex:") for task in terminal_tasks)
+        )
+
+    @staticmethod
+    def _is_terminal(state: TaskState) -> bool:
+        return state.status in {
+            TaskStatus.COMPLETED,
+            TaskStatus.ERROR,
+            TaskStatus.CANCELLED,
+            TaskStatus.STOPPED,
+        }
+
+    def _grouped_tasks(
+        self, visible: list[TaskConfig], states: dict[str, TaskState]
+    ) -> tuple[list[TaskConfig], list[TaskConfig]]:
+        active = [task for task in visible if not self._is_terminal(states[task.id])]
+        terminal = [task for task in visible if self._is_terminal(states[task.id])]
+        active.sort(key=lambda task: states[task.id].updated_at, reverse=True)
+        terminal.sort(key=lambda task: states[task.id].updated_at, reverse=True)
+        return active, terminal
+
+    def _rebuild_card_layout(self, layout: QVBoxLayout, tasks: list[TaskConfig]) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().setParent(None)
+        for task in tasks:
+            layout.addWidget(self.cards[task.id])
+
+    def card_order(self) -> list[str]:
+        return list(self._card_order_ids)
 
     def _apply_state(self, state: TaskState) -> None:
         card = self.cards.get(state.task_id)
@@ -710,6 +797,26 @@ class MainWindow(QWidget):
         self._settings.setValue("codex_muted_tasks", sorted(self.codex_muted_ids))
         self._apply_codex_monitoring_preferences()
         self.sync_cards()
+
+    def clear_retained_tasks(self) -> None:
+        task_ids = [
+            task_id
+            for task_id in self._card_order_ids
+            if task_id.startswith("codex:") and self._is_terminal(self.manager.get(task_id))
+        ]
+        if not task_ids:
+            return
+        answer = QMessageBox.question(
+            self,
+            "清除已完成任务",
+            f"确定从面板移除 {len(task_ids)} 个已完成 Codex 任务吗？",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for task_id in task_ids:
+            self.remove_codex_task(task_id)
 
     def open_codex_task_selector(self) -> None:
         auto_active_ids = self.codex_auto_active_ids()

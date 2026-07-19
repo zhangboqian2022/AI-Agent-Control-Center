@@ -266,3 +266,38 @@ def test_completed_codex_task_remains_visible_until_removed(tmp_path: Path, qtbo
     assert task.id not in window.cards
     assert preferences[-1] == (set(), set(), {"kept-finished"})
     manager.close()
+
+
+def test_codex_cards_are_grouped_running_before_retained_terminal(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    finished = TaskConfig(
+        id="codex:finished",
+        slot=1,
+        name="已完成任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    running = TaskConfig(
+        id="codex:running",
+        slot=2,
+        name="执行中任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(finished, TaskState.new(finished.id, "completed", source="codex_local"))
+    manager.register(running, TaskState.new(running.id, "running", source="codex_local"))
+
+    window.set_codex_monitoring_preferences(set(), {"finished", "running"}, set())
+
+    assert window.card_order() == ["codex:running", "codex:finished"]
+    assert "运行中：1" in window.task_summary_label.text()
+    assert "已完成：1" in window.task_summary_label.text()
+    assert window.cards[finished.id].updated_label.text().startswith("最后活动：")
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "aacc.gui.QMessageBox.question", lambda *_args: 0x00004000
+    )
+    window.clear_retained_tasks()
+    assert finished.id not in window.cards
+    assert running.id in window.cards
+    manager.close()
