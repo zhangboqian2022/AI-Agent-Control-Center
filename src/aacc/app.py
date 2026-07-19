@@ -103,6 +103,7 @@ def main() -> int:
         runtime.automation,
         codex_sessions=runtime.discovery.catalog,
         codex_auto_active_ids=runtime.discovery.auto_active_ids,
+        codex_retained_ids=runtime.discovery.retained_ids,
         set_codex_monitoring_preferences=runtime.discovery.set_monitoring_preferences,
     )
     window.show()

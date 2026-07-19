@@ -202,15 +202,15 @@ def test_auto_running_task_is_visible_without_manual_selection_and_can_be_muted(
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
     auto_ids = {"auto-now"}
-    preferences: list[tuple[set[str], set[str]]] = []
+    preferences: list[tuple[set[str], set[str], set[str]]] = []
     settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
     window = MainWindow(
         manager,
         MacAutomation(config),
         enable_tray=False,
         codex_auto_active_ids=lambda: set(auto_ids),
-        set_codex_monitoring_preferences=lambda manual, muted: preferences.append(
-            (set(manual), set(muted))
+        set_codex_monitoring_preferences=lambda manual, retained, muted: preferences.append(
+            (set(manual), set(retained), set(muted))
         ),
         settings=settings,
     )
@@ -227,8 +227,42 @@ def test_auto_running_task_is_visible_without_manual_selection_and_can_be_muted(
     assert list(window.cards) == [task.id]
     assert window.codex_selected_ids == {"auto-now"}
 
-    window.set_codex_monitoring_preferences(set(), {"auto-now"})
+    window.set_codex_monitoring_preferences(set(), set(), {"auto-now"})
 
     assert not window.cards
-    assert preferences[-1] == (set(), {"auto-now"})
+    assert preferences[-1] == (set(), set(), {"auto-now"})
+    manager.close()
+
+
+def test_completed_codex_task_remains_visible_until_removed(tmp_path: Path, qtbot: object) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    preferences: list[tuple[set[str], set[str], set[str]]] = []
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        MacAutomation(config),
+        enable_tray=False,
+        set_codex_monitoring_preferences=lambda manual, retained, muted: preferences.append(
+            (set(manual), set(retained), set(muted))
+        ),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="codex:kept-finished",
+        slot=1,
+        name="保留的已完成任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "completed", source="codex_local"))
+
+    window.set_codex_monitoring_preferences(set(), {"kept-finished"}, set())
+
+    assert task.id in window.cards
+    window.remove_codex_task(task.id)
+    assert task.id not in window.cards
+    assert preferences[-1] == (set(), set(), {"kept-finished"})
     manager.close()

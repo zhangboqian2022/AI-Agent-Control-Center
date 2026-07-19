@@ -86,6 +86,7 @@ def _elapsed(state: TaskState) -> str:
 
 class TaskCard(QFrame):
     action_requested = Signal(str, str)
+    remove_requested = Signal(str)
 
     def __init__(self, task: TaskConfig, state: TaskState, blink_attention: bool = True) -> None:
         super().__init__()
@@ -117,6 +118,14 @@ class TaskCard(QFrame):
         top.addWidget(self.agent_label)
         top.addStretch()
         top.addWidget(self.timer_label)
+        if task.id.startswith("codex:"):
+            remove_button = QPushButton("×")
+            remove_button.setObjectName("removeTaskButton")
+            remove_button.setAccessibleName("从面板移除")
+            remove_button.setToolTip("停止监控并从面板移除")
+            remove_button.setFixedSize(28, 28)
+            remove_button.clicked.connect(lambda: self.remove_requested.emit(self.task.id))
+            top.addWidget(remove_button)
         root.addLayout(top)
 
         self.details = QWidget()
@@ -212,6 +221,9 @@ class TaskCard(QFrame):
             )
         copy_action = menu.addAction("复制任务信息")
         copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
+        if self.task.id.startswith("codex:"):
+            remove_action = menu.addAction("从面板移除")
+            remove_action.triggered.connect(lambda: self.remove_requested.emit(self.task.id))
         return menu
 
     def contextMenuEvent(self, event: object) -> None:
@@ -364,7 +376,9 @@ class MainWindow(QWidget):
         enable_tray: bool = True,
         codex_sessions: Callable[[], list[CodexSession]] | None = None,
         codex_auto_active_ids: Callable[[], set[str]] | None = None,
-        set_codex_monitoring_preferences: Callable[[set[str], set[str]], None] | None = None,
+        codex_retained_ids: Callable[[], set[str]] | None = None,
+        set_codex_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
+        | None = None,
         settings: QSettings | None = None,
     ) -> None:
         super().__init__()
@@ -379,8 +393,10 @@ class MainWindow(QWidget):
         self._settings = settings or QSettings("AACC", "AACC")
         self._codex_sessions = codex_sessions or (lambda: [])
         self._codex_auto_active_ids = codex_auto_active_ids or (lambda: set())
+        self._codex_retained_ids = codex_retained_ids or (lambda: set())
         self._set_codex_monitoring_preferences = (
-            set_codex_monitoring_preferences or (lambda _manual_ids, _muted_ids: None)
+            set_codex_monitoring_preferences
+            or (lambda _manual_ids, _retained_ids, _muted_ids: None)
         )
         saved_codex_tasks = self._settings.value(
             "codex_manual_tasks", self._settings.value("codex_selected_tasks")
@@ -391,6 +407,13 @@ class MainWindow(QWidget):
             self.codex_manual_ids = {str(value) for value in saved_codex_tasks}
         else:
             self.codex_manual_ids = set()
+        saved_retained_tasks = self._settings.value("codex_retained_tasks")
+        if isinstance(saved_retained_tasks, str):
+            self.codex_retained_ids = {saved_retained_tasks}
+        elif isinstance(saved_retained_tasks, list):
+            self.codex_retained_ids = {str(value) for value in saved_retained_tasks}
+        else:
+            self.codex_retained_ids = set()
         saved_muted_tasks = self._settings.value("codex_muted_tasks")
         if isinstance(saved_muted_tasks, str):
             self.codex_muted_ids = {saved_muted_tasks}
@@ -565,6 +588,7 @@ class MainWindow(QWidget):
         self.tray.show()
 
     def refresh(self) -> None:
+        self._sync_codex_retained_ids()
         self.sync_cards()
         for state in self.manager.list():
             self._apply_state(state)
@@ -588,7 +612,9 @@ class MainWindow(QWidget):
 
     @property
     def codex_selected_ids(self) -> set[str]:
-        return (self.codex_manual_ids | self.codex_auto_active_ids()) - self.codex_muted_ids
+        return (
+            self.codex_manual_ids | self.codex_retained_ids | self.codex_auto_active_ids()
+        ) - self.codex_muted_ids
 
     def codex_auto_active_ids(self) -> set[str]:
         return set(self._codex_auto_active_ids())
@@ -607,6 +633,7 @@ class MainWindow(QWidget):
             if existing_card is None:
                 new_card = TaskCard(task, states[task.id], self.config.app.blink_attention)
                 new_card.action_requested.connect(self._perform_action)
+                new_card.remove_requested.connect(self.remove_codex_task)
                 new_card.set_compact(self.compact_mode)
                 self.cards[task.id] = new_card
                 self.cards_layout.insertWidget(self.cards_layout.count() - 1, new_card)
@@ -644,21 +671,45 @@ class MainWindow(QWidget):
         self.sync_cards()
 
     def set_codex_selected_ids(self, selected_ids: set[str]) -> None:
-        self.set_codex_monitoring_preferences(selected_ids, set())
+        self.set_codex_monitoring_preferences(selected_ids, set(), set())
 
     def set_codex_monitoring_preferences(
-        self, manual_ids: set[str], muted_ids: set[str]
+        self, manual_ids: set[str], retained_ids: set[str], muted_ids: set[str]
     ) -> None:
         self.codex_manual_ids = set(manual_ids)
+        self.codex_retained_ids = set(retained_ids) - self.codex_manual_ids
         self.codex_muted_ids = set(muted_ids) - self.codex_manual_ids
         self._settings.setValue("codex_selected_tasks", sorted(self.codex_manual_ids))
         self._settings.setValue("codex_manual_tasks", sorted(self.codex_manual_ids))
+        self._settings.setValue("codex_retained_tasks", sorted(self.codex_retained_ids))
         self._settings.setValue("codex_muted_tasks", sorted(self.codex_muted_ids))
         self._apply_codex_monitoring_preferences()
         self.sync_cards()
 
     def _apply_codex_monitoring_preferences(self) -> None:
-        self._set_codex_monitoring_preferences(self.codex_manual_ids, self.codex_muted_ids)
+        self._set_codex_monitoring_preferences(
+            self.codex_manual_ids, self.codex_retained_ids, self.codex_muted_ids
+        )
+
+    def _sync_codex_retained_ids(self) -> None:
+        retained_ids = self._codex_retained_ids()
+        if retained_ids != self.codex_retained_ids:
+            self.codex_retained_ids = set(retained_ids)
+            self._settings.setValue("codex_retained_tasks", sorted(self.codex_retained_ids))
+
+    def remove_codex_task(self, task_id: str) -> None:
+        if not task_id.startswith("codex:"):
+            return
+        session_id = task_id.removeprefix("codex:")
+        self.codex_manual_ids.discard(session_id)
+        self.codex_retained_ids.discard(session_id)
+        self.codex_muted_ids.add(session_id)
+        self._settings.setValue("codex_selected_tasks", sorted(self.codex_manual_ids))
+        self._settings.setValue("codex_manual_tasks", sorted(self.codex_manual_ids))
+        self._settings.setValue("codex_retained_tasks", sorted(self.codex_retained_ids))
+        self._settings.setValue("codex_muted_tasks", sorted(self.codex_muted_ids))
+        self._apply_codex_monitoring_preferences()
+        self.sync_cards()
 
     def open_codex_task_selector(self) -> None:
         auto_active_ids = self.codex_auto_active_ids()
@@ -667,11 +718,14 @@ class MainWindow(QWidget):
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             selected_ids = dialog.selected_ids()
-            manual_ids = (self.codex_manual_ids & selected_ids) | (selected_ids - auto_active_ids)
+            retained_ids = self.codex_retained_ids & selected_ids
+            manual_ids = (self.codex_manual_ids & selected_ids) | (
+                selected_ids - auto_active_ids - retained_ids
+            )
             muted_ids = (self.codex_muted_ids | (auto_active_ids - selected_ids)) - selected_ids
             if dialog.restore_auto_requested():
                 muted_ids -= auto_active_ids
-            self.set_codex_monitoring_preferences(manual_ids, muted_ids)
+            self.set_codex_monitoring_preferences(manual_ids, retained_ids, muted_ids)
 
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
