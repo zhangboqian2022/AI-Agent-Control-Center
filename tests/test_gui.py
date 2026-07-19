@@ -4,8 +4,9 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication, QScrollArea
 
 from aacc.automation import MacAutomation
+from aacc.codex_discovery import CodexSession
 from aacc.config import default_config
-from aacc.gui import STATUS_COLORS, MainWindow, TaskCard
+from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -166,4 +167,68 @@ def test_window_declares_persisted_setting_keys(tmp_path: Path, qtbot: object) -
         "visible_agents",
     }
     assert QApplication.instance() is not None
+    manager.close()
+
+
+def test_selector_marks_auto_running_task_checked_and_can_restore_automatic_detection(
+    tmp_path: Path, qtbot: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    window = MainWindow(manager, MacAutomation(config), enable_tray=False)
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    session = CodexSession(
+        conversation_id="auto-now",
+        title="自动运行任务",
+        updated_at=TaskState.new("example", "running").updated_at,
+    )
+
+    dialog = CodexTaskSelectionDialog([session], {"auto-now"}, {"auto-now"}, window)
+
+    assert dialog.tasks.item(0).checkState() is Qt.CheckState.Checked
+    assert "自动监控 · 运行中" in dialog.tasks.item(0).text()
+    dialog.restore_automatic_detection()
+    assert dialog.restore_auto_requested() is True
+    manager.close()
+
+
+def test_auto_running_task_is_visible_without_manual_selection_and_can_be_muted(
+    tmp_path: Path, qtbot: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    auto_ids = {"auto-now"}
+    preferences: list[tuple[set[str], set[str]]] = []
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        MacAutomation(config),
+        enable_tray=False,
+        codex_auto_active_ids=lambda: set(auto_ids),
+        set_codex_monitoring_preferences=lambda manual, muted: preferences.append(
+            (set(manual), set(muted))
+        ),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="codex:auto-now",
+        slot=1,
+        name="自动加入的任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.sync_cards()
+
+    assert list(window.cards) == [task.id]
+    assert window.codex_selected_ids == {"auto-now"}
+
+    window.set_codex_monitoring_preferences(set(), {"auto-now"})
+
+    assert not window.cards
+    assert preferences[-1] == (set(), {"auto-now"})
     manager.close()

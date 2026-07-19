@@ -19,22 +19,34 @@ class CodexDiscoveryService:
         self.manager = manager
         self.discovery = discovery or CodexLocalDiscovery()
         self.interval_seconds = max(0.5, interval_seconds)
-        self._selected_ids: set[str] = set()
+        self._manual_ids: set[str] = set()
+        self._muted_ids: set[str] = set()
+        self._auto_active_ids: set[str] = set()
         self._selection_lock = threading.RLock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="aacc-codex-discovery", daemon=True)
 
     def poll_once(self) -> int:
+        auto_active_ids = self.discovery.active_session_ids()
         with self._selection_lock:
-            selected_ids = set(self._selected_ids)
+            self._auto_active_ids = set(auto_active_ids)
+            selected_ids = (self._manual_ids | self._auto_active_ids) - self._muted_ids
         tasks = self.discovery.discover(selected_ids)
         for task in tasks:
             self.manager.register(task.config, task.state)
         return len(tasks)
 
     def set_selected_ids(self, selected_ids: set[str]) -> None:
+        self.set_monitoring_preferences(selected_ids, set())
+
+    def set_monitoring_preferences(self, manual_ids: set[str], muted_ids: set[str]) -> None:
         with self._selection_lock:
-            self._selected_ids = set(selected_ids)
+            self._manual_ids = set(manual_ids)
+            self._muted_ids = set(muted_ids) - self._manual_ids
+
+    def auto_active_ids(self) -> set[str]:
+        with self._selection_lock:
+            return set(self._auto_active_ids)
 
     def catalog(self) -> list[CodexSession]:
         return self.discovery.catalog()

@@ -143,12 +143,22 @@ class CodexLocalDiscovery:
             )
         ]
 
+    def active_session_ids(self, *, limit: int = 4) -> set[str]:
+        """Return a small set of recently verified active sessions for auto-monitoring."""
+        active: set[str] = set()
+        for task in self.discover():
+            if task.state.status is TaskStatus.RUNNING and task.state.session_id is not None:
+                active.add(task.state.session_id)
+                if len(active) >= max(1, limit):
+                    break
+        return active
+
     def _sessions(self) -> list[dict[str, Any]]:
         try:
             lines = self.session_index_path.read_text(encoding="utf-8").splitlines()
         except OSError:
             return []
-        sessions: list[dict[str, Any]] = []
+        sessions_by_id: dict[str, dict[str, Any]] = {}
         for line in lines:
             if len(line) > 16_384:
                 continue
@@ -165,36 +175,60 @@ class CodexLocalDiscovery:
             if updated_at is None:
                 continue
             title = item.get("thread_name")
-            sessions.append(
-                {
-                    "id": conversation_id,
-                    "title": title[:120] if isinstance(title, str) else "",
-                    "updated_at": updated_at,
-                }
-            )
-        return sessions
+            session = {
+                "id": conversation_id,
+                "title": title[:120] if isinstance(title, str) else "",
+                "updated_at": updated_at,
+            }
+            previous = sessions_by_id.get(conversation_id)
+            if previous is None or session["updated_at"] >= previous["updated_at"]:
+                sessions_by_id[conversation_id] = session
+        return list(sessions_by_id.values())
 
     def _session_signals(self, selected_ids: set[str]) -> dict[str, SessionSignal]:
         signals: dict[str, SessionSignal] = {}
         if not selected_ids:
             return signals
         now = self.now()
-        for conversation_id in selected_ids:
-            try:
-                files = list(self.session_directory.rglob(f"*{conversation_id}.jsonl"))
-            except OSError:
-                continue
+        files_by_id = self._session_paths(selected_ids)
+        for conversation_id, files in files_by_id.items():
             if not files:
                 continue
-            latest_path = max(files, key=self.session_modified_at)
-            latest_at = self.session_modified_at(latest_path)
+            try:
+                latest_path = max(files, key=self.session_modified_at)
+                latest_at = self.session_modified_at(latest_path)
+            except OSError:
+                continue
             terminal_signal = self._read_session_signal(latest_path, latest_at)
-            if terminal_signal is not None:
+            if terminal_signal is not None and terminal_signal.status is TaskStatus.COMPLETED:
                 signals[conversation_id] = terminal_signal
                 continue
-            if (now - latest_at).total_seconds() <= self.activity_window_seconds:
+            if terminal_signal is not None and self._is_recent(now, terminal_signal.observed_at):
+                signals[conversation_id] = terminal_signal
+                continue
+            if self._is_recent(now, latest_at):
                 signals[conversation_id] = SessionSignal(TaskStatus.RUNNING, latest_at)
         return signals
+
+    def _session_paths(self, selected_ids: set[str]) -> dict[str, list[Path]]:
+        paths_by_id: dict[str, list[Path]] = {
+            conversation_id: [] for conversation_id in selected_ids
+        }
+        if not paths_by_id:
+            return paths_by_id
+        try:
+            paths = self.session_directory.rglob("*.jsonl")
+            for path in paths:
+                filename = path.name
+                for conversation_id, matched_paths in paths_by_id.items():
+                    if filename.endswith(f"{conversation_id}.jsonl"):
+                        matched_paths.append(path)
+        except OSError:
+            return {conversation_id: [] for conversation_id in selected_ids}
+        return paths_by_id
+
+    def _is_recent(self, now: datetime, observed_at: datetime) -> bool:
+        return (now - observed_at).total_seconds() <= self.activity_window_seconds
 
     def _read_session_signal(self, path: Path, fallback: datetime) -> SessionSignal | None:
         """Read only the tail event metadata, never prompts or response content."""

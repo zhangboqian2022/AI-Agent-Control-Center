@@ -250,7 +250,11 @@ class SettingsDialog(QDialog):
         dock = QPushButton("停靠到桌面右上角")
         dock.clicked.connect(window.dock_top_right)
         layout.addWidget(dock)
-        codex_tasks = QPushButton(f"选择监控的 Codex 任务（{len(window.codex_selected_ids)} 已选）")
+        codex_tasks = QPushButton(
+            "选择监控的 Codex 任务"
+            f"（{len(window.codex_selected_ids)} 已选 · "
+            f"{len(window.codex_auto_active_ids())} 自动运行）"
+        )
         codex_tasks.clicked.connect(window.open_codex_task_selector)
         layout.addWidget(codex_tasks)
         layout.addWidget(QLabel("显示哪些程序"))
@@ -274,17 +278,28 @@ class SettingsDialog(QDialog):
 
 class CodexTaskSelectionDialog(QDialog):
     def __init__(
-        self, sessions: list[CodexSession], selected_ids: set[str], parent: QWidget
+        self,
+        sessions: list[CodexSession],
+        selected_ids: set[str],
+        auto_active_ids: set[str],
+        parent: QWidget,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("选择监控的 Codex 任务")
         self.setMinimumSize(540, 460)
+        self._auto_active_ids = set(auto_active_ids)
+        self._restore_auto = False
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("仅勾选的任务会读取活动状态并显示在面板中。"))
+        layout.addWidget(
+            QLabel("运行中的任务会自动勾选；取消勾选可停止自动监控该任务。")
+        )
         self.tasks = QListWidget()
         for session in sessions:
+            automatic = session.conversation_id in self._auto_active_ids
+            automatic_label = "\n自动监控 · 运行中" if automatic else ""
             item = QListWidgetItem(
                 f"{session.title}\n{session.updated_at.astimezone().strftime('%Y-%m-%d %H:%M')}"
+                f"{automatic_label}"
             )
             item.setData(Qt.ItemDataRole.UserRole, session.conversation_id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -299,9 +314,12 @@ class CodexTaskSelectionDialog(QDialog):
         select_all.clicked.connect(lambda: self._set_all(Qt.CheckState.Checked))
         clear_all = QPushButton("全部取消")
         clear_all.clicked.connect(lambda: self._set_all(Qt.CheckState.Unchecked))
+        restore_auto = QPushButton("恢复自动识别")
+        restore_auto.clicked.connect(self.restore_automatic_detection)
         buttons = QHBoxLayout()
         buttons.addWidget(select_all)
         buttons.addWidget(clear_all)
+        buttons.addWidget(restore_auto)
         buttons.addStretch()
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
@@ -322,6 +340,16 @@ class CodexTaskSelectionDialog(QDialog):
         for index in range(self.tasks.count()):
             self.tasks.item(index).setCheckState(state)
 
+    def restore_automatic_detection(self) -> None:
+        self._restore_auto = True
+        for index in range(self.tasks.count()):
+            item = self.tasks.item(index)
+            if str(item.data(Qt.ItemDataRole.UserRole)) in self._auto_active_ids:
+                item.setCheckState(Qt.CheckState.Checked)
+
+    def restore_auto_requested(self) -> bool:
+        return self._restore_auto
+
 
 class MainWindow(QWidget):
     state_received = Signal(object)
@@ -335,7 +363,8 @@ class MainWindow(QWidget):
         *,
         enable_tray: bool = True,
         codex_sessions: Callable[[], list[CodexSession]] | None = None,
-        set_codex_monitoring: Callable[[set[str]], None] | None = None,
+        codex_auto_active_ids: Callable[[], set[str]] | None = None,
+        set_codex_monitoring_preferences: Callable[[set[str], set[str]], None] | None = None,
         settings: QSettings | None = None,
     ) -> None:
         super().__init__()
@@ -349,15 +378,27 @@ class MainWindow(QWidget):
         self._quitting = False
         self._settings = settings or QSettings("AACC", "AACC")
         self._codex_sessions = codex_sessions or (lambda: [])
-        self._set_codex_monitoring = set_codex_monitoring or (lambda _ids: None)
-        saved_codex_tasks = self._settings.value("codex_selected_tasks")
+        self._codex_auto_active_ids = codex_auto_active_ids or (lambda: set())
+        self._set_codex_monitoring_preferences = (
+            set_codex_monitoring_preferences or (lambda _manual_ids, _muted_ids: None)
+        )
+        saved_codex_tasks = self._settings.value(
+            "codex_manual_tasks", self._settings.value("codex_selected_tasks")
+        )
         if isinstance(saved_codex_tasks, str):
-            self.codex_selected_ids = {saved_codex_tasks}
+            self.codex_manual_ids = {saved_codex_tasks}
         elif isinstance(saved_codex_tasks, list):
-            self.codex_selected_ids = {str(value) for value in saved_codex_tasks}
+            self.codex_manual_ids = {str(value) for value in saved_codex_tasks}
         else:
-            self.codex_selected_ids = set()
-        self._set_codex_monitoring(self.codex_selected_ids)
+            self.codex_manual_ids = set()
+        saved_muted_tasks = self._settings.value("codex_muted_tasks")
+        if isinstance(saved_muted_tasks, str):
+            self.codex_muted_ids = {saved_muted_tasks}
+        elif isinstance(saved_muted_tasks, list):
+            self.codex_muted_ids = {str(value) for value in saved_muted_tasks}
+        else:
+            self.codex_muted_ids = set()
+        self._apply_codex_monitoring_preferences()
         saved_agents = self._settings.value("visible_agents")
         if isinstance(saved_agents, str):
             self.visible_agent_types = {saved_agents}
@@ -545,6 +586,13 @@ class MainWindow(QWidget):
         ]
         return tasks
 
+    @property
+    def codex_selected_ids(self) -> set[str]:
+        return (self.codex_manual_ids | self.codex_auto_active_ids()) - self.codex_muted_ids
+
+    def codex_auto_active_ids(self) -> set[str]:
+        return set(self._codex_auto_active_ids())
+
     def sync_cards(self) -> None:
         states = {state.task_id: state for state in self.manager.list()}
         visible = self._visible_tasks()
@@ -596,15 +644,34 @@ class MainWindow(QWidget):
         self.sync_cards()
 
     def set_codex_selected_ids(self, selected_ids: set[str]) -> None:
-        self.codex_selected_ids = set(selected_ids)
-        self._settings.setValue("codex_selected_tasks", sorted(self.codex_selected_ids))
-        self._set_codex_monitoring(self.codex_selected_ids)
+        self.set_codex_monitoring_preferences(selected_ids, set())
+
+    def set_codex_monitoring_preferences(
+        self, manual_ids: set[str], muted_ids: set[str]
+    ) -> None:
+        self.codex_manual_ids = set(manual_ids)
+        self.codex_muted_ids = set(muted_ids) - self.codex_manual_ids
+        self._settings.setValue("codex_selected_tasks", sorted(self.codex_manual_ids))
+        self._settings.setValue("codex_manual_tasks", sorted(self.codex_manual_ids))
+        self._settings.setValue("codex_muted_tasks", sorted(self.codex_muted_ids))
+        self._apply_codex_monitoring_preferences()
         self.sync_cards()
 
+    def _apply_codex_monitoring_preferences(self) -> None:
+        self._set_codex_monitoring_preferences(self.codex_manual_ids, self.codex_muted_ids)
+
     def open_codex_task_selector(self) -> None:
-        dialog = CodexTaskSelectionDialog(self._codex_sessions(), self.codex_selected_ids, self)
+        auto_active_ids = self.codex_auto_active_ids()
+        dialog = CodexTaskSelectionDialog(
+            self._codex_sessions(), self.codex_selected_ids, auto_active_ids, self
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.set_codex_selected_ids(dialog.selected_ids())
+            selected_ids = dialog.selected_ids()
+            manual_ids = (self.codex_manual_ids & selected_ids) | (selected_ids - auto_active_ids)
+            muted_ids = (self.codex_muted_ids | (auto_active_ids - selected_ids)) - selected_ids
+            if dialog.restore_auto_requested():
+                muted_ids -= auto_active_ids
+            self.set_codex_monitoring_preferences(manual_ids, muted_ids)
 
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()

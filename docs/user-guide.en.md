@@ -8,15 +8,15 @@ Clicking a card selects it and leaves AACC visible. Double-clicking focuses the 
 
 ## Codex task discovery
 
-AACC refreshes the local Codex task index every two seconds. Open settings and choose **Choose Codex tasks to monitor**; only checked tasks are shown, receive state writes, and are polled. Unchecked tasks remain available in the selector but are not monitored.
+AACC refreshes local Codex metadata every two seconds. Up to four recently verified running tasks are automatically checked, displayed, and monitored. Open settings and choose **Choose Codex tasks to monitor** to add a non-running task manually or uncheck an automatic task to mute it. **Restore automatic detection** removes these mutes. Inactive, unselected tasks remain available in the selector but are not monitored.
 
-For selected sessions, AACC reads only task ID, title, update time, session-file modification time, turn events, and PID records. It does not read conversation bodies, prompts, code, or commands. `task_started` means the active Codex turn is running and `task_complete` means it has completed; completion wins over recent file activity. Without an explicit event, a recent update (within 90 seconds) or matching process may show running; otherwise the honest state is unknown.
+For selected sessions, AACC reads only task ID, title, update time, session-file modification time, turn events, and PID records. It does not read conversation bodies, prompts, code, or commands. `task_complete` means the turn completed and wins over recent file activity. `task_started` counts as running only with recent activity; a stale start event becomes unknown. A verified matching process or recent session write can also establish running state.
 
 The panel starts near the top-right of the main display and remembers its position. **Always on top** persists your preference; **Dock to desktop top right** restores the default placement. Codex does not currently expose a reliable public API for jumping to an exact task.
 
 ## DMG installation
 
-Run `./scripts/build_dmg.sh` to create `AACC-1.0.0.dmg` on the desktop. Open it and drag `AACC.app` to Applications. The public release build is ad-hoc signed and not notarized.
+Run `./scripts/build_dmg.sh` to create `AACC-1.1.0.dmg` on the desktop. Open it and drag `AACC.app` to Applications. The public release build is ad-hoc signed and not notarized.
 
 ## Terminal and iTerm2 binding
 
@@ -32,4 +32,4 @@ F13–F16 focus tasks 1–4; F17 sends Enter; F18/F19 send `1`/`2`; F20 starts d
 
 ## Launch at login
 
-The 1.0 installer does not change Login Items. Add `~/Applications/AACC.app` yourself in **System Settings → General → Login Items** and remove it there at any time.
+The installer does not change Login Items. Add `~/Applications/AACC.app` yourself in **System Settings → General → Login Items** and remove it there at any time.

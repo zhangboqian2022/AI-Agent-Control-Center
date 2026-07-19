@@ -135,6 +135,133 @@ def test_discovery_only_returns_explicitly_selected_tasks(tmp_path: Path) -> Non
     assert [task.state.session_id for task in tasks] == ["chosen"]
 
 
+def test_catalog_deduplicates_index_rows_by_most_recent_update(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": "same-task",
+                        "thread_name": "旧标题",
+                        "updated_at": "2026-07-18T00:00:00Z",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "id": "same-task",
+                        "thread_name": "新标题",
+                        "updated_at": "2026-07-18T00:02:00Z",
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    processes = tmp_path / "chat_processes.json"
+    processes.write_text("[]", encoding="utf-8")
+
+    catalog = CodexLocalDiscovery(index, processes).catalog()
+
+    assert [(session.conversation_id, session.title) for session in catalog] == [
+        ("same-task", "新标题")
+    ]
+
+
+def test_stale_task_started_event_is_not_reported_as_running(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "stale-started"
+    started_at = datetime(2026, 7, 18, 0, 0, tzinfo=UTC)
+    index.write_text(
+        json.dumps(
+            {
+                "id": conversation_id,
+                "thread_name": "过期任务",
+                "updated_at": started_at.isoformat().replace("+00:00", "Z"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    processes = tmp_path / "chat_processes.json"
+    processes.write_text("[]", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_file = sessions / f"rollout-{conversation_id}.jsonl"
+    session_file.write_text(
+        json.dumps(
+            {
+                "timestamp": started_at.isoformat().replace("+00:00", "Z"),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        processes,
+        session_directory=sessions,
+        now=lambda: datetime(2026, 7, 18, 0, 10, tzinfo=UTC),
+        session_modified_at=lambda _path: started_at,
+        activity_window_seconds=90,
+    ).discover({conversation_id})[0]
+
+    assert task.state.status is TaskStatus.UNKNOWN
+
+
+def test_active_session_ids_include_only_recent_verified_activity(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    active_id = "active-now"
+    stale_id = "old-start"
+    now = datetime(2026, 7, 18, 0, 2, tzinfo=UTC)
+    index.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": active_id, "updated_at": now.isoformat().replace("+00:00", "Z")}),
+                json.dumps({"id": stale_id, "updated_at": "2026-07-17T00:00:00Z"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    processes = tmp_path / "chat_processes.json"
+    processes.write_text("[]", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{active_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": now.isoformat().replace("+00:00", "Z"),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sessions / f"rollout-{stale_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-07-17T00:00:00Z",
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    discovery = CodexLocalDiscovery(
+        index,
+        processes,
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda path: (
+            now if active_id in path.name else datetime(2026, 7, 17, tzinfo=UTC)
+        ),
+    )
+
+    assert discovery.active_session_ids() == {active_id}
+
+
 def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) -> None:
     index = tmp_path / "session_index.jsonl"
     conversation_id = "finished-session"
