@@ -77,7 +77,7 @@ STATUS_NAMES = {
     TaskStatus.UNKNOWN: "状态未知",
 }
 
-STATUS_LIGHT_FONT_SIZE = 95
+STATUS_LIGHT_FONT_SIZE = 64
 
 
 def load_stylesheet() -> str:
@@ -119,59 +119,69 @@ class TaskCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("单击切换任务，右键查看更多操作")
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(15, 12, 15, 12)
-        root.setSpacing(7)
-        top = QHBoxLayout()
+        root = QHBoxLayout(self)
+        root.setContentsMargins(11, 8, 10, 8)
+        root.setSpacing(11)
         self.dot = QLabel("●")
         self.dot.setObjectName("statusDot")
         self.dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dot.setFixedSize(100, 100)
+        self.dot.setFixedSize(68, 68)
+        root.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.slot_label = QLabel(f"{task.slot:02d}")
         self.slot_label.setObjectName("slotLabel")
+        self.slot_label.hide()
         self.agent_label = QLabel(
-            task.agent.display_name or task.agent.type.replace("_", " ").title()
+            (task.agent.display_name or task.agent.type.replace("_", " ")).upper()
         )
         self.agent_label.setObjectName("agentLabel")
-        self.timer_label = QLabel("00:00")
+
+        self.details = QWidget()
+        details_layout = QVBoxLayout(self.details)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(2)
+
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(7)
+        self.status_label = QLabel()
+        self.status_label.setObjectName("statusLabel")
+        meta_row.addWidget(self.agent_label)
+        meta_row.addWidget(self.status_label)
+        meta_row.addStretch()
+        details_layout.addLayout(meta_row)
+
+        self.name_label = QLabel(task.name)
+        self.name_label.setObjectName("taskName")
+        self.name_label.setWordWrap(False)
+        details_layout.addWidget(self.name_label)
+
+        activity_row = QHBoxLayout()
+        activity_row.setContentsMargins(0, 0, 0, 0)
+        activity_row.setSpacing(9)
+        self.timer_label = QLabel("00:00:00")
         self.timer_label.setObjectName("timerLabel")
-        top.addWidget(self.dot)
-        top.addWidget(self.slot_label)
-        top.addWidget(self.agent_label)
-        top.addStretch()
-        top.addWidget(self.timer_label)
+        self.message_label = QLabel()
+        self.message_label.setObjectName("messageLabel")
+        self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.message_label.setWordWrap(False)
+        activity_row.addWidget(self.timer_label)
+        activity_row.addWidget(self.message_label, 1)
+        details_layout.addLayout(activity_row)
+
+        self.updated_label = QLabel()
+        self.updated_label.setObjectName("updatedLabel")
+        self.updated_label.hide()
+        root.addWidget(self.details, 1)
+
         if task.id.startswith("codex:"):
             remove_button = QPushButton("×")
             remove_button.setObjectName("removeTaskButton")
             remove_button.setAccessibleName("从面板移除")
             remove_button.setToolTip("停止监控并从面板移除")
-            remove_button.setFixedSize(28, 28)
+            remove_button.setFixedSize(24, 24)
             remove_button.clicked.connect(lambda: self.remove_requested.emit(self.task.id))
-            top.addWidget(remove_button)
-        root.addLayout(top)
-
-        self.details = QWidget()
-        details_layout = QVBoxLayout(self.details)
-        details_layout.setContentsMargins(37, 0, 0, 0)
-        details_layout.setSpacing(3)
-        self.name_label = QLabel(task.name)
-        self.name_label.setObjectName("taskName")
-        status_line = QHBoxLayout()
-        self.status_label = QLabel()
-        self.status_label.setObjectName("statusLabel")
-        self.message_label = QLabel()
-        self.message_label.setObjectName("messageLabel")
-        self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.message_label.setWordWrap(True)
-        status_line.addWidget(self.status_label)
-        status_line.addWidget(QLabel("·"))
-        status_line.addWidget(self.message_label, 1)
-        details_layout.addWidget(self.name_label)
-        details_layout.addLayout(status_line)
-        self.updated_label = QLabel()
-        self.updated_label.setObjectName("updatedLabel")
-        details_layout.addWidget(self.updated_label)
-        root.addWidget(self.details)
+            root.addWidget(remove_button, 0, Qt.AlignmentFlag.AlignTop)
 
         self._effect = QGraphicsOpacityEffect(self.dot)
         self.dot.setGraphicsEffect(self._effect)
@@ -211,7 +221,7 @@ class TaskCard(QFrame):
         self.details.setVisible(not compact)
         card_layout = self.layout()
         if card_layout is not None:
-            card_layout.setContentsMargins(13, 7 if compact else 12, 13, 7 if compact else 12)
+            card_layout.setContentsMargins(10, 6 if compact else 8, 9, 6 if compact else 8)
 
     def create_context_menu(self) -> QMenu:
         menu = QMenu(self)

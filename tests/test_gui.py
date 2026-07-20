@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QMessageBox, QScrollArea
 
 from aacc.automation import AutomationError, MacAutomation
 from aacc.automation_executor import AutomationExecutor
@@ -59,8 +59,38 @@ def test_status_light_is_five_times_larger_for_fast_visual_scanning(
     manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
     window.set_codex_selected_ids({"large-light"})
 
-    assert "font-size: 95px" in window.cards[task.id].dot.styleSheet()
+    assert "font-size: 64px" in window.cards[task.id].dot.styleSheet()
     assert window.minimumHeight() >= 270
+    manager.close()
+
+
+def test_expanded_card_uses_compact_horizontal_information_hierarchy(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:horizontal-card",
+        slot=1,
+        name="突出显示的任务名称",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(
+        task,
+        TaskState.new(task.id, "running", message="正在修改代码", source="codex_local"),
+    )
+    window.set_codex_selected_ids({"horizontal-card"})
+    window.show()
+    QApplication.processEvents()
+    card = window.cards[task.id]
+
+    assert isinstance(card.layout(), QHBoxLayout)
+    assert 56 <= card.dot.width() <= 72
+    assert card.dot.height() == card.dot.width()
+    assert card.agent_label.text() == "CODEX"
+    assert card.name_label.text() == "突出显示的任务名称"
+    assert card.name_label.font().pixelSize() > card.agent_label.font().pixelSize()
+    assert card.sizeHint().height() <= 110
+    assert card.updated_label.isHidden()
     manager.close()
 
 
