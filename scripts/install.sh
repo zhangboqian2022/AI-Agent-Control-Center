@@ -29,7 +29,7 @@ rm -rf "$runtime_venv"
 uv venv "$runtime_venv"
 uv build --wheel --out-dir "$runtime_root/wheels"
 uv export --locked --no-dev --no-emit-project \
-  --output-file "$runtime_root/requirements.lock"
+  --output-file "$runtime_root/requirements.lock" --quiet
 wheels=("$runtime_root"/wheels/aacc_control_center-1.3.0rc1-*.whl)
 if [[ ! -f "${wheels[0]}" ]]; then
   echo "错误：未生成 AACC runtime wheel" >&2
@@ -58,7 +58,9 @@ ln -sfn "$runtime_venv/bin/aacc-run" "$user_bin/aacc-run"
 ln -sfn "$runtime_venv/bin/aacc-gui" "$user_bin/aacc-gui"
 if [[ "$launch_app" == "1" ]]; then
   open "$user_apps/AACC.app"
+  echo "AACC 已安装并启动：$user_apps/AACC.app"
+else
+  echo "AACC 已安装：$user_apps/AACC.app"
 fi
 
-echo "AACC 已安装并启动：$user_apps/AACC.app"
 echo "命令行工具：$user_bin/aacc"
