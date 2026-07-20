@@ -357,6 +357,10 @@ class CodexLocalDiscovery:
                     "approval_request": TaskStatus.WAITING_APPROVAL,
                     "request_approval": TaskStatus.WAITING_APPROVAL,
                     "waiting_approval": TaskStatus.WAITING_APPROVAL,
+                    "exec_approval_request": TaskStatus.WAITING_APPROVAL,
+                    "apply_patch_approval_request": TaskStatus.WAITING_APPROVAL,
+                    "patch_approval_request": TaskStatus.WAITING_APPROVAL,
+                    "request_permissions": TaskStatus.WAITING_APPROVAL,
                 }.get(event_type)
                 if isinstance(event_type, str)
                 else None

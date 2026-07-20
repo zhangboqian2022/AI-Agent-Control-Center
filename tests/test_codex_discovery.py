@@ -243,6 +243,9 @@ def test_recent_session_activity_is_reduced_to_a_fixed_private_summary(
     [
         ("request_user_input", TaskStatus.WAITING_INPUT),
         ("approval_request", TaskStatus.WAITING_APPROVAL),
+        ("exec_approval_request", TaskStatus.WAITING_APPROVAL),
+        ("apply_patch_approval_request", TaskStatus.WAITING_APPROVAL),
+        ("request_permissions", TaskStatus.WAITING_APPROVAL),
     ],
 )
 def test_waiting_events_use_fixed_confirmation_summary(
