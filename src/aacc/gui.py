@@ -513,6 +513,7 @@ class MainWindow(QWidget):
     external_action = Signal(str, str)
     automation_finished = Signal(str, str, object)
     discovery_health_received = Signal(object)
+    kimi_discovery_health_received = Signal(object)
     settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity", "visible_agents"}
 
     def __init__(
@@ -536,6 +537,10 @@ class MainWindow(QWidget):
         rotate_api_token_callback: Callable[[], str] | None = None,
         discovery_health: Callable[[], DiscoveryHealth] | None = None,
         subscribe_discovery_health: (
+            Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
+        ) = None,
+        kimi_discovery_health: Callable[[], DiscoveryHealth] | None = None,
+        subscribe_kimi_discovery_health: (
             Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
         ) = None,
         discovery_log_path: str = "~/Library/Application Support/AACC/logs/app.log",
@@ -570,12 +575,20 @@ class MainWindow(QWidget):
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_health = (discovery_health or DiscoveryHealth)()
+        self._kimi_discovery_health = (
+            kimi_discovery_health or (lambda: DiscoveryHealth(brand="Kimi"))
+        )()
         self._discovery_log_path = discovery_log_path
         self.accessibility_trusted = accessibility_trusted
         self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
         self._unsubscribe_discovery_health = (
             subscribe_discovery_health(self.discovery_health_received.emit)
             if subscribe_discovery_health is not None
+            else lambda: None
+        )
+        self._unsubscribe_kimi_discovery_health = (
+            subscribe_kimi_discovery_health(self.kimi_discovery_health_received.emit)
+            if subscribe_kimi_discovery_health is not None
             else lambda: None
         )
         saved_codex_tasks = self._settings.value(
@@ -648,6 +661,7 @@ class MainWindow(QWidget):
         self.external_action.connect(self._perform_action)
         self.automation_finished.connect(self._automation_completed)
         self.discovery_health_received.connect(self._apply_discovery_health)
+        self.kimi_discovery_health_received.connect(self._apply_kimi_discovery_health)
 
         saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
         self.always_on_top = bool(saved_top)
@@ -1264,12 +1278,33 @@ class MainWindow(QWidget):
         if not isinstance(value, DiscoveryHealth):
             return
         self._discovery_health = value
-        self.discovery_warning_label.setText(value.summary[:80])
-        self.discovery_warning.setVisible(value.degraded)
+        self._refresh_discovery_warning()
+
+    def _apply_kimi_discovery_health(self, value: object) -> None:
+        if not isinstance(value, DiscoveryHealth):
+            return
+        self._kimi_discovery_health = value
+        self._refresh_discovery_warning()
+
+    def _refresh_discovery_warning(self) -> None:
+        degraded = [
+            health
+            for health in (self._discovery_health, self._kimi_discovery_health)
+            if health.degraded
+        ]
+        if not degraded:
+            self.discovery_warning.setVisible(False)
+            return
+        summary = "；".join(f"{health.brand}: {health.summary}" for health in degraded)
+        self.discovery_warning_label.setText(summary[:80])
+        self.discovery_warning.setVisible(True)
 
     def copy_discovery_diagnostics(self) -> None:
         QGuiApplication.clipboard().setText(
-            self._discovery_health.diagnostics(self._discovery_log_path)
+            "\n\n".join(
+                health.diagnostics(self._discovery_log_path)
+                for health in (self._discovery_health, self._kimi_discovery_health)
+            )
         )
 
     def accessibility_status_text(self) -> str:
@@ -1337,4 +1372,5 @@ class MainWindow(QWidget):
         self._timer.stop()
         self._unsubscribe()
         self._unsubscribe_discovery_health()
+        self._unsubscribe_kimi_discovery_health()
         event.accept()

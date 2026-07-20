@@ -306,6 +306,111 @@ def test_new_turn_activity_after_completion_is_running(tmp_path: Path) -> None:
     assert tasks[0].state.message == "正在运行"
 
 
+def test_completed_turn_detected_beyond_oversized_irrelevant_event(tmp_path: Path) -> None:
+    home = tmp_path / ".kimi-code"
+    session_id = "session_oversize-0001"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="长事件", updated_at="2026-07-18T11:00:00Z")
+    wire = session_dir / "agents" / "main" / "wire.jsonl"
+    wire.parent.mkdir(parents=True, exist_ok=True)
+    wire.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "turn.prompt"}),
+                json.dumps({"type": "usage.record", "usageScope": "turn"}),
+                json.dumps({"type": "noise", "payload": "x" * 70_000}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": RECENT}),
+        agent_process_alive=lambda: False,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.COMPLETED
+
+
+def test_wire_scan_budget_exhaustion_returns_undetermined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / ".kimi-code"
+    session_id = "session_budget-0002"
+    session_dir = _session_dir(home, "proj", session_id)
+    wire = session_dir / "agents" / "main" / "wire.jsonl"
+    wire.parent.mkdir(parents=True, exist_ok=True)
+    wire.write_text(
+        "\n".join(json.dumps({"type": "noise", "i": i}) for i in range(200)),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("aacc.kimi_discovery._WIRE_SCAN_BUDGET_BYTES", 256)
+    discovery = KimiLocalDiscovery(home)
+
+    assert discovery._turn_completed(session_dir) is None
+
+
+def test_undetermined_wire_scan_is_not_fabricated_as_completed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / ".kimi-code"
+    session_id = "session_unknown-0003"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="不确定", updated_at="2026-07-18T11:00:00Z")
+    events = [json.dumps({"type": "usage.record", "usageScope": "turn"})]
+    events += [json.dumps({"type": "noise", "i": i}) for i in range(200)]
+    wire = session_dir / "agents" / "main" / "wire.jsonl"
+    wire.parent.mkdir(parents=True, exist_ok=True)
+    wire.write_text("\n".join(events), encoding="utf-8")
+
+    monkeypatch.setattr("aacc.kimi_discovery._WIRE_SCAN_BUDGET_BYTES", 256)
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": RECENT}),
+        agent_process_alive=lambda: False,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.RUNNING
+    assert tasks[0].state.status is not TaskStatus.COMPLETED
+
+
+def test_wire_secrets_never_reach_task_state(tmp_path: Path) -> None:
+    secret = "sk-live-secret-token-9f8e7d"
+    prompt_text = f"请删除生产数据库 {secret}"
+    home = tmp_path / ".kimi-code"
+    session_id = "session_privacy-0004"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="隐私", updated_at="2026-07-18T11:00:00Z")
+    _write_wire_events(
+        session_dir,
+        [
+            {"type": "turn.prompt", "content": prompt_text},
+            {"type": "usage.record", "usageScope": "turn", "detail": secret},
+        ],
+    )
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": RECENT}),
+        agent_process_alive=lambda: False,
+    ).discover()
+
+    state_dump = json.dumps(tasks[0].state.model_dump(mode="json"), ensure_ascii=False)
+    config_dump = json.dumps(tasks[0].config.model_dump(mode="json"), ensure_ascii=False)
+    assert tasks[0].state.status is TaskStatus.COMPLETED
+    assert secret not in state_dump
+    assert secret not in config_dump
+    assert "删除生产数据库" not in state_dump
+
+
 def test_missing_state_file_falls_back_to_safe_title(tmp_path: Path) -> None:
     home = tmp_path / ".kimi-code"
     session_id = "session_12345678-abcd"

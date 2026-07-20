@@ -2,7 +2,7 @@
 
 > A local-first macOS desktop control center for the AI coding agents you choose to monitor.
 
-[中文文档](README.zh-CN.md) · [Download AACC 1.3.0-rc.2](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.2/AACC-1.3.0-rc.2.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.3.0-rc.2) · [Product design](docs/product-design.md)
+[中文文档](README.zh-CN.md) · [Download AACC 1.3.0-rc.4](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.4/AACC-1.3.0-rc.4.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.3.0-rc.4) · [Product design](docs/product-design.md)
 
 AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative focus/input automation.
 
@@ -27,7 +27,7 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 
 ### Recommended: download the DMG
 
-Download [AACC-1.3.0-rc.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.2/AACC-1.3.0-rc.2.dmg), open it, and drag `AACC.app` to Applications.
+Download [AACC-1.3.0-rc.4.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.4/AACC-1.3.0-rc.4.dmg), open it, and drag `AACC.app` to Applications.
 
 This RC is ad-hoc signed and is not notarized by Apple. If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** only after verifying the release checksum. Stable `v1.3.0` remains blocked until Developer ID signing and Apple notarization are available.
 

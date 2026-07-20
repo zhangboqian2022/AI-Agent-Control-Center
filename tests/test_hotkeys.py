@@ -16,7 +16,11 @@ def test_unknown_hotkey_is_rejected() -> None:
         hotkey_keycode("COMMAND+Q")
 
 
-def test_disabled_event_tap_is_reenabled() -> None:
+@pytest.mark.parametrize(
+    "reason",
+    ["kCGEventTapDisabledByTimeout", "kCGEventTapDisabledByUserInput"],
+)
+def test_disabled_event_tap_is_reenabled(reason: str) -> None:
     enabled: list[tuple[object, bool]] = []
 
     class Quartz:
@@ -33,7 +37,7 @@ def test_disabled_event_tap_is_reenabled() -> None:
     hotkeys._tap = object()
     event = object()
 
-    assert hotkeys._callback(None, Quartz.kCGEventTapDisabledByTimeout, event, None) is event
+    assert hotkeys._callback(None, getattr(Quartz, reason), event, None) is event
     assert enabled == [(hotkeys._tap, True)]
 
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-user_root="$(python3 -c 'from pathlib import Path; print(Path.home())')"
+user_root="${HOME:?HOME is not set}"
 install_root="${AACC_INSTALL_ROOT:-$user_root}"
 user_apps="$install_root/Applications"
 user_bin="$install_root/.local/bin"
@@ -16,7 +16,12 @@ fi
 command -v uv >/dev/null 2>&1 || { echo "错误：未找到 uv，请先运行 brew install uv" >&2; exit 1; }
 cd "$project_root"
 uv sync --extra dev
-QT_QPA_PLATFORM=offscreen uv run pytest -q
+if [[ "${AACC_RUN_TESTS:-0}" == "1" ]]; then
+  echo "运行测试（AACC_RUN_TESTS=1）…"
+  QT_QPA_PLATFORM=offscreen uv run pytest -q
+else
+  echo "跳过测试（设置 AACC_RUN_TESTS=1 可在安装前运行测试）"
+fi
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   "$project_root/scripts/build_app.sh"
 elif [[ ! -d "$project_root/dist/AACC.app" ]]; then
@@ -41,15 +46,16 @@ uv pip install --python "$runtime_venv/bin/python" \
 uv pip install --python "$runtime_venv/bin/python" "${wheels[0]}" --no-deps
 
 mkdir -p "$user_apps" "$user_bin"
+# 覆盖安装前无条件退出正在运行的旧实例（即使目标目录当前不存在）
+/usr/bin/osascript -e 'tell application id "com.aacc.controlcenter" to quit' \
+  >/dev/null 2>&1 || true
+for attempt in {1..20}; do
+  if ! pgrep -f "$user_apps/AACC.app/Contents/MacOS/AACC" >/dev/null; then
+    break
+  fi
+  sleep 0.2
+done
 if [[ -d "$user_apps/AACC.app" ]]; then
-  /usr/bin/osascript -e 'tell application id "com.aacc.controlcenter" to quit' \
-    >/dev/null 2>&1 || true
-  for attempt in {1..20}; do
-    if ! pgrep -f "$user_apps/AACC.app/Contents/MacOS/AACC" >/dev/null; then
-      break
-    fi
-    sleep 0.2
-  done
   backup="$user_root/.Trash/AACC.app.backup.$(date +%Y%m%d-%H%M%S)"
   mv "$user_apps/AACC.app" "$backup"
 fi
