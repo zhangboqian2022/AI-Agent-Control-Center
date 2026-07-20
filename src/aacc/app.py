@@ -17,6 +17,7 @@ from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH, DEFAULT_DATABAS
 from aacc.discovery_service import CodexDiscoveryService
 from aacc.gui import MainWindow
 from aacc.hotkeys import GlobalHotkeys
+from aacc.instance_guard import InstanceGuard, activate_existing_instance
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
 from aacc.persistence import StateStore
@@ -93,10 +94,7 @@ def _hotkey_actions(window: MainWindow) -> dict[str, object]:
     return actions
 
 
-def main() -> int:
-    config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
-    database_path = Path(os.environ.get("AACC_DATABASE_PATH", DEFAULT_DATABASE_PATH))
-    data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
+def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
     runtime = build_runtime(config_path, database_path)
 
@@ -147,3 +145,17 @@ def main() -> int:
         return qt_app.exec()
     finally:
         cleanup()
+
+
+def main() -> int:
+    config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
+    database_path = Path(os.environ.get("AACC_DATABASE_PATH", DEFAULT_DATABASE_PATH))
+    data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
+    guard = InstanceGuard(data_dir / "aacc.lock")
+    if not guard.acquire():
+        activate_existing_instance()
+        return 0
+    try:
+        return _run_application(config_path, database_path, data_dir)
+    finally:
+        guard.close()
