@@ -4,7 +4,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QMessageBox, QPushButton, QScrollArea
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QInputDialog,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+)
 
 from aacc.automation import AutomationError, MacAutomation
 from aacc.automation_executor import AutomationExecutor
@@ -725,6 +732,172 @@ def test_refresh_syncs_kimi_retained_ids_from_discovery(tmp_path: Path, qtbot: o
     assert task.id in window.cards
     assert window.kimi_selected_ids == {"kept"}
     assert settings.value("kimi_retained_tasks") == ["kept"]
+    manager.close()
+
+
+def test_refresh_unmutes_auto_active_codex_task(tmp_path: Path, qtbot: object) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    muted_ids = {"auto-now"}
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("codex_muted_tasks", ["auto-now"])
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        codex_auto_active_ids=lambda: {"auto-now"},
+        codex_muted_ids=lambda: set(muted_ids),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="codex:auto-now",
+        slot=1,
+        name="自动运行的任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.sync_cards()
+    assert task.id not in window.cards
+
+    muted_ids.clear()
+    window.refresh()
+
+    assert task.id in window.cards
+    assert window.codex_selected_ids == {"auto-now"}
+    assert settings.value("codex_muted_tasks") == []
+    manager.close()
+
+
+def test_refresh_unmutes_auto_active_kimi_task(tmp_path: Path, qtbot: object) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    muted_ids = {"auto-now"}
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("kimi_muted_tasks", ["auto-now"])
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        kimi_auto_active_ids=lambda: {"auto-now"},
+        kimi_muted_ids=lambda: set(muted_ids),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="kimi:auto-now",
+        slot=1,
+        name="自动运行的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="kimi_local"))
+    window.sync_cards()
+    assert task.id not in window.cards
+
+    muted_ids.clear()
+    window.refresh()
+
+    assert task.id in window.cards
+    assert window.kimi_selected_ids == {"auto-now"}
+    assert settings.value("kimi_muted_tasks") == []
+    manager.close()
+
+
+def test_rename_codex_task_updates_card_and_persists(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        codex_auto_active_ids=lambda: {"auto-now"},
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="codex:auto-now",
+        slot=1,
+        name="原始标题",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.sync_cards()
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog, "getText", lambda *args, **kwargs: ("我的改名", True)
+    )
+    window.rename_task(task.id)
+
+    assert window.cards[task.id].display_name == "我的改名"
+    assert window.custom_task_names == {task.id: "我的改名"}
+
+    updated = task.model_copy(update={"name": "发现的新标题"})
+    manager.register(updated, TaskState.new(task.id, "running", source="codex_local"))
+    window.sync_cards()
+    assert window.cards[task.id].display_name == "我的改名"
+
+    settings.sync()
+    reloaded_settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    reloaded = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        codex_auto_active_ids=lambda: {"auto-now"},
+        settings=reloaded_settings,
+    )
+    qtbot.addWidget(reloaded)  # type: ignore[attr-defined]
+    reloaded.sync_cards()
+    assert reloaded.cards[task.id].display_name == "我的改名"
+    manager.close()
+
+
+def test_rename_task_with_empty_name_restores_default(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        kimi_auto_active_ids=lambda: {"auto-now"},
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="kimi:auto-now",
+        slot=1,
+        name="原始 Kimi 标题",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="kimi_local"))
+    window.sync_cards()
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog, "getText", lambda *args, **kwargs: ("自定义名", True)
+    )
+    window.rename_task(task.id)
+    assert window.cards[task.id].display_name == "自定义名"
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog, "getText", lambda *args, **kwargs: ("", True)
+    )
+    window.rename_task(task.id)
+
+    assert window.cards[task.id].display_name == "原始 Kimi 标题"
+    assert window.custom_task_names == {}
     manager.close()
 
 
