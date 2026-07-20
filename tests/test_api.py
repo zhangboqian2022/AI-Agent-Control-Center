@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from aacc.api import create_api
 from aacc.automation import AutomationError
+from aacc.automation_executor import AutomationExecutor
 from aacc.config import default_config
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -108,4 +109,27 @@ def test_automation_failure_returns_actionable_conflict_response(tmp_path: Path)
     response = client.post("/api/v1/tasks/task-1/focus", headers=auth(config.app.api.token))
     assert response.status_code == 409
     assert response.json() == {"detail": "window missing"}
+    manager.close()
+
+
+def test_executor_controller_is_accepted_by_api(tmp_path: Path) -> None:
+    class BlockingController:
+        def focus(self, _task: object) -> str:
+            return "focused"
+
+        send_key = focus
+        send_text = focus
+        start_voice = focus
+
+    config = default_config()
+    store = StateStore(tmp_path / "api.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    executor = AutomationExecutor(BlockingController(), total_timeout=0.01)
+    client = TestClient(create_api(config, manager, executor), raise_server_exceptions=False)
+
+    response = client.post("/api/v1/tasks/task-1/focus", headers=auth(config.app.api.token))
+
+    assert response.status_code == 200
+    executor.close()
     manager.close()
