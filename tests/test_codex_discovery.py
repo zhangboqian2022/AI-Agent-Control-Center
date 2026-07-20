@@ -2,7 +2,13 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from aacc.codex_discovery import CodexLocalDiscovery
+import pytest
+
+from aacc.codex_discovery import (
+    CODEX_METADATA_COMPATIBILITY,
+    CodexDiscoveryError,
+    CodexLocalDiscovery,
+)
 from aacc.models import TaskStatus
 
 
@@ -61,7 +67,10 @@ def test_discovers_active_and_recent_codex_tasks_without_reading_session_content
     assert tasks[0].state.pid == 321
     assert tasks[1].state.status is TaskStatus.UNKNOWN
     assert tasks[1].state.message == "最近更新，未检测到运行进程"
-    assert tasks[0].state.metadata == {"discovered": True}
+    assert tasks[0].state.metadata == {
+        "discovered": True,
+        "source_event_at": "2026-07-17T02:00:00+00:00",
+    }
 
 
 def test_discovers_missing_title_with_safe_short_identifier(tmp_path: Path) -> None:
@@ -301,3 +310,49 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
 
     assert tasks[0].state.status is TaskStatus.COMPLETED
     assert tasks[0].state.message == "Codex 回合已完成"
+
+
+def test_pid_with_record_start_is_rejected_when_live_start_unknown(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        json.dumps({"id": "conversation-1", "updated_at": "2026-07-18T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    processes = tmp_path / "chat_processes.json"
+    processes.write_text(
+        json.dumps(
+            [
+                {
+                    "conversationId": "conversation-1",
+                    "osPid": 321,
+                    "startedAtMs": 1_752_800_000_000,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    discovery = CodexLocalDiscovery(
+        index,
+        processes,
+        pid_exists=lambda _pid: True,
+        process_started_at=lambda _pid: None,
+    )
+
+    assert discovery._active_pids({"conversation-1"}) == {}
+
+
+def test_existing_unreadable_session_index_raises_discovery_error(tmp_path: Path) -> None:
+    index_directory = tmp_path / "session_index.jsonl"
+    index_directory.mkdir()
+    discovery = CodexLocalDiscovery(index_directory, tmp_path / "processes.json")
+
+    with pytest.raises(CodexDiscoveryError, match="session index"):
+        discovery.catalog()
+
+
+def test_missing_session_index_is_empty_first_run(tmp_path: Path) -> None:
+    discovery = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl", tmp_path / "processes.json"
+    )
+    assert discovery.catalog() == []
+    assert CODEX_METADATA_COMPATIBILITY == "2026-07"
