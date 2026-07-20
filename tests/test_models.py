@@ -1,4 +1,4 @@
-from aacc.models import TaskState, TaskStatus
+from aacc.models import AppConfig, TaskState, TaskStatus
 
 
 def test_status_accepts_cli_spelling() -> None:
@@ -12,3 +12,7 @@ def test_new_state_records_normalized_status() -> None:
     assert state.task_id == "task-1"
     assert state.message == "working"
     assert state.confidence == 1.0
+
+
+def test_config_schema_version_defaults_to_one() -> None:
+    assert AppConfig().config_version == 1

@@ -114,6 +114,7 @@ class TaskConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    config_version: int = Field(default=1, ge=1)
     app: AppSettings = Field(default_factory=AppSettings)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     hotkeys: dict[str, str] = Field(default_factory=dict)
