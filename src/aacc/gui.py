@@ -84,13 +84,26 @@ def load_stylesheet() -> str:
     return resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
 
 
-def _elapsed(state: TaskState) -> str:
+TERMINAL_STATUSES = {
+    TaskStatus.COMPLETED,
+    TaskStatus.ERROR,
+    TaskStatus.CANCELLED,
+    TaskStatus.STOPPED,
+}
+
+
+def _elapsed(state: TaskState, now: datetime | None = None) -> str:
     anchor = state.started_at or state.updated_at
-    end = state.finished_at or datetime.now(UTC)
+    end = state.finished_at or now or datetime.now(UTC)
     seconds = max(0, int((end - anchor).total_seconds()))
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _elapsed_label(state: TaskState, now: datetime | None = None) -> str:
+    prefix = "总用时 " if state.status in TERMINAL_STATUSES else ""
+    return f"{prefix}{_elapsed(state, now)}"
 
 
 class TaskCard(QFrame):
@@ -180,7 +193,7 @@ class TaskCard(QFrame):
         self.updated_label.setText(
             f"最后活动：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
         )
-        self.timer_label.setText(_elapsed(state))
+        self.timer_label.setText(_elapsed_label(state))
         self.setToolTip(
             f"{self.task.name}\n{STATUS_NAMES[state.status]} · {state.source} · "
             f"{state.confidence:.0%}\n"
@@ -708,12 +721,7 @@ class MainWindow(QWidget):
 
     @staticmethod
     def _is_terminal(state: TaskState) -> bool:
-        return state.status in {
-            TaskStatus.COMPLETED,
-            TaskStatus.ERROR,
-            TaskStatus.CANCELLED,
-            TaskStatus.STOPPED,
-        }
+        return state.status in TERMINAL_STATUSES
 
     def _grouped_tasks(
         self, visible: list[TaskConfig], states: dict[str, TaskState]

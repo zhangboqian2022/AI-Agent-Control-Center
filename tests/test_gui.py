@@ -1,4 +1,5 @@
 from concurrent.futures import Future
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
@@ -10,7 +11,7 @@ from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.config import create_default_config, default_config, rotate_api_token
 from aacc.discovery_service import DiscoveryHealth
-from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard
+from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard, _elapsed
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -75,6 +76,36 @@ def test_refresh_updates_card_text_and_color(tmp_path: Path, qtbot: object) -> N
     assert card.message_label.text() == "等待批准 npm test"
     assert STATUS_COLORS[TaskStatus.WAITING_APPROVAL] in card.dot.styleSheet()
     manager.close()
+
+
+def test_elapsed_time_always_includes_hours() -> None:
+    started_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    state = TaskState(
+        task_id="task-1",
+        status=TaskStatus.COMPLETED,
+        started_at=started_at,
+        updated_at=started_at + timedelta(minutes=18, seconds=42),
+        finished_at=started_at + timedelta(minutes=18, seconds=42),
+    )
+
+    assert _elapsed(state) == "00:18:42"
+
+
+def test_completed_card_labels_frozen_total_duration(qtbot: object) -> None:
+    task = TaskConfig(id="task-1", slot=1, name="完整计时任务")
+    started_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    state = TaskState(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        message="已完成",
+        started_at=started_at,
+        updated_at=started_at + timedelta(hours=1, minutes=26, seconds=8),
+        finished_at=started_at + timedelta(hours=1, minutes=26, seconds=8),
+    )
+    card = TaskCard(task, state)
+    qtbot.addWidget(card)  # type: ignore[attr-defined]
+
+    assert card.timer_label.text() == "总用时 01:26:08"
 
 
 def test_compact_mode_hides_detail_rows(tmp_path: Path, qtbot: object) -> None:

@@ -65,6 +65,50 @@ def test_transition_starts_fresh_run_after_terminal_state() -> None:
     assert restarted.finished_at is None
 
 
+def test_active_messages_and_waiting_states_keep_one_run_start() -> None:
+    started_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    running = TaskState(
+        task_id="task-1",
+        status=TaskStatus.RUNNING,
+        message="正在分析任务",
+        source="codex_local",
+        started_at=started_at,
+        updated_at=started_at,
+    )
+    changed_message = running.model_copy(
+        update={
+            "message": "正在修改代码",
+            "started_at": started_at + timedelta(seconds=15),
+            "updated_at": started_at + timedelta(seconds=15),
+        }
+    )
+    changed = StateMachine.transition(running, changed_message)
+    assert changed is not None
+    assert changed.started_at == started_at
+
+    waiting_candidate = changed.model_copy(
+        update={
+            "status": TaskStatus.WAITING_INPUT,
+            "started_at": None,
+            "updated_at": started_at + timedelta(seconds=30),
+        }
+    )
+    waiting = StateMachine.transition(changed, waiting_candidate)
+    assert waiting is not None
+    assert waiting.started_at == started_at
+
+    resumed_candidate = waiting.model_copy(
+        update={
+            "status": TaskStatus.RUNNING,
+            "started_at": started_at + timedelta(seconds=45),
+            "updated_at": started_at + timedelta(seconds=45),
+        }
+    )
+    resumed = StateMachine.transition(waiting, resumed_candidate)
+    assert resumed is not None
+    assert resumed.started_at == started_at
+
+
 def test_semantic_duplicate_returns_none() -> None:
     current = TaskState.new("task-1", "RUNNING", message="working", source="codex_local")
     candidate = current.model_copy(update={"updated_at": current.updated_at})
