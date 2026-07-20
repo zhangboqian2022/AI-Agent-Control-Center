@@ -55,7 +55,7 @@ class AppSettings(BaseModel):
     blink_attention: bool = True
     keyboard_injection: bool = True
     automation_timeout_seconds: float = Field(default=5.0, ge=2.0, le=15.0)
-    visible_agent_types: list[str] = Field(default_factory=lambda: ["codex_cli"])
+    visible_agent_types: list[str] = Field(default_factory=lambda: ["codex_cli", "kimi_code"])
     api: APIConfig = Field(default_factory=APIConfig)
 
 

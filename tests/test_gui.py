@@ -4,14 +4,22 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QMessageBox, QScrollArea
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QMessageBox, QPushButton, QScrollArea
 
 from aacc.automation import AutomationError, MacAutomation
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.config import create_default_config, default_config, rotate_api_token
 from aacc.discovery_service import DiscoveryHealth
-from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard, _elapsed
+from aacc.gui import (
+    STATUS_COLORS,
+    CodexTaskSelectionDialog,
+    KimiTaskSelectionDialog,
+    MainWindow,
+    TaskCard,
+    _elapsed,
+)
+from aacc.kimi_discovery import KimiSession
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -38,7 +46,7 @@ def test_window_starts_with_no_codex_cards_until_tasks_are_selected(
 ) -> None:
     window, manager = build_window(tmp_path, qtbot)
     assert len(window.findChildren(TaskCard)) == 0
-    assert "未选择 Codex 任务" in window.empty_tasks_label.text()
+    assert "未选择 Codex / Kimi Code 任务" in window.empty_tasks_label.text()
     manager.close()
 
 
@@ -607,4 +615,227 @@ def test_missing_accessibility_guidance_can_open_system_settings(
 
     assert opened == [True]
     assert "辅助功能" in window.accessibility_status_text()
+    manager.close()
+
+
+def test_only_selected_kimi_tasks_are_visible(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    first = TaskConfig(
+        id="kimi:first",
+        slot=1,
+        name="已选择的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    second = first.model_copy(update={"id": "kimi:second", "name": "未选择的 Kimi 任务", "slot": 2})
+    manager.register(first, TaskState.new(first.id, "running", source="kimi_local"))
+    manager.register(second, TaskState.new(second.id, "running", source="kimi_local"))
+
+    window.set_kimi_selected_ids({"first"})
+
+    assert list(window.cards) == ["kimi:first"]
+    manager.close()
+
+
+def test_kimi_card_exposes_remove_button_and_context_menu_action(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="kimi:removable",
+        slot=1,
+        name="可移除的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="kimi_local"))
+    window.set_kimi_selected_ids({"removable"})
+    card = window.cards[task.id]
+
+    remove_button = card.findChild(QPushButton, "removeTaskButton")
+    assert remove_button is not None
+    menu_labels = {action.text() for action in card.create_context_menu().actions()}
+    assert "从面板移除" in menu_labels
+    manager.close()
+
+
+def test_remove_kimi_task_mutes_and_persists_monitoring_preferences(
+    tmp_path: Path, qtbot: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    preferences: list[tuple[set[str], set[str], set[str]]] = []
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        set_kimi_monitoring_preferences=lambda manual, retained, muted: preferences.append(
+            (set(manual), set(retained), set(muted))
+        ),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="kimi:finished",
+        slot=1,
+        name="保留的已完成 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(task, TaskState.new(task.id, "completed", source="kimi_local"))
+    window.set_kimi_monitoring_preferences(set(), {"finished"}, set())
+    assert task.id in window.cards
+
+    window.remove_kimi_task(task.id)
+
+    assert task.id not in window.cards
+    assert window.kimi_selected_ids == set()
+    assert preferences[-1] == (set(), set(), {"finished"})
+    assert settings.value("kimi_manual_tasks") == []
+    assert settings.value("kimi_retained_tasks") == []
+    assert settings.value("kimi_muted_tasks") == ["finished"]
+    manager.close()
+
+
+def test_refresh_syncs_kimi_retained_ids_from_discovery(tmp_path: Path, qtbot: object) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    retained_ids = {"kept"}
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        kimi_retained_ids=lambda: set(retained_ids),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="kimi:kept",
+        slot=1,
+        name="保留中的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(task, TaskState.new(task.id, "completed", source="kimi_local"))
+
+    window.refresh()
+
+    assert task.id in window.cards
+    assert window.kimi_selected_ids == {"kept"}
+    assert settings.value("kimi_retained_tasks") == ["kept"]
+    manager.close()
+
+
+def test_kimi_selector_marks_auto_running_task_checked_and_can_restore(
+    tmp_path: Path, qtbot: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    window = MainWindow(manager, AutomationExecutor(MacAutomation(config)), enable_tray=False)
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    session = KimiSession(
+        session_id="auto-now",
+        title="自动运行的 Kimi 任务",
+        updated_at=TaskState.new("example", "running").updated_at,
+    )
+
+    dialog = KimiTaskSelectionDialog([session], {"auto-now"}, {"auto-now"}, window)
+
+    assert dialog.windowTitle() == "选择监控的 Kimi Code 任务"
+    assert dialog.tasks.item(0).checkState() is Qt.CheckState.Checked
+    assert "自动监控 · 运行中" in dialog.tasks.item(0).text()
+    dialog.tasks.item(0).setCheckState(Qt.CheckState.Unchecked)
+    dialog.restore_automatic_detection()
+    assert dialog.restore_auto_requested() is True
+    assert dialog.tasks.item(0).checkState() is Qt.CheckState.Checked
+    manager.close()
+
+
+def test_kimi_auto_running_task_is_visible_without_manual_selection_and_can_be_muted(
+    tmp_path: Path, qtbot: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    auto_ids = {"auto-now"}
+    preferences: list[tuple[set[str], set[str], set[str]]] = []
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        kimi_auto_active_ids=lambda: set(auto_ids),
+        set_kimi_monitoring_preferences=lambda manual, retained, muted: preferences.append(
+            (set(manual), set(retained), set(muted))
+        ),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="kimi:auto-now",
+        slot=1,
+        name="自动加入的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="kimi_local"))
+    window.sync_cards()
+
+    assert list(window.cards) == [task.id]
+    assert window.kimi_selected_ids == {"auto-now"}
+
+    window.set_kimi_monitoring_preferences(set(), set(), {"auto-now"})
+
+    assert not window.cards
+    assert preferences[-1] == (set(), set(), {"auto-now"})
+    manager.close()
+
+
+def test_visible_agent_types_gain_kimi_code_for_stored_settings(
+    tmp_path: Path, qtbot: object
+) -> None:
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("visible_agents", ["codex_cli"])
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    assert "kimi_code" in window.visible_agent_types
+    assert "codex_cli" in window.visible_agent_types
+    manager.close()
+
+
+def test_clear_retained_tasks_removes_terminal_kimi_cards(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    finished = TaskConfig(
+        id="kimi:finished",
+        slot=1,
+        name="已完成的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(finished, TaskState.new(finished.id, "completed", source="kimi_local"))
+    window.set_kimi_monitoring_preferences(set(), {"finished"}, set())
+
+    assert not window.clear_retained_button.isHidden()
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "aacc.gui.QMessageBox.question", lambda *_args: 0x00004000
+    )
+    window.clear_retained_tasks()
+
+    assert finished.id not in window.cards
+    assert window.kimi_selected_ids == set()
     manager.close()

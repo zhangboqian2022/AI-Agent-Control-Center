@@ -17,7 +17,7 @@ from aacc.automation import MacAutomation
 from aacc.automation_executor import AutomationExecutor
 from aacc.config import load_config, rotate_api_token
 from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH, DEFAULT_DATABASE_PATH
-from aacc.discovery_service import CodexDiscoveryService
+from aacc.discovery_service import CodexDiscoveryService, KimiDiscoveryService
 from aacc.gui import MainWindow
 from aacc.hotkeys import GlobalHotkeys
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
@@ -35,8 +35,10 @@ class Runtime:
     automation: MacAutomation
     automation_executor: AutomationExecutor
     discovery: CodexDiscoveryService
+    kimi_discovery: KimiDiscoveryService
 
     def close(self) -> None:
+        self.kimi_discovery.stop()
         self.discovery.stop()
         self.automation_executor.close()
         self.manager.close()
@@ -60,6 +62,7 @@ def build_runtime(
         automation=automation,
         automation_executor=AutomationExecutor(automation),
         discovery=CodexDiscoveryService(manager),
+        kimi_discovery=KimiDiscoveryService(manager),
     )
 
 
@@ -123,6 +126,10 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         codex_auto_active_ids=runtime.discovery.auto_active_ids,
         codex_retained_ids=runtime.discovery.retained_ids,
         set_codex_monitoring_preferences=runtime.discovery.set_monitoring_preferences,
+        kimi_sessions=runtime.kimi_discovery.catalog,
+        kimi_auto_active_ids=runtime.kimi_discovery.auto_active_ids,
+        kimi_retained_ids=runtime.kimi_discovery.retained_ids,
+        set_kimi_monitoring_preferences=runtime.kimi_discovery.set_monitoring_preferences,
         rotate_api_token_callback=lambda: rotate_api_token(runtime.config_path, runtime.config),
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
@@ -134,6 +141,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
     if not trusted:
         QTimer.singleShot(0, window.show_accessibility_guidance)
     runtime.discovery.start()
+    runtime.kimi_discovery.start()
 
     api_server: APIServerThread | None = None
     if runtime.config.app.api.enabled:

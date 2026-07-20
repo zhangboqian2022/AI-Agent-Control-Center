@@ -43,6 +43,7 @@ from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
+from aacc.kimi_discovery import KimiSession
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
 
@@ -202,7 +203,7 @@ class TaskCard(QFrame):
         self.updated_label.hide()
         root.addWidget(self.details, 1)
 
-        if task.id.startswith("codex:"):
+        if task.id.startswith(("codex:", "kimi:")):
             remove_button = QPushButton("×")
             remove_button.setObjectName("removeTaskButton")
             remove_button.setAccessibleName("从面板移除")
@@ -287,7 +288,7 @@ class TaskCard(QFrame):
             )
         copy_action = menu.addAction("复制任务信息")
         copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
-        if self.task.id.startswith("codex:"):
+        if self.task.id.startswith(("codex:", "kimi:")):
             remove_action = menu.addAction("从面板移除")
             remove_action.triggered.connect(lambda: self.remove_requested.emit(self.task.id))
         return menu
@@ -340,6 +341,13 @@ class SettingsDialog(QDialog):
         )
         codex_tasks.clicked.connect(window.open_codex_task_selector)
         layout.addWidget(codex_tasks)
+        kimi_tasks = QPushButton(
+            "选择监控的 Kimi Code 任务"
+            f"（{len(window.kimi_selected_ids)} 已选 · "
+            f"{len(window.kimi_auto_active_ids())} 自动运行）"
+        )
+        kimi_tasks.clicked.connect(window.open_kimi_task_selector)
+        layout.addWidget(kimi_tasks)
         rotate_credentials = QPushButton("重置 API 凭证")
         rotate_credentials.clicked.connect(window.rotate_credentials)
         layout.addWidget(rotate_credentials)
@@ -362,34 +370,36 @@ class SettingsDialog(QDialog):
         layout.addWidget(close)
 
 
-class CodexTaskSelectionDialog(QDialog):
+class TaskSelectionDialog(QDialog):
     def __init__(
         self,
-        sessions: list[CodexSession],
+        sessions: list[tuple[str, str, datetime]],
         selected_ids: set[str],
         auto_active_ids: set[str],
         parent: QWidget,
+        *,
+        window_title: str,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("选择监控的 Codex 任务")
+        self.setWindowTitle(window_title)
         self.setMinimumSize(540, 460)
         self._auto_active_ids = set(auto_active_ids)
         self._restore_auto = False
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("运行中的任务会自动勾选；取消勾选可停止自动监控该任务。"))
         self.tasks = QListWidget()
-        for session in sessions:
-            automatic = session.conversation_id in self._auto_active_ids
+        for session_id, title, updated_at in sessions:
+            automatic = session_id in self._auto_active_ids
             automatic_label = "\n自动监控 · 运行中" if automatic else ""
             item = QListWidgetItem(
-                f"{session.title}\n{session.updated_at.astimezone().strftime('%Y-%m-%d %H:%M')}"
+                f"{title}\n{updated_at.astimezone().strftime('%Y-%m-%d %H:%M')}"
                 f"{automatic_label}"
             )
-            item.setData(Qt.ItemDataRole.UserRole, session.conversation_id)
+            item.setData(Qt.ItemDataRole.UserRole, session_id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
                 Qt.CheckState.Checked
-                if session.conversation_id in selected_ids
+                if session_id in selected_ids
                 else Qt.CheckState.Unchecked
             )
             self.tasks.addItem(item)
@@ -435,6 +445,46 @@ class CodexTaskSelectionDialog(QDialog):
         return self._restore_auto
 
 
+class CodexTaskSelectionDialog(TaskSelectionDialog):
+    def __init__(
+        self,
+        sessions: list[CodexSession],
+        selected_ids: set[str],
+        auto_active_ids: set[str],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(
+            [
+                (session.conversation_id, session.title, session.updated_at)
+                for session in sessions
+            ],
+            selected_ids,
+            auto_active_ids,
+            parent,
+            window_title="选择监控的 Codex 任务",
+        )
+
+
+class KimiTaskSelectionDialog(TaskSelectionDialog):
+    def __init__(
+        self,
+        sessions: list[KimiSession],
+        selected_ids: set[str],
+        auto_active_ids: set[str],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(
+            [
+                (session.session_id, session.title, session.updated_at)
+                for session in sessions
+            ],
+            selected_ids,
+            auto_active_ids,
+            parent,
+            window_title="选择监控的 Kimi Code 任务",
+        )
+
+
 class MainWindow(QWidget):
     state_received = Signal(object)
     external_action = Signal(str, str)
@@ -452,6 +502,11 @@ class MainWindow(QWidget):
         codex_auto_active_ids: Callable[[], set[str]] | None = None,
         codex_retained_ids: Callable[[], set[str]] | None = None,
         set_codex_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
+        | None = None,
+        kimi_sessions: Callable[[], list[KimiSession]] | None = None,
+        kimi_auto_active_ids: Callable[[], set[str]] | None = None,
+        kimi_retained_ids: Callable[[], set[str]] | None = None,
+        set_kimi_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
         | None = None,
         rotate_api_token_callback: Callable[[], str] | None = None,
         discovery_health: Callable[[], DiscoveryHealth] | None = None,
@@ -478,6 +533,12 @@ class MainWindow(QWidget):
         self._codex_auto_active_ids = codex_auto_active_ids or (lambda: set())
         self._codex_retained_ids = codex_retained_ids or (lambda: set())
         self._set_codex_monitoring_preferences = set_codex_monitoring_preferences or (
+            lambda _manual_ids, _retained_ids, _muted_ids: None
+        )
+        self._kimi_sessions = kimi_sessions or (lambda: [])
+        self._kimi_auto_active_ids = kimi_auto_active_ids or (lambda: set())
+        self._kimi_retained_ids = kimi_retained_ids or (lambda: set())
+        self._set_kimi_monitoring_preferences = set_kimi_monitoring_preferences or (
             lambda _manual_ids, _retained_ids, _muted_ids: None
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
@@ -514,6 +575,28 @@ class MainWindow(QWidget):
         else:
             self.codex_muted_ids = set()
         self._apply_codex_monitoring_preferences()
+        saved_kimi_tasks = self._settings.value("kimi_manual_tasks")
+        if isinstance(saved_kimi_tasks, str):
+            self.kimi_manual_ids = {saved_kimi_tasks}
+        elif isinstance(saved_kimi_tasks, list):
+            self.kimi_manual_ids = {str(value) for value in saved_kimi_tasks}
+        else:
+            self.kimi_manual_ids = set()
+        saved_kimi_retained_tasks = self._settings.value("kimi_retained_tasks")
+        if isinstance(saved_kimi_retained_tasks, str):
+            self.kimi_retained_ids = {saved_kimi_retained_tasks}
+        elif isinstance(saved_kimi_retained_tasks, list):
+            self.kimi_retained_ids = {str(value) for value in saved_kimi_retained_tasks}
+        else:
+            self.kimi_retained_ids = set()
+        saved_kimi_muted_tasks = self._settings.value("kimi_muted_tasks")
+        if isinstance(saved_kimi_muted_tasks, str):
+            self.kimi_muted_ids = {saved_kimi_muted_tasks}
+        elif isinstance(saved_kimi_muted_tasks, list):
+            self.kimi_muted_ids = {str(value) for value in saved_kimi_muted_tasks}
+        else:
+            self.kimi_muted_ids = set()
+        self._apply_kimi_monitoring_preferences()
         saved_agents = self._settings.value("visible_agents")
         if isinstance(saved_agents, str):
             self.visible_agent_types = {saved_agents}
@@ -521,6 +604,8 @@ class MainWindow(QWidget):
             self.visible_agent_types = {str(value) for value in saved_agents}
         else:
             self.visible_agent_types = set(self.config.app.visible_agent_types)
+        # New agent types default to visible even for existing stored settings.
+        self.visible_agent_types.add("kimi_code")
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
@@ -596,7 +681,7 @@ class MainWindow(QWidget):
         self.cards_layout.setContentsMargins(0, 0, 0, 0)
         self.task_summary_label = QLabel("运行中：0 · 已完成：0 · 显示：0")
         self.task_summary_label.setObjectName("taskSummary")
-        self.empty_tasks_label = QLabel("未选择 Codex 任务 · 点击 ⚙ 选择监控任务")
+        self.empty_tasks_label = QLabel("未选择 Codex / Kimi Code 任务 · 点击 ⚙ 选择监控任务")
         self.empty_tasks_label.setObjectName("emptyTasks")
         self.empty_tasks_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.running_group_label = QLabel("运行中")
@@ -693,6 +778,7 @@ class MainWindow(QWidget):
             self._timer.stop()
             return
         self._sync_codex_retained_ids()
+        self._sync_kimi_retained_ids()
         self.sync_cards()
         for state in self.manager.list():
             self._apply_state(state)
@@ -712,6 +798,15 @@ class MainWindow(QWidget):
                 and task.id.removeprefix("codex:") in self.codex_selected_ids
             )
         ]
+        tasks = [
+            task
+            for task in tasks
+            if task.agent.type != "kimi_code"
+            or (
+                task.id.startswith("kimi:")
+                and task.id.removeprefix("kimi:") in self.kimi_selected_ids
+            )
+        ]
         return tasks
 
     @property
@@ -722,6 +817,15 @@ class MainWindow(QWidget):
 
     def codex_auto_active_ids(self) -> set[str]:
         return set(self._codex_auto_active_ids())
+
+    @property
+    def kimi_selected_ids(self) -> set[str]:
+        return (
+            self.kimi_manual_ids | self.kimi_retained_ids | self.kimi_auto_active_ids()
+        ) - self.kimi_muted_ids
+
+    def kimi_auto_active_ids(self) -> set[str]:
+        return set(self._kimi_auto_active_ids())
 
     def sync_cards(self) -> None:
         states = {state.task_id: state for state in self.manager.list()}
@@ -738,6 +842,7 @@ class MainWindow(QWidget):
                 new_card = TaskCard(task, states[task.id], self.config.app.blink_attention)
                 new_card.action_requested.connect(self._perform_action)
                 new_card.remove_requested.connect(self.remove_codex_task)
+                new_card.remove_requested.connect(self.remove_kimi_task)
                 new_card.set_compact(self.compact_mode)
                 self.cards[task.id] = new_card
         running_tasks, terminal_tasks = self._grouped_tasks(visible, states)
@@ -755,7 +860,7 @@ class MainWindow(QWidget):
         self.retained_header.setVisible(bool(terminal_tasks))
         self.retained_cards_widget.setVisible(bool(terminal_tasks))
         self.clear_retained_button.setVisible(
-            any(task.id.startswith("codex:") for task in terminal_tasks)
+            any(task.id.startswith(("codex:", "kimi:")) for task in terminal_tasks)
         )
         self._schedule_adaptive_resize()
 
@@ -874,6 +979,45 @@ class MainWindow(QWidget):
             self.codex_retained_ids = set(retained_ids)
             self._settings.setValue("codex_retained_tasks", sorted(self.codex_retained_ids))
 
+    def set_kimi_selected_ids(self, selected_ids: set[str]) -> None:
+        self.set_kimi_monitoring_preferences(selected_ids, set(), set())
+
+    def set_kimi_monitoring_preferences(
+        self, manual_ids: set[str], retained_ids: set[str], muted_ids: set[str]
+    ) -> None:
+        self.kimi_manual_ids = set(manual_ids)
+        self.kimi_retained_ids = set(retained_ids) - self.kimi_manual_ids
+        self.kimi_muted_ids = set(muted_ids) - self.kimi_manual_ids
+        self._settings.setValue("kimi_manual_tasks", sorted(self.kimi_manual_ids))
+        self._settings.setValue("kimi_retained_tasks", sorted(self.kimi_retained_ids))
+        self._settings.setValue("kimi_muted_tasks", sorted(self.kimi_muted_ids))
+        self._apply_kimi_monitoring_preferences()
+        self.sync_cards()
+
+    def _apply_kimi_monitoring_preferences(self) -> None:
+        self._set_kimi_monitoring_preferences(
+            self.kimi_manual_ids, self.kimi_retained_ids, self.kimi_muted_ids
+        )
+
+    def _sync_kimi_retained_ids(self) -> None:
+        retained_ids = self._kimi_retained_ids()
+        if retained_ids != self.kimi_retained_ids:
+            self.kimi_retained_ids = set(retained_ids)
+            self._settings.setValue("kimi_retained_tasks", sorted(self.kimi_retained_ids))
+
+    def remove_kimi_task(self, task_id: str) -> None:
+        if not task_id.startswith("kimi:"):
+            return
+        session_id = task_id.removeprefix("kimi:")
+        self.kimi_manual_ids.discard(session_id)
+        self.kimi_retained_ids.discard(session_id)
+        self.kimi_muted_ids.add(session_id)
+        self._settings.setValue("kimi_manual_tasks", sorted(self.kimi_manual_ids))
+        self._settings.setValue("kimi_retained_tasks", sorted(self.kimi_retained_ids))
+        self._settings.setValue("kimi_muted_tasks", sorted(self.kimi_muted_ids))
+        self._apply_kimi_monitoring_preferences()
+        self.sync_cards()
+
     def remove_codex_task(self, task_id: str) -> None:
         if not task_id.startswith("codex:"):
             return
@@ -892,21 +1036,25 @@ class MainWindow(QWidget):
         task_ids = [
             task_id
             for task_id in self._card_order_ids
-            if task_id.startswith("codex:") and self._is_terminal(self.manager.get(task_id))
+            if task_id.startswith(("codex:", "kimi:"))
+            and self._is_terminal(self.manager.get(task_id))
         ]
         if not task_ids:
             return
         answer = QMessageBox.question(
             self,
             "清除已完成任务",
-            f"确定从面板移除 {len(task_ids)} 个已完成 Codex 任务吗？",
+            f"确定从面板移除 {len(task_ids)} 个已完成任务吗？",
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
             QMessageBox.StandardButton.Cancel,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         for task_id in task_ids:
-            self.remove_codex_task(task_id)
+            if task_id.startswith("codex:"):
+                self.remove_codex_task(task_id)
+            else:
+                self.remove_kimi_task(task_id)
 
     def open_codex_task_selector(self) -> None:
         auto_active_ids = self.codex_auto_active_ids()
@@ -923,6 +1071,22 @@ class MainWindow(QWidget):
             if dialog.restore_auto_requested():
                 muted_ids -= auto_active_ids
             self.set_codex_monitoring_preferences(manual_ids, retained_ids, muted_ids)
+
+    def open_kimi_task_selector(self) -> None:
+        auto_active_ids = self.kimi_auto_active_ids()
+        dialog = KimiTaskSelectionDialog(
+            self._kimi_sessions(), self.kimi_selected_ids, auto_active_ids, self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_ids = dialog.selected_ids()
+            retained_ids = self.kimi_retained_ids & selected_ids
+            manual_ids = (self.kimi_manual_ids & selected_ids) | (
+                selected_ids - auto_active_ids - retained_ids
+            )
+            muted_ids = (self.kimi_muted_ids | (auto_active_ids - selected_ids)) - selected_ids
+            if dialog.restore_auto_requested():
+                muted_ids -= auto_active_ids
+            self.set_kimi_monitoring_preferences(manual_ids, retained_ids, muted_ids)
 
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()

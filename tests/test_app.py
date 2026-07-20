@@ -2,6 +2,7 @@ from pathlib import Path
 
 import aacc.app as app_module
 from aacc.app import build_runtime
+from aacc.discovery_service import CodexDiscoveryService, KimiDiscoveryService
 
 
 def test_build_runtime_creates_default_config_database_and_four_tasks(tmp_path: Path) -> None:
@@ -12,6 +13,8 @@ def test_build_runtime_creates_default_config_database_and_four_tasks(tmp_path: 
     assert database_path.exists()
     assert len(runtime.manager.list()) == 4
     assert runtime.automation.config is runtime.config
+    assert isinstance(runtime.discovery, CodexDiscoveryService)
+    assert isinstance(runtime.kimi_discovery, KimiDiscoveryService)
     runtime.close()
 
 
