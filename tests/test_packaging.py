@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from aacc import __version__
+from aacc.gui import load_stylesheet
 from aacc.models import AppConfig
 
 ROOT = Path(__file__).parents[1]
@@ -61,15 +62,17 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-1.2.0.dmg" in script
+    assert "AACC-1.3.0-rc.1.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
+    assert "SKIP_BUILD" in script
+    assert "AACC_NOTARY_PROFILE" in script
 
 
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
-    assert __version__ == "1.2.0"
-    assert 'version = "1.2.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'CFBundleShortVersionString -string "1.2.0"' in (
+    assert __version__ == "1.3.0rc1"
+    assert 'version = "1.3.0rc1"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'AACC_VERSION="${AACC_VERSION:-1.3.0-rc.1}"' in (
         ROOT / "scripts" / "build_app.sh"
     ).read_text(encoding="utf-8")
 
@@ -77,3 +80,25 @@ def test_release_version_is_consistent_across_project_and_build_scripts() -> Non
 def test_installer_quits_running_copy_before_replacement() -> None:
     script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
     assert 'tell application id "com.aacc.controlcenter" to quit' in script
+
+
+def test_installer_links_runtime_not_repository_virtualenv() -> None:
+    script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    assert "Application Support/AACC/runtime" in script
+    assert '"$project_root/.venv/bin/aacc"' not in script
+    assert "uv sync --extra dev" in script
+    assert "uv pip install" in script
+
+
+def test_stylesheet_is_packaged_resource() -> None:
+    assert "#panel" in load_stylesheet()
+    assert "#discoveryWarning" in load_stylesheet()
+
+
+def test_build_scripts_support_explicit_signing_and_notarization() -> None:
+    app_script = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
+    dmg_script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
+    assert "AACC_CODESIGN_IDENTITY" in app_script
+    assert "--options runtime" in app_script
+    assert "notarytool submit" in dmg_script
+    assert "stapler staple" in dmg_script

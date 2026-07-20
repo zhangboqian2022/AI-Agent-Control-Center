@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import UTC, datetime
+from importlib import resources
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -77,6 +78,10 @@ STATUS_NAMES = {
 }
 
 STATUS_LIGHT_FONT_SIZE = 95
+
+
+def load_stylesheet() -> str:
+    return resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
 
 
 def _elapsed(state: TaskState) -> str:
@@ -608,60 +613,7 @@ class MainWindow(QWidget):
         self.sync_cards()
 
     def _apply_styles(self) -> None:
-        self.setStyleSheet(
-            """
-            #panel {
-              background: rgba(18, 23, 34, 238);
-              border: 1px solid rgba(122, 145, 180, 70);
-              border-radius: 18px;
-            }
-            #title { color: #f2f6ff; font-size: 14px; font-weight: 800; letter-spacing: 1.2px; }
-            #subtitle { color: #5fd7ce; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
-            #taskCard {
-              background: rgba(31, 39, 55, 220);
-              border: 1px solid rgba(112, 132, 165, 48);
-              border-radius: 13px;
-            }
-            #taskCard:hover {
-              background: rgba(40, 50, 70, 235);
-              border-color: rgba(91, 158, 255, 110);
-            }
-            #cardsScroll { background: transparent; border: none; }
-            #emptyTasks { color: #8997aa; padding: 40px 12px; }
-            #slotLabel { color: #77879f; font-size: 12px; font-weight: 800; }
-            #agentLabel { color: #eef3fc; font-size: 13px; font-weight: 800; }
-            #timerLabel { color: #8f9cb0; font-family: Menlo; font-size: 11px; }
-            #taskName { color: #d6deea; font-size: 13px; font-weight: 600; }
-            #messageLabel { color: #8997aa; font-size: 11px; }
-            #updatedLabel { color: #687890; font-size: 10px; }
-            #taskSummary { color: #94a3b8; font-size: 11px; font-weight: 700; }
-            #taskGroupLabel {
-              color: #8fa1bb; font-size: 10px; font-weight: 800; letter-spacing: 1px;
-            }
-            #removeTaskButton, #clearRetainedButton {
-              color: #94a3b8; background: transparent; border: none; border-radius: 7px;
-            }
-            #removeTaskButton:hover, #clearRetainedButton:hover {
-              color: #ffffff; background: rgba(255,255,255,25);
-            }
-            #footer { color: #65758b; font-size: 10px; }
-            #headerButton {
-              color: #aab6c7;
-              background: rgba(255,255,255,12);
-              border: none;
-              border-radius: 7px;
-            }
-            #headerButton:hover { color: white; background: rgba(78,158,255,70); }
-            #discoveryWarning {
-              background: rgba(112, 82, 12, 220); border: 1px solid #d6a928; border-radius: 9px;
-            }
-            #discoveryWarningLabel { color: #ffe8a3; font-size: 11px; font-weight: 700; }
-            #copyDiagnosticsButton { color: #fff3c4; background: rgba(255,255,255,20); }
-            QMenu { background: #1d2635; color: #e7edf7; border: 1px solid #38465b; padding: 6px; }
-            QMenu::item { padding: 6px 22px; border-radius: 5px; }
-            QMenu::item:selected { background: #347bd1; }
-            """
-        )
+        self.setStyleSheet(load_stylesheet())
 
     def _create_tray(self) -> None:
         pixmap = QPixmap(24, 24)
