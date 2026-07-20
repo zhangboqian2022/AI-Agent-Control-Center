@@ -678,6 +678,94 @@ def test_waiting_session_is_prioritized_before_newer_unknown_session(
     assert tasks[0].state.status is TaskStatus.WAITING_INPUT
 
 
+def test_start_cache_retries_a_task_started_line_seen_during_partial_append(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partial-append.jsonl"
+    old_start = datetime(2026, 7, 20, 1, 0, tzinfo=UTC)
+    new_start = datetime(2026, 7, 20, 2, 0, tzinfo=UTC)
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp": old_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    discovery = CodexLocalDiscovery(tmp_path / "index.jsonl", tmp_path / "processes.json")
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == old_start
+
+    encoded = (
+        json.dumps(
+            {
+                "timestamp": new_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n"
+    ).encode()
+    midpoint = len(encoded) // 2
+    with path.open("ab") as handle:
+        handle.write(encoded[:midpoint])
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == old_start
+
+    with path.open("ab") as handle:
+        handle.write(encoded[midpoint:])
+
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == new_start
+
+
+def test_start_cache_invalidates_when_file_is_truncated_and_regrown(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "regrown.jsonl"
+    old_start = datetime(2026, 7, 20, 1, 0, tzinfo=UTC)
+    new_start = datetime(2026, 7, 20, 2, 0, tzinfo=UTC)
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp": old_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    discovery = CodexLocalDiscovery(tmp_path / "index.jsonl", tmp_path / "processes.json")
+    original_size = path.stat().st_size
+    assert discovery._latest_task_start(path, original_size, old_start) == old_start
+
+    replacement = (
+        json.dumps(
+            {
+                "timestamp": new_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n"
+    )
+    path.write_text(replacement + (" " * original_size) + "\n", encoding="utf-8")
+
+    assert path.stat().st_size > original_size
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == new_start
+
+
+def test_reverse_start_scan_discards_oversized_private_lines(tmp_path: Path) -> None:
+    path = tmp_path / "oversized.jsonl"
+    path.write_bytes(b'{"private":"' + (b"x" * 400_000) + b'"}\n{}\n')
+
+    with path.open("rb") as handle:
+        lines = list(CodexLocalDiscovery._reverse_lines(handle, path.stat().st_size))
+
+    assert lines == [b"{}"]
+
+
 def test_pid_with_record_start_is_rejected_when_live_start_unknown(tmp_path: Path) -> None:
     index = tmp_path / "session_index.jsonl"
     index.write_text(

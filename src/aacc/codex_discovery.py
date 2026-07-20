@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +18,8 @@ Clock = Callable[[], datetime]
 SessionModifiedAt = Callable[[Path], datetime]
 ProcessStartedAt = Callable[[int], int | None]
 CODEX_METADATA_COMPATIBILITY = "2026-07"
+MAX_SESSION_METADATA_LINE_BYTES = 65_536
+SESSION_SCAN_CHUNK_BYTES = 65_536
 
 
 class CodexDiscoveryError(RuntimeError):
@@ -41,6 +45,15 @@ class SessionSignal:
     observed_at: datetime
     message: str
     started_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class SessionStartCache:
+    scanned_size: int
+    started_at: datetime | None
+    device: int
+    inode: int
+    boundary_digest: bytes
 
 
 class CodexLocalDiscovery:
@@ -71,7 +84,7 @@ class CodexLocalDiscovery:
         self.process_started_at = process_started_at or self._process_started_at
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         self.max_tasks = max(1, min(max_tasks, 20))
-        self._session_start_cache: dict[Path, tuple[int, datetime | None]] = {}
+        self._session_start_cache: dict[Path, SessionStartCache] = {}
 
     def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
         sessions = self._sessions()
@@ -233,6 +246,12 @@ class CodexLocalDiscovery:
             return signals
         now = self.now()
         files_by_id = self._session_paths(selected_ids)
+        current_paths = {path for paths in files_by_id.values() for path in paths}
+        self._session_start_cache = {
+            path: entry
+            for path, entry in self._session_start_cache.items()
+            if path in current_paths
+        }
         for conversation_id, files in files_by_id.items():
             if not files:
                 continue
@@ -438,7 +457,7 @@ class CodexLocalDiscovery:
         if started_at is None:
             started_at = self._latest_task_start(path, size, fallback)
         else:
-            self._session_start_cache[path] = (size, started_at)
+            self._store_session_start(path, size, started_at)
         return SessionSignal(
             signal.status,
             signal.observed_at,
@@ -447,51 +466,143 @@ class CodexLocalDiscovery:
         )
 
     def _latest_task_start(self, path: Path, size: int, fallback: datetime) -> datetime | None:
+        try:
+            stat = path.stat()
+            complete_size = self._complete_line_boundary(path, size)
+        except OSError:
+            return None
         cached = self._session_start_cache.get(path)
-        if cached is not None and 0 <= cached[0] <= size:
-            scanned_size, started_at = cached
-            if scanned_size == size:
+        cache_valid = (
+            cached is not None
+            and cached.device == stat.st_dev
+            and cached.inode == stat.st_ino
+            and 0 <= cached.scanned_size <= complete_size
+            and cached.boundary_digest == self._boundary_digest(path, cached.scanned_size)
+        )
+        if cache_valid and cached is not None:
+            started_at = cached.started_at
+            if cached.scanned_size == complete_size:
                 return started_at
             try:
                 with path.open("rb") as handle:
-                    handle.seek(scanned_size)
-                    appended = handle.read(size - scanned_size)
+                    yield_lines = self._forward_lines(handle, cached.scanned_size, complete_size)
+                    for line in yield_lines:
+                        candidate = self._task_start_from_line(line, fallback)
+                        if candidate is not None:
+                            started_at = candidate
             except OSError:
                 return started_at
-            for line in appended.splitlines():
-                candidate = self._task_start_from_line(line, fallback)
-                if candidate is not None:
-                    started_at = candidate
-            self._session_start_cache[path] = (size, started_at)
+            self._store_session_start(path, complete_size, started_at)
             return started_at
 
         started_at = None
         try:
             with path.open("rb") as handle:
-                for line in self._reverse_lines(handle, size):
+                for line in self._reverse_lines(handle, complete_size):
                     started_at = self._task_start_from_line(line, fallback)
                     if started_at is not None:
                         break
         except OSError:
             return None
-        self._session_start_cache[path] = (size, started_at)
+        self._store_session_start(path, complete_size, started_at)
         return started_at
+
+    @staticmethod
+    def _complete_line_boundary(path: Path, size: int) -> int:
+        with path.open("rb") as handle:
+            position = size
+            while position > 0:
+                read_size = min(SESSION_SCAN_CHUNK_BYTES, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                newline = chunk.rfind(b"\n")
+                if newline >= 0:
+                    return position + newline + 1
+        return 0
+
+    @staticmethod
+    def _boundary_digest(path: Path, boundary: int) -> bytes:
+        start = max(0, boundary - 4096)
+        with path.open("rb") as handle:
+            handle.seek(start)
+            raw = handle.read(boundary - start)
+        return hashlib.blake2b(raw, digest_size=16).digest()
+
+    def _store_session_start(
+        self, path: Path, scanned_size: int, started_at: datetime | None
+    ) -> None:
+        try:
+            stat = path.stat()
+            complete_size = self._complete_line_boundary(path, scanned_size)
+            digest = self._boundary_digest(path, complete_size)
+        except OSError:
+            return
+        self._session_start_cache[path] = SessionStartCache(
+            scanned_size=complete_size,
+            started_at=started_at,
+            device=stat.st_dev,
+            inode=stat.st_ino,
+            boundary_digest=digest,
+        )
+
+    @staticmethod
+    def _forward_lines(handle: BinaryIO, start: int, end: int) -> Iterator[bytes]:
+        handle.seek(start)
+        while handle.tell() < end:
+            remaining = end - handle.tell()
+            line = handle.readline(min(MAX_SESSION_METADATA_LINE_BYTES + 1, remaining))
+            if not line:
+                break
+            oversized = len(line) > MAX_SESSION_METADATA_LINE_BYTES
+            line_complete = line.endswith(b"\n")
+            if oversized and not line_complete:
+                while handle.tell() < end:
+                    remaining = end - handle.tell()
+                    fragment = handle.readline(min(MAX_SESSION_METADATA_LINE_BYTES + 1, remaining))
+                    if not fragment or fragment.endswith(b"\n"):
+                        break
+                continue
+            line = line.rstrip(b"\r\n")
+            if line and not oversized:
+                yield line
 
     @staticmethod
     def _reverse_lines(handle: BinaryIO, size: int) -> Iterator[bytes]:
         position = size
-        remainder = b""
+        fragments: deque[bytes] = deque()
+        line_size = 0
+        dropping_oversized = False
         while position > 0:
-            read_size = min(262_144, position)
+            read_size = min(SESSION_SCAN_CHUNK_BYTES, position)
             position -= read_size
             handle.seek(position)
-            parts = (handle.read(read_size) + remainder).split(b"\n")
-            remainder = parts[0]
-            yield from reversed(parts[1:])
-        if remainder:
-            yield remainder
+            segments = handle.read(read_size).split(b"\n")
+            for index in range(len(segments) - 1, -1, -1):
+                segment = segments[index]
+                if not dropping_oversized:
+                    line_size += len(segment)
+                    if line_size > MAX_SESSION_METADATA_LINE_BYTES:
+                        dropping_oversized = True
+                        fragments.clear()
+                    else:
+                        fragments.appendleft(segment)
+                if index > 0:
+                    if not dropping_oversized and line_size:
+                        yield b"".join(fragments)
+                    fragments.clear()
+                    line_size = 0
+                    dropping_oversized = False
+        if not dropping_oversized and line_size:
+            yield b"".join(fragments)
 
     def _task_start_from_line(self, raw_line: bytes, fallback: datetime) -> datetime | None:
+        if (
+            len(raw_line) > MAX_SESSION_METADATA_LINE_BYTES
+            or b'"task_started"' not in raw_line
+            or b'"event_msg"' not in raw_line
+        ):
+            return None
         try:
             item = json.loads(raw_line.decode("utf-8", errors="ignore"))
         except json.JSONDecodeError:
