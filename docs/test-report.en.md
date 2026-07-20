@@ -19,7 +19,7 @@ uv run --extra dev mypy src
 - Ruff: zero findings. Strict mypy: 23 source modules passed.
 - Wheel: `aacc/styles.qss` is present. The installer exports production dependencies from `uv.lock` and installs the local wheel with `--no-deps`; the isolated runtime contains no pytest, mypy, Ruff, or PyInstaller.
 - App: installed at `~/Applications/AACC.app`, version `1.3.0-rc.1`, 110 MB, ad-hoc deep-signature strict verification passed, and the process remained running at about 71 MB RSS.
-- DMG: `/Users/zhangboqian/Desktop/AACC-1.3.0-rc.1.dmg`, 49 MB, `hdiutil verify` passed, SHA-256 `35069897f340c4c0da9f1c9c3380e1d888152c53986ab68345b563556b15278f`.
+- DMG: `/Users/zhangboqian/Desktop/AACC-1.3.0-rc.1.dmg`, 49 MB, `hdiutil verify` passed, SHA-256 `10f6c4fed8ee4fff4cf3b9fb708fd7197e8647adb8ddd6e771808f2a3fedd9f3`.
 - Installed config and SQLite modes are both `0600`; local health returned `1.3.0rc1`; `aacc doctor` passed; a second launch kept one process.
 - Live Codex smoke testing detected this running task and a separate completed task. Sanitized 2026-07 current-format index/session fixtures verify running and completed event parsing. Completed-task retention remains covered by automated Qt/discovery regression tests.
 
