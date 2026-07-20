@@ -5,7 +5,7 @@
 ## 最终结果
 
 - `pytest`：163 项通过，0 项失败。
-- 全包行覆盖率 83%；相对 `6167267`（本次发布基线）的 623 行可执行变更覆盖 561 行，changed-line 覆盖率为 90%（缺失 62 行），达到发布门槛。复现命令：`uv run pytest --cov=src/aacc --cov-report=xml:coverage.xml -q`，随后执行 `uvx diff-cover coverage.xml --compare-branch=61672673d326796ad2631a0a59a39b8e5545ce45 --fail-under=90`。
+- 全包行覆盖率 83%；相对 `6167267`（本次发布基线）的 666 行可执行变更覆盖 600 行，changed-line 覆盖率为 90%（缺失 66 行），达到发布门槛。复现命令：`uv run pytest --cov=src/aacc --cov-report=xml:coverage.xml -q`，随后执行 `uvx diff-cover coverage.xml --compare-branch=61672673d326796ad2631a0a59a39b8e5545ce45 --fail-under=90`。
 - Ruff：0 个问题；strict mypy：23 个源码模块全部通过。
 - wheel 已包含 `aacc/styles.qss`；安装器从 `uv.lock` 导出生产依赖并以 `--no-deps` 安装本地 wheel，独立 runtime 不含 pytest、mypy、Ruff 或 PyInstaller。
 - `~/Applications/AACC.app` 版本为 `1.3.0-rc.1`，约 110 MB；ad-hoc 深度签名严格验证通过，进程保持运行，RSS 约 71 MB。

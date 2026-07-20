@@ -15,7 +15,7 @@ uv run --extra dev mypy src
 ## Measured results
 
 - `pytest`: 163 passed, 0 failed.
-- Full-package line coverage: 83%. Of 623 executable lines changed from release baseline `6167267`, 561 are covered and 62 are missing, producing reproducible 90% changed-line coverage and meeting the release gate. Run `uv run pytest --cov=src/aacc --cov-report=xml:coverage.xml -q`, then `uvx diff-cover coverage.xml --compare-branch=61672673d326796ad2631a0a59a39b8e5545ce45 --fail-under=90`.
+- Full-package line coverage: 83%. Of 666 executable lines changed from release baseline `6167267`, 600 are covered and 66 are missing, producing reproducible 90% changed-line coverage and meeting the release gate. Run `uv run pytest --cov=src/aacc --cov-report=xml:coverage.xml -q`, then `uvx diff-cover coverage.xml --compare-branch=61672673d326796ad2631a0a59a39b8e5545ce45 --fail-under=90`.
 - Ruff: zero findings. Strict mypy: 23 source modules passed.
 - Wheel: `aacc/styles.qss` is present. The installer exports production dependencies from `uv.lock` and installs the local wheel with `--no-deps`; the isolated runtime contains no pytest, mypy, Ruff, or PyInstaller.
 - App: installed at `~/Applications/AACC.app`, version `1.3.0-rc.1`, 110 MB, ad-hoc deep-signature strict verification passed, and the process remained running at about 71 MB RSS.
