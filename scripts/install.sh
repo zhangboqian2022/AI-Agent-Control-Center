@@ -17,7 +17,12 @@ command -v uv >/dev/null 2>&1 || { echo "错误：未找到 uv，请先运行 br
 cd "$project_root"
 uv sync --extra dev
 QT_QPA_PLATFORM=offscreen uv run pytest -q
-"$project_root/scripts/build_app.sh"
+if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
+  "$project_root/scripts/build_app.sh"
+elif [[ ! -d "$project_root/dist/AACC.app" ]]; then
+  echo "错误：SKIP_BUILD=1 但 dist/AACC.app 不存在" >&2
+  exit 1
+fi
 
 mkdir -p "$runtime_root"
 rm -rf "$runtime_venv"

@@ -88,6 +88,7 @@ def test_installer_links_runtime_not_repository_virtualenv() -> None:
     assert '"$project_root/.venv/bin/aacc"' not in script
     assert "uv sync --extra dev" in script
     assert "uv pip install" in script
+    assert "SKIP_BUILD" in script
 
 
 def test_stylesheet_is_packaged_resource() -> None:
