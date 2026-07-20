@@ -53,7 +53,7 @@ class CodexDiscoveryService:
         manager: TaskManager,
         *,
         discovery: CodexLocalDiscovery | None = None,
-        interval_seconds: float = 2.0,
+        interval_seconds: float = 5.0,
     ) -> None:
         self.manager = manager
         self.discovery = discovery or CodexLocalDiscovery()

@@ -120,7 +120,140 @@ def test_selected_recent_session_file_is_reported_as_running(tmp_path: Path) -> 
     tasks = discovery.discover({conversation_id})
 
     assert tasks[0].state.status is TaskStatus.RUNNING
-    assert tasks[0].state.message == "检测到 Codex 会话活动"
+    assert tasks[0].state.message == "正在分析任务"
+
+
+@pytest.mark.parametrize(
+    ("activity", "expected"),
+    [
+        ({"type": "event_msg", "payload": {"type": "patch_apply_end"}}, "正在修改代码"),
+        (
+            {
+                "type": "response_item",
+                "payload": {"type": "custom_tool_call", "name": "web__run"},
+            },
+            "正在查询资料",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {"type": "custom_tool_call", "name": "read_mcp_resource"},
+            },
+            "正在检查代码",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "input": '{"cmd":"uv run pytest -q","secret":"private-test-sentinel"}',
+                },
+            },
+            "正在运行测试",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "input": '{"cmd":"./scripts/build_dmg.sh","path":"private-build-sentinel"}',
+                },
+            },
+            "正在构建程序",
+        ),
+        ({"type": "event_msg", "payload": {"type": "future_activity"}}, "正在分析任务"),
+    ],
+)
+def test_recent_session_activity_is_reduced_to_a_fixed_private_summary(
+    tmp_path: Path, activity: dict[str, object], expected: str
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "activity-summary"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        json.dumps(
+            {
+                "id": conversation_id,
+                "thread_name": "隐私概括测试",
+                "updated_at": "2026-07-20T10:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    records = [
+        {
+            "timestamp": "2026-07-20T10:00:00Z",
+            "type": "event_msg",
+            "payload": {"type": "task_started", "prompt": "private-prompt-sentinel"},
+        },
+        {
+            "timestamp": "2026-07-20T10:00:04Z",
+            **activity,
+            "private_response": "private-response-sentinel",
+        },
+    ]
+    session_path = sessions / f"rollout-{conversation_id}.jsonl"
+    session_path.write_text(
+        "\n".join(json.dumps(record) for record in records),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    ).discover({conversation_id})[0]
+
+    assert task.state.status is TaskStatus.RUNNING
+    assert task.state.message == expected
+    assert len(task.state.message) <= 18
+    for private_value in (
+        "private-prompt-sentinel",
+        "private-response-sentinel",
+        "private-test-sentinel",
+        "private-build-sentinel",
+    ):
+        assert private_value not in task.state.message
+
+
+def test_malformed_recent_activity_falls_back_without_exposing_content(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "malformed-activity"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": "2026-07-20T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        "not-json private-malformed-sentinel\n"
+        + json.dumps(
+            {
+                "timestamp": "2026-07-20T10:00:00Z",
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    ).discover({conversation_id})[0]
+
+    assert task.state.message == "正在分析任务"
+    assert "private-malformed-sentinel" not in task.state.message
 
 
 def test_discovery_only_returns_explicitly_selected_tasks(tmp_path: Path) -> None:
@@ -311,7 +444,7 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
     ).discover({conversation_id})
 
     assert tasks[0].state.status is TaskStatus.COMPLETED
-    assert tasks[0].state.message == "Codex 回合已完成"
+    assert tasks[0].state.message == "已完成"
 
 
 def test_pid_with_record_start_is_rejected_when_live_start_unknown(tmp_path: Path) -> None:

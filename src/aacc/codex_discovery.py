@@ -39,6 +39,7 @@ class CodexSession:
 class SessionSignal:
     status: TaskStatus
     observed_at: datetime
+    message: str
 
 
 class CodexLocalDiscovery:
@@ -85,15 +86,15 @@ class CodexLocalDiscovery:
             updated_at = signal.observed_at if signal is not None else session["updated_at"]
             if signal is not None and signal.status is TaskStatus.COMPLETED:
                 status = TaskStatus.COMPLETED
-                message = "Codex 回合已完成"
+                message = signal.message
                 confidence = 0.96
             elif signal is not None and signal.status is TaskStatus.RUNNING:
                 status = TaskStatus.RUNNING
-                message = "检测到 Codex 会话活动"
+                message = signal.message
                 confidence = 0.9
             elif pid is not None:
                 status = TaskStatus.RUNNING
-                message = "检测到 Codex 正在运行"
+                message = "正在分析任务"
                 confidence = 0.88
             else:
                 status = TaskStatus.UNKNOWN
@@ -217,7 +218,9 @@ class CodexLocalDiscovery:
                 signals[conversation_id] = terminal_signal
                 continue
             if self._is_recent(now, latest_at):
-                signals[conversation_id] = SessionSignal(TaskStatus.RUNNING, latest_at)
+                signals[conversation_id] = SessionSignal(
+                    TaskStatus.RUNNING, latest_at, "正在分析任务"
+                )
         return signals
 
     def _session_paths(self, selected_ids: set[str]) -> dict[str, list[Path]]:
@@ -240,8 +243,64 @@ class CodexLocalDiscovery:
     def _is_recent(self, now: datetime, observed_at: datetime) -> bool:
         return (now - observed_at).total_seconds() <= self.activity_window_seconds
 
+    @staticmethod
+    def _command_activity(raw: object) -> str:
+        if not isinstance(raw, str):
+            return "正在执行命令"
+        normalized = raw[:16_384].casefold()
+        test_markers = (
+            "pytest",
+            "npm test",
+            "pnpm test",
+            "yarn test",
+            "cargo test",
+            "go test",
+        )
+        build_markers = (
+            "build_dmg",
+            "build_app",
+            "pyinstaller",
+            "uv build",
+            "npm run build",
+            "pnpm build",
+            "cargo build",
+            "hdiutil",
+        )
+        inspect_markers = ("rg ", "sed -n", "git diff", "git status", "find ", "ls ")
+        if any(marker in normalized for marker in test_markers):
+            return "正在运行测试"
+        if any(marker in normalized for marker in build_markers):
+            return "正在构建程序"
+        if any(marker in normalized for marker in inspect_markers):
+            return "正在检查代码"
+        return "正在执行命令"
+
+    @classmethod
+    def _activity_message(cls, item: dict[str, Any]) -> str | None:
+        payload = item.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        event_type = payload.get("type")
+        if event_type in {"patch_apply_begin", "patch_apply_end"}:
+            return "正在修改代码"
+        if item.get("type") != "response_item" or event_type != "custom_tool_call":
+            return None
+        raw_name = payload.get("name")
+        if not isinstance(raw_name, str):
+            return None
+        name = raw_name.casefold()
+        if any(marker in name for marker in ("patch", "write", "edit")):
+            return "正在修改代码"
+        if any(marker in name for marker in ("web", "browser", "chrome", "search")):
+            return "正在查询资料"
+        if any(marker in name for marker in ("read", "view", "open", "list", "find")):
+            return "正在检查代码"
+        if name in {"exec", "exec_command", "functions.exec"}:
+            return cls._command_activity(payload.get("input"))
+        return None
+
     def _read_session_signal(self, path: Path, fallback: datetime) -> SessionSignal | None:
-        """Read only the tail event metadata, never prompts or response content."""
+        """Read bounded tail metadata and return only fixed, privacy-safe labels."""
         try:
             with path.open("rb") as handle:
                 handle.seek(0, 2)
@@ -255,17 +314,20 @@ class CodexLocalDiscovery:
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(item, dict) or item.get("type") != "event_msg":
+            if not isinstance(item, dict):
                 continue
             payload = item.get("payload")
             if not isinstance(payload, dict):
                 continue
             event_type = payload.get("type")
-            if event_type not in {"task_started", "task_complete"}:
-                continue
             observed_at = self._parse_time(item.get("timestamp")) or fallback
-            status = TaskStatus.COMPLETED if event_type == "task_complete" else TaskStatus.RUNNING
-            return SessionSignal(status, observed_at)
+            if item.get("type") == "event_msg" and event_type == "task_complete":
+                return SessionSignal(TaskStatus.COMPLETED, observed_at, "已完成")
+            activity_message = self._activity_message(item)
+            if activity_message is not None:
+                return SessionSignal(TaskStatus.RUNNING, observed_at, activity_message)
+            if item.get("type") == "event_msg" and event_type == "task_started":
+                return SessionSignal(TaskStatus.RUNNING, observed_at, "正在分析任务")
         return None
 
     def _active_pids(self, selected_ids: set[str]) -> dict[str, int]:
