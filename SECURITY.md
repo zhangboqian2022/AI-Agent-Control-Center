@@ -17,4 +17,4 @@ Do not email API tokens, private prompts, source code, screenshots with secrets,
 
 ## Security model
 
-AACC is designed for local operation. Its API listens only on loopback and requires a generated Bearer token. The project intentionally excludes remote-control endpoints and arbitrary command execution. macOS automation actions are constrained by a key allowlist and require a successfully focused target application.
+AACC is designed for local operation. Its API listens only on loopback and requires a generated Bearer token, and it exposes no standalone shell-execution endpoint. However, the API can inject arbitrary text (`/send-text`) together with allowlisted keystrokes (including Enter); against a terminal-like target, that combination is equivalent to the current user's interactive typing ability, up to and including running commands. Treat the API token as a password-grade secret: keep it local and never share or transmit it. macOS automation additionally requires Accessibility permission and a successfully focused target application.

@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-1.3.0-rc.3.dmg" in script
+    assert "AACC-1.3.0-rc.4.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
     assert "SKIP_BUILD" in script
@@ -86,9 +87,9 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
 
 
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
-    assert __version__ == "1.3.0rc3"
-    assert 'version = "1.3.0rc3"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'AACC_VERSION="${AACC_VERSION:-1.3.0-rc.3}"' in (
+    assert __version__ == "1.3.0rc4"
+    assert 'version = "1.3.0rc4"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'AACC_VERSION="${AACC_VERSION:-1.3.0-rc.4}"' in (
         ROOT / "scripts" / "build_app.sh"
     ).read_text(encoding="utf-8")
 
@@ -143,3 +144,27 @@ def test_partial_release_credentials_fail_before_build() -> None:
         assert completed.returncode != 0
         assert "AACC_CODESIGN_IDENTITY" in completed.stderr
         assert "AACC_NOTARY_PROFILE" in completed.stderr
+
+
+def test_documentation_download_links_match_package_version() -> None:
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)rc(\d+)", __version__)
+    assert match, __version__
+    public_version = f"{match.group(1)}-rc.{match.group(2)}"
+    release_tag = f"v{public_version}"
+    dmg_name = f"AACC-{public_version}.dmg"
+
+    readme_paths = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
+    for path in readme_paths:
+        content = path.read_text(encoding="utf-8")
+        download_links = re.findall(r"releases/download/\S+", content)
+        assert download_links, path.name
+        assert all(release_tag in link for link in download_links), path.name
+
+    documentation_paths = readme_paths + [
+        ROOT / "docs" / "user-guide.md",
+        ROOT / "docs" / "user-guide.en.md",
+    ]
+    for path in documentation_paths:
+        content = path.read_text(encoding="utf-8")
+        for referenced in re.findall(r"AACC-\d+\.\d+\.\d+-rc\.\d+\.dmg", content):
+            assert referenced == dmg_name, path.name

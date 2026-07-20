@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-user_root="$(python3 -c 'from pathlib import Path; print(Path.home())')"
+user_root="${HOME:?HOME is not set}"
+install_root="${AACC_INSTALL_ROOT:-$user_root}"
+# 废纸篓必须在真实 HOME 下，不跟随 AACC_INSTALL_ROOT
 trash_dir="$user_root/.Trash/AACC-uninstall-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$trash_dir"
 
 targets=(
-  "$user_root/Applications/AACC.app"
-  "$user_root/.local/bin/aacc"
-  "$user_root/.local/bin/aacc-run"
-  "$user_root/.local/bin/aacc-gui"
-  "$user_root/Library/Application Support/AACC"
+  "$install_root/Applications/AACC.app"
+  "$install_root/.local/bin/aacc"
+  "$install_root/.local/bin/aacc-run"
+  "$install_root/.local/bin/aacc-gui"
+  "$install_root/Library/Application Support/AACC"
 )
 
 for target in "${targets[@]}"; do

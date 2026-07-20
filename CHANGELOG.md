@@ -2,6 +2,16 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.3.0-rc.4 — 2026-07-20
+
+- [Stability] Changed Kimi wire completion scanning to a bounded full-line reverse scan, and updated privacy wording to state that sensitive prompt and response bodies are never stored, displayed, or logged.
+- [UX] Restored a running task removed with `×` automatically when it starts running again, so it returns to the monitored panel.
+- [UX] Added custom task-card renaming, persisted per task id.
+- [Delivery] Fixed the installer: it no longer depends on `python3`, unconditionally quits the old instance before replacement, skips tests by default (enable with `AACC_RUN_TESTS=1`), and the uninstaller is aware of `AACC_INSTALL_ROOT`.
+- [UX] The panel now surfaces Kimi discovery health alongside Codex discovery health.
+- [Docs] Corrected the security-model wording in SECURITY.md.
+- [Delivery] Added a CI workflow running lint, type checks, and tests on macOS.
+
 ## 1.3.0-rc.3 — 2026-07-20
 
 - [Stability] Added Kimi Code local session discovery with running/idle/completed status lights and wire-tail turn-completion detection that inspects event types only, never prompt or response content.

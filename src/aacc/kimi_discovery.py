@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections import deque
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import psutil
 
@@ -19,7 +20,13 @@ ProcessAlive = Callable[[], bool]
 
 _KIMI_PROCESS_PATTERN = re.compile(r"(?:^|/)kimi(?:\s|$)", re.IGNORECASE)
 _NAME_MAX_LENGTH = 20
-_WIRE_TAIL_BYTES = 65_536
+_WIRE_SCAN_CHUNK_BYTES = 65_536
+# Total reverse-scan budget per wire file: bounds the work done when a
+# turn-boundary event is buried under a long tail of irrelevant events.
+_WIRE_SCAN_BUDGET_BYTES = 1_048_576
+# Lines longer than this are skipped without parsing; oversized lines are
+# irrelevant events (large prompts/responses), never turn-boundary markers.
+_WIRE_MAX_LINE_BYTES = 65_536
 # Wire event types that bound a turn; all other types (config, permission, …)
 # are ignored when scanning for turn state. Only event *types* are inspected,
 # never prompt or response content.
@@ -37,12 +44,69 @@ class KimiSession:
     updated_at: datetime
 
 
+def _reverse_complete_lines(
+    handle: BinaryIO, size: int, budget: int, truncated: list[bool]
+) -> Iterator[bytes]:
+    """Yield complete lines newest-first, skipping oversized lines.
+
+    Stops when the byte budget is exhausted; sets ``truncated[0]`` if the
+    file could not be scanned back to its beginning within the budget.
+    """
+    position = size
+    remaining = budget
+    fragments: deque[bytes] = deque()
+    line_size = 0
+    dropping_oversized = False
+    while position > 0:
+        if remaining <= 0:
+            truncated[0] = True
+            return
+        read_size = min(_WIRE_SCAN_CHUNK_BYTES, position, remaining)
+        position -= read_size
+        remaining -= read_size
+        handle.seek(position)
+        chunk = handle.read(read_size)
+        segments = chunk.split(b"\n")
+        for index in range(len(segments) - 1, -1, -1):
+            segment = segments[index]
+            if not dropping_oversized:
+                line_size += len(segment)
+                if line_size > _WIRE_MAX_LINE_BYTES:
+                    dropping_oversized = True
+                    fragments.clear()
+                else:
+                    fragments.appendleft(segment)
+            if index > 0:
+                if not dropping_oversized and line_size:
+                    yield b"".join(fragments)
+                fragments.clear()
+                line_size = 0
+                dropping_oversized = False
+    if not dropping_oversized and line_size:
+        yield b"".join(fragments)
+
+
+def _wire_event(line: bytes) -> tuple[Any, Any]:
+    """Extract only the event type and usage scope from a wire line."""
+    if len(line) > _WIRE_MAX_LINE_BYTES or b'"type"' not in line:
+        return None, None
+    try:
+        item = json.loads(line.decode("utf-8", errors="ignore"))
+    except json.JSONDecodeError:
+        return None, None
+    if not isinstance(item, dict):
+        return None, None
+    return item.get("type"), item.get("usageScope")
+
+
 class KimiLocalDiscovery:
     """Reads only safe Kimi Code task metadata from local index files.
 
     Session wire/log files contain sensitive content: log/state files are only
-    stat'ed for mtimes, and the wire tail is scanned for event *types* alone
-    (turn boundary detection) — prompt and response content is never read.
+    stat'ed for mtimes, and the wire is scanned for event *types* alone (turn
+    boundary detection) within a bounded reverse scan. Sensitive content —
+    prompts, responses, commands, credentials, file bodies — is never stored,
+    displayed, logged, or uploaded; only fixed event-type labels are kept.
     """
 
     def __init__(
@@ -240,35 +304,32 @@ class KimiLocalDiscovery:
     def _is_recent(self, now: datetime, observed_at: datetime) -> bool:
         return (now - observed_at).total_seconds() <= self.activity_window_seconds
 
-    def _turn_completed(self, session_dir: Path) -> bool:
-        """Detect a finished turn from the wire tail, reading event types only.
+    def _turn_completed(self, session_dir: Path) -> bool | None:
+        """Detect a finished turn from the wire, reading event types only.
 
         A completed turn ends with a `usage.record` event scoped to the turn;
         any later turn-boundary event (prompt, loop activity, llm request)
-        means the session is working again.
+        means the session is working again. Returns True for completed,
+        False for active, and None when the scan budget is exhausted before
+        either signal — an undetermined scan must never fabricate completion.
         """
         wire_path = session_dir / "agents" / "main" / "wire.jsonl"
+        truncated = [False]
         try:
             with wire_path.open("rb") as handle:
                 handle.seek(0, 2)
                 size = handle.tell()
-                handle.seek(max(0, size - _WIRE_TAIL_BYTES))
-                lines = handle.read().decode("utf-8", errors="ignore").splitlines()
+                for line in _reverse_complete_lines(
+                    handle, size, _WIRE_SCAN_BUDGET_BYTES, truncated
+                ):
+                    event_type, usage_scope = _wire_event(line)
+                    if event_type in _TURN_ACTIVE_TYPES:
+                        return False
+                    if event_type == "usage.record" and usage_scope == "turn":
+                        return True
         except OSError:
-            return False
-        for line in reversed(lines):
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(item, dict):
-                continue
-            event_type = item.get("type")
-            if event_type in _TURN_ACTIVE_TYPES:
-                return False
-            if event_type == "usage.record" and item.get("usageScope") == "turn":
-                return True
-        return False
+            return None
+        return None if truncated[0] else False
 
     @staticmethod
     def _file_modified_at(path: Path) -> datetime:

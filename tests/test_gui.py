@@ -598,6 +598,35 @@ def test_discovery_warning_banner_copies_sanitized_diagnostics(
     manager.close()
 
 
+def test_kimi_discovery_warning_banner_names_kimi_source(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    health = DiscoveryHealth(
+        degraded=True,
+        consecutive_failures=3,
+        diagnostic_id="kimi123",
+        summary="Kimi session index is unreadable",
+        brand="Kimi",
+    )
+
+    window.kimi_discovery_health_received.emit(health)
+
+    qtbot.waitUntil(  # type: ignore[attr-defined]
+        lambda: not window.discovery_warning.isHidden(), timeout=500
+    )
+    assert "Kimi" in window.discovery_warning_label.text()
+    window.copy_discovery_diagnostics()
+    copied = QGuiApplication.clipboard().text()
+    assert "kimi123" in copied
+    assert "AACC Codex discovery diagnostics" in copied
+    assert "AACC Kimi discovery diagnostics" in copied
+
+    window.kimi_discovery_health_received.emit(DiscoveryHealth(brand="Kimi"))
+    qtbot.waitUntil(window.discovery_warning.isHidden, timeout=500)  # type: ignore[attr-defined]
+    manager.close()
+
+
 def test_missing_accessibility_guidance_can_open_system_settings(
     tmp_path: Path, qtbot: object, monkeypatch: object
 ) -> None:

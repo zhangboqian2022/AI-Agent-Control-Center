@@ -135,6 +135,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         rotate_api_token_callback=lambda: rotate_api_token(runtime.config_path, runtime.config),
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
+        kimi_discovery_health=runtime.kimi_discovery.health,
+        subscribe_kimi_discovery_health=runtime.kimi_discovery.subscribe_health,
         discovery_log_path=str(data_dir / "logs" / "app.log"),
         accessibility_trusted=trusted,
         open_accessibility_settings_callback=open_accessibility_settings,
