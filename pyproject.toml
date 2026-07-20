@@ -49,6 +49,7 @@ packages = ["src/aacc"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 filterwarnings = ["ignore:Using .*starlette\\.testclient.*"]
+markers = ["integration: requires a real macOS desktop session"]
 
 [tool.ruff]
 line-length = 100
