@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from aacc.models import AppConfig, TaskState, TaskStatus
 
 
@@ -16,3 +19,9 @@ def test_new_state_records_normalized_status() -> None:
 
 def test_config_schema_version_defaults_to_one() -> None:
     assert AppConfig().config_version == 1
+
+
+@pytest.mark.parametrize("timeout", [1.9, 15.1])
+def test_automation_timeout_must_stay_within_safe_bounds(timeout: float) -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(app={"automation_timeout_seconds": timeout})

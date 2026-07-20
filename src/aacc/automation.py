@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
 from aacc.models import AppConfig, TaskConfig
+from aacc.security import redact
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -25,6 +27,12 @@ KEY_CODES = {
     "2": 19,
 }
 
+TEXT_SCRIPT = (
+    "on run argv\n"
+    'tell application "System Events" to keystroke (item 1 of argv)\n'
+    "end run"
+)
+
 
 def applescript_quote(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
@@ -42,18 +50,24 @@ class MacAutomation:
         self.config = config
         self._runner = runner
         self._sleep = sleeper
+        self._lock = threading.RLock()
 
     def _run(self, args: list[str]) -> str:
-        completed = self._runner(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
+        try:
+            completed = self._runner(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=self.config.app.automation_timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise AutomationError("Desktop automation timed out") from error
+        except OSError as error:
+            raise AutomationError("Desktop automation is unavailable") from error
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or "automation failed"
-            raise AutomationError(detail)
+            raise AutomationError(redact(detail)[:500])
         return completed.stdout.strip()
 
     def _terminal_script(self, task: TaskConfig) -> str:
@@ -88,7 +102,7 @@ class MacAutomation:
         lines.append("end tell")
         return "\n".join(lines)
 
-    def focus(self, task: TaskConfig) -> str:
+    def _focus_unlocked(self, task: TaskConfig) -> str:
         terminal = task.terminal
         if terminal.type in {"terminal_app", "iterm2"}:
             self._run(["/usr/bin/osascript", "-e", self._terminal_script(task)])
@@ -99,45 +113,55 @@ class MacAutomation:
             self._run(["/usr/bin/open", "-b", bundle_id])
         return f"已聚焦 {task.name}"
 
+    def focus(self, task: TaskConfig) -> str:
+        with self._lock:
+            return self._focus_unlocked(task)
+
     def _ensure_injection(self) -> None:
         if not self.config.app.keyboard_injection:
             raise AutomationError("Keyboard injection is disabled in AACC settings")
 
     def send_key(self, task: TaskConfig, key: str) -> str:
-        self._ensure_injection()
-        normalized = key.upper()
-        if normalized not in {*KEY_CODES, "CTRL_C"}:
-            raise AutomationError(f"Key {normalized} is not allowed")
-        self.focus(task)
-        self._sleep(self.config.voice.focus_delay_ms / 1000)
-        if normalized == "CTRL_C":
-            statement = 'tell application "System Events" to keystroke "c" using control down'
-        else:
-            statement = f'tell application "System Events" to key code {KEY_CODES[normalized]}'
-        self._run(["/usr/bin/osascript", "-e", statement])
-        return f"已发送 {normalized}"
+        with self._lock:
+            self._ensure_injection()
+            normalized = key.upper()
+            if normalized not in {*KEY_CODES, "CTRL_C"}:
+                raise AutomationError(f"Key {normalized} is not allowed")
+            self._focus_unlocked(task)
+            self._sleep(self.config.voice.focus_delay_ms / 1000)
+            if normalized == "CTRL_C":
+                statement = 'tell application "System Events" to keystroke "c" using control down'
+            else:
+                statement = (
+                    f'tell application "System Events" to key code {KEY_CODES[normalized]}'
+                )
+            self._run(["/usr/bin/osascript", "-e", statement])
+            return f"已发送 {normalized}"
 
     def send_text(self, task: TaskConfig, text: str) -> str:
-        self._ensure_injection()
-        if not text or len(text) > 2000:
-            raise AutomationError("Text must contain 1 to 2000 characters")
-        self.focus(task)
-        self._sleep(self.config.voice.focus_delay_ms / 1000)
-        statement = f'tell application "System Events" to keystroke {applescript_quote(text)}'
-        self._run(["/usr/bin/osascript", "-e", statement])
-        return "文本已发送"
+        with self._lock:
+            self._ensure_injection()
+            if not text or len(text) > 2000:
+                raise AutomationError("Text must contain 1 to 2000 characters")
+            if "\0" in text:
+                raise AutomationError("Text must not contain NUL")
+            self._focus_unlocked(task)
+            self._sleep(self.config.voice.focus_delay_ms / 1000)
+            self._run(["/usr/bin/osascript", "-e", TEXT_SCRIPT, "--", text])
+            return "文本已发送"
 
     def start_voice(self, task: TaskConfig) -> str:
-        self._ensure_injection()
-        self.focus(task)
-        self._sleep(self.config.voice.focus_delay_ms / 1000)
-        self._sleep(self.config.voice.voice_delay_ms / 1000)
-        if self.config.voice.hotkey.upper() != "FN_FN":
-            raise AutomationError("V1.0 voice hotkey currently supports FN_FN")
-        statement = (
-            'tell application "System Events" to key code 63\n'
-            "delay 0.12\n"
-            'tell application "System Events" to key code 63'
-        )
-        self._run(["/usr/bin/osascript", "-e", statement])
-        return "已触发系统听写"
+        with self._lock:
+            self._ensure_injection()
+            self._focus_unlocked(task)
+            self._sleep(self.config.voice.focus_delay_ms / 1000)
+            self._sleep(self.config.voice.voice_delay_ms / 1000)
+            if self.config.voice.hotkey.upper() != "FN_FN":
+                raise AutomationError("V1.0 voice hotkey currently supports FN_FN")
+            statement = (
+                'tell application "System Events" to key code 63\n'
+                "delay 0.12\n"
+                'tell application "System Events" to key code 63'
+            )
+            self._run(["/usr/bin/osascript", "-e", statement])
+            return "已触发系统听写"
