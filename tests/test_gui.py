@@ -167,6 +167,82 @@ def test_discovered_codex_task_replaces_placeholder_card(tmp_path: Path, qtbot: 
     manager.close()
 
 
+def test_window_height_grows_and_shrinks_with_visible_task_cards(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window._available_screen_height = lambda: 1200  # type: ignore[method-assign]
+    tasks = [
+        TaskConfig(
+            id=f"codex:adaptive-{index}",
+            slot=index,
+            name=f"自动高度任务 {index}",
+            agent=AgentConfig(type="codex_cli", display_name="Codex"),
+        )
+        for index in range(1, 6)
+    ]
+    for task in tasks:
+        manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.show()
+    QApplication.processEvents()
+    window.move(180, 120)
+    original_position = window.pos()
+
+    window.set_codex_selected_ids({task.id.removeprefix("codex:") for task in tasks})
+    qtbot.waitUntil(lambda: len(window.cards) == 5)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+    expanded_height = window.height()
+
+    window.set_codex_selected_ids({tasks[0].id.removeprefix("codex:")})
+    qtbot.waitUntil(lambda: len(window.cards) == 1)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+
+    assert window.height() < expanded_height
+    assert window.pos() == original_position
+    manager.close()
+
+
+def test_window_height_caps_at_eighty_percent_and_enables_internal_scroll(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window._available_screen_height = lambda: 500  # type: ignore[method-assign]
+    tasks = [
+        TaskConfig(
+            id=f"codex:capped-{index}",
+            slot=index,
+            name=f"高度上限任务 {index}",
+            agent=AgentConfig(type="codex_cli", display_name="Codex"),
+        )
+        for index in range(1, 9)
+    ]
+    for task in tasks:
+        manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.show()
+    QApplication.processEvents()
+
+    window.set_codex_selected_ids({task.id.removeprefix("codex:") for task in tasks})
+    qtbot.waitUntil(lambda: len(window.cards) == 8)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+
+    assert window.height() == 400
+    assert (
+        window.cards_scroll.verticalScrollBarPolicy()
+        is Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+    )
+
+    window.set_codex_selected_ids({tasks[0].id.removeprefix("codex:")})
+    qtbot.waitUntil(lambda: len(window.cards) == 1)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+
+    assert window.height() < 400
+    assert (
+        window.cards_scroll.verticalScrollBarPolicy()
+        is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    manager.close()
+
+
 def test_only_selected_codex_tasks_are_visible_and_window_is_not_a_tool(
     tmp_path: Path, qtbot: object
 ) -> None:

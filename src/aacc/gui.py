@@ -12,6 +12,7 @@ from PySide6.QtGui import (
     QGuiApplication,
     QIcon,
     QMouseEvent,
+    QMoveEvent,
     QPainter,
     QPixmap,
 )
@@ -445,6 +446,7 @@ class MainWindow(QWidget):
         self.compact_mode = self.config.app.compact_mode
         self.always_on_top = self.config.app.always_on_top
         self._drag_position: QPoint | None = None
+        self._adaptive_resize_pending = False
         self._quitting = False
         self._settings = settings or QSettings("AACC", "AACC")
         self._codex_sessions = codex_sessions or (lambda: [])
@@ -728,6 +730,37 @@ class MainWindow(QWidget):
         self.clear_retained_button.setVisible(
             any(task.id.startswith("codex:") for task in terminal_tasks)
         )
+        self._schedule_adaptive_resize()
+
+    def _schedule_adaptive_resize(self) -> None:
+        if self._adaptive_resize_pending:
+            return
+        self._adaptive_resize_pending = True
+        QTimer.singleShot(0, self._resize_to_card_content)
+
+    def _available_screen_height(self) -> int:
+        screen = QGuiApplication.screenAt(self.frameGeometry().center())
+        screen = screen or self.screen() or QGuiApplication.primaryScreen()
+        return screen.availableGeometry().height() if screen is not None else self.height()
+
+    def _resize_to_card_content(self) -> None:
+        self._adaptive_resize_pending = False
+        self.cards_layout.invalidate()
+        self.cards_layout.activate()
+        content_height = self.cards_layout.sizeHint().height()
+        viewport_height = self.cards_scroll.viewport().height()
+        chrome_height = max(0, self.height() - viewport_height)
+        desired_height = max(self.minimumHeight(), chrome_height + content_height)
+        height_cap = max(self.minimumHeight(), int(self._available_screen_height() * 0.8))
+        overflow = desired_height > height_cap
+        self.cards_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if overflow
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        target_height = min(desired_height, height_cap)
+        if target_height != self.height():
+            self.resize(self.width(), target_height)
 
     @staticmethod
     def _is_terminal(state: TaskState) -> bool:
@@ -776,7 +809,7 @@ class MainWindow(QWidget):
         self.compact_mode = compact
         for card in self.cards.values():
             card.set_compact(compact)
-        self.adjustSize()
+        self._schedule_adaptive_resize()
         self._settings.setValue("compact_mode", compact)
 
     def set_agent_visible(self, agent_type: str, visible: bool) -> None:
@@ -1005,6 +1038,11 @@ class MainWindow(QWidget):
     def quit_application(self) -> None:
         self._quitting = True
         QGuiApplication.quit()
+
+    def moveEvent(self, event: QMoveEvent) -> None:
+        super().moveEvent(event)
+        if hasattr(self, "cards_scroll"):
+            self._schedule_adaptive_resize()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
