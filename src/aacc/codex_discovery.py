@@ -20,6 +20,7 @@ ProcessStartedAt = Callable[[int], int | None]
 CODEX_METADATA_COMPATIBILITY = "2026-07"
 MAX_SESSION_METADATA_LINE_BYTES = 65_536
 SESSION_SCAN_CHUNK_BYTES = 65_536
+SESSION_START_CACHE_LIMIT = 512
 
 
 class CodexDiscoveryError(RuntimeError):
@@ -54,6 +55,10 @@ class SessionStartCache:
     device: int
     inode: int
     boundary_digest: bytes
+    start_offset: int | None
+    start_digest: bytes | None
+    modified_ns: int
+    changed_ns: int
 
 
 class CodexLocalDiscovery:
@@ -246,12 +251,6 @@ class CodexLocalDiscovery:
             return signals
         now = self.now()
         files_by_id = self._session_paths(selected_ids)
-        current_paths = {path for paths in files_by_id.values() for path in paths}
-        self._session_start_cache = {
-            path: entry
-            for path, entry in self._session_start_cache.items()
-            if path in current_paths
-        }
         for conversation_id, files in files_by_id.items():
             if not files:
                 continue
@@ -454,9 +453,10 @@ class CodexLocalDiscovery:
         fallback: datetime,
     ) -> SessionSignal:
         started_at = signal.started_at
+        recovered_start = self._latest_task_start(path, size, fallback)
         if started_at is None:
-            started_at = self._latest_task_start(path, size, fallback)
-        else:
+            started_at = recovered_start
+        elif recovered_start != started_at:
             self._store_session_start(path, size, started_at)
         return SessionSignal(
             signal.status,
@@ -478,33 +478,60 @@ class CodexLocalDiscovery:
             and cached.inode == stat.st_ino
             and 0 <= cached.scanned_size <= complete_size
             and cached.boundary_digest == self._boundary_digest(path, cached.scanned_size)
+            and self._cached_start_matches(path, cached)
+            and not (
+                cached.scanned_size == complete_size
+                and (
+                    cached.modified_ns != stat.st_mtime_ns or cached.changed_ns != stat.st_ctime_ns
+                )
+            )
         )
         if cache_valid and cached is not None:
             started_at = cached.started_at
+            start_offset = cached.start_offset
+            start_digest = cached.start_digest
             if cached.scanned_size == complete_size:
                 return started_at
             try:
                 with path.open("rb") as handle:
                     yield_lines = self._forward_lines(handle, cached.scanned_size, complete_size)
-                    for line in yield_lines:
+                    for offset, line in yield_lines:
                         candidate = self._task_start_from_line(line, fallback)
                         if candidate is not None:
                             started_at = candidate
+                            start_offset = offset
+                            start_digest = self._line_digest(line)
             except OSError:
                 return started_at
-            self._store_session_start(path, complete_size, started_at)
+            self._store_session_start(
+                path,
+                complete_size,
+                started_at,
+                start_offset=start_offset,
+                start_digest=start_digest,
+            )
             return started_at
 
         started_at = None
+        start_offset = None
+        start_digest = None
         try:
             with path.open("rb") as handle:
-                for line in self._reverse_lines(handle, complete_size):
+                for offset, line in self._reverse_lines(handle, complete_size):
                     started_at = self._task_start_from_line(line, fallback)
                     if started_at is not None:
+                        start_offset = offset
+                        start_digest = self._line_digest(line)
                         break
         except OSError:
             return None
-        self._store_session_start(path, complete_size, started_at)
+        self._store_session_start(
+            path,
+            complete_size,
+            started_at,
+            start_offset=start_offset,
+            start_digest=start_digest,
+        )
         return started_at
 
     @staticmethod
@@ -530,7 +557,13 @@ class CodexLocalDiscovery:
         return hashlib.blake2b(raw, digest_size=16).digest()
 
     def _store_session_start(
-        self, path: Path, scanned_size: int, started_at: datetime | None
+        self,
+        path: Path,
+        scanned_size: int,
+        started_at: datetime | None,
+        *,
+        start_offset: int | None = None,
+        start_digest: bytes | None = None,
     ) -> None:
         try:
             stat = path.stat()
@@ -538,18 +571,48 @@ class CodexLocalDiscovery:
             digest = self._boundary_digest(path, complete_size)
         except OSError:
             return
-        self._session_start_cache[path] = SessionStartCache(
+        entry = SessionStartCache(
             scanned_size=complete_size,
             started_at=started_at,
             device=stat.st_dev,
             inode=stat.st_ino,
             boundary_digest=digest,
+            start_offset=start_offset,
+            start_digest=start_digest,
+            modified_ns=stat.st_mtime_ns,
+            changed_ns=stat.st_ctime_ns,
+        )
+        self._session_start_cache.pop(path, None)
+        self._session_start_cache[path] = entry
+        while len(self._session_start_cache) > SESSION_START_CACHE_LIMIT:
+            oldest = next(iter(self._session_start_cache))
+            self._session_start_cache.pop(oldest, None)
+
+    @staticmethod
+    def _line_digest(line: bytes) -> bytes:
+        return hashlib.blake2b(line, digest_size=16).digest()
+
+    @classmethod
+    def _cached_start_matches(cls, path: Path, cached: SessionStartCache) -> bool:
+        if cached.start_offset is None or cached.start_digest is None:
+            return True
+        try:
+            with path.open("rb") as handle:
+                handle.seek(cached.start_offset)
+                line = handle.readline(MAX_SESSION_METADATA_LINE_BYTES + 1)
+        except OSError:
+            return False
+        line = line.rstrip(b"\r\n")
+        return (
+            len(line) <= MAX_SESSION_METADATA_LINE_BYTES
+            and cls._line_digest(line) == cached.start_digest
         )
 
     @staticmethod
-    def _forward_lines(handle: BinaryIO, start: int, end: int) -> Iterator[bytes]:
+    def _forward_lines(handle: BinaryIO, start: int, end: int) -> Iterator[tuple[int, bytes]]:
         handle.seek(start)
         while handle.tell() < end:
+            line_offset = handle.tell()
             remaining = end - handle.tell()
             line = handle.readline(min(MAX_SESSION_METADATA_LINE_BYTES + 1, remaining))
             if not line:
@@ -565,21 +628,29 @@ class CodexLocalDiscovery:
                 continue
             line = line.rstrip(b"\r\n")
             if line and not oversized:
-                yield line
+                yield line_offset, line
 
     @staticmethod
-    def _reverse_lines(handle: BinaryIO, size: int) -> Iterator[bytes]:
+    def _reverse_lines(handle: BinaryIO, size: int) -> Iterator[tuple[int, bytes]]:
         position = size
         fragments: deque[bytes] = deque()
         line_size = 0
+        line_start = size
         dropping_oversized = False
         while position > 0:
             read_size = min(SESSION_SCAN_CHUNK_BYTES, position)
             position -= read_size
             handle.seek(position)
-            segments = handle.read(read_size).split(b"\n")
+            chunk = handle.read(read_size)
+            segments = chunk.split(b"\n")
+            segment_offsets: list[int] = []
+            cursor = position
+            for segment in segments:
+                segment_offsets.append(cursor)
+                cursor += len(segment) + 1
             for index in range(len(segments) - 1, -1, -1):
                 segment = segments[index]
+                line_start = segment_offsets[index]
                 if not dropping_oversized:
                     line_size += len(segment)
                     if line_size > MAX_SESSION_METADATA_LINE_BYTES:
@@ -589,12 +660,12 @@ class CodexLocalDiscovery:
                         fragments.appendleft(segment)
                 if index > 0:
                     if not dropping_oversized and line_size:
-                        yield b"".join(fragments)
+                        yield line_start, b"".join(fragments)
                     fragments.clear()
                     line_size = 0
                     dropping_oversized = False
         if not dropping_oversized and line_size:
-            yield b"".join(fragments)
+            yield line_start, b"".join(fragments)
 
     def _task_start_from_line(self, raw_line: bytes, fallback: datetime) -> datetime | None:
         if (

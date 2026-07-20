@@ -756,12 +756,105 @@ def test_start_cache_invalidates_when_file_is_truncated_and_regrown(
     assert discovery._latest_task_start(path, path.stat().st_size, old_start) == new_start
 
 
+def test_start_cache_invalidates_same_size_rewrite_with_unchanged_tail(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "same-size-rewrite.jsonl"
+    old_start = datetime(2026, 7, 20, 1, 0, tzinfo=UTC)
+    new_start = datetime(2026, 7, 20, 2, 0, tzinfo=UTC)
+
+    def content(started_at: datetime) -> str:
+        return (
+            json.dumps(
+                {
+                    "timestamp": started_at.isoformat(),
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                }
+            )
+            + "\n"
+            + json.dumps({"type": "private_filler", "content": "x" * 7_000})
+            + "\n"
+        )
+
+    path.write_text(content(old_start), encoding="utf-8")
+    discovery = CodexLocalDiscovery(tmp_path / "index.jsonl", tmp_path / "processes.json")
+    original_size = path.stat().st_size
+    assert discovery._latest_task_start(path, original_size, old_start) == old_start
+
+    path.write_text(content(new_start), encoding="utf-8")
+
+    assert path.stat().st_size == original_size
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == new_start
+
+
+def test_selected_discovery_does_not_evict_other_live_session_start_cache(
+    tmp_path: Path,
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    conversation_ids = {"cache-one", "cache-two"}
+    index.write_text(
+        "\n".join(
+            json.dumps({"id": value, "updated_at": "2026-07-20T10:00:00Z"})
+            for value in conversation_ids
+        ),
+        encoding="utf-8",
+    )
+    for value in conversation_ids:
+        (sessions / f"rollout-{value}.jsonl").write_text(
+            "\n".join(
+                (
+                    json.dumps(
+                        {
+                            "timestamp": "2026-07-20T09:59:00Z",
+                            "type": "event_msg",
+                            "payload": {"type": "task_started"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "timestamp": "2026-07-20T10:00:00Z",
+                            "type": "event_msg",
+                            "payload": {"type": "task_complete"},
+                        }
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    now = datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    discovery = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    )
+
+    discovery.discover()
+    assert set(discovery._session_start_cache) == {
+        sessions / f"rollout-{value}.jsonl" for value in conversation_ids
+    }
+
+    discovery.discover({"cache-one"})
+
+    assert set(discovery._session_start_cache) == {
+        sessions / f"rollout-{value}.jsonl" for value in conversation_ids
+    }
+
+
 def test_reverse_start_scan_discards_oversized_private_lines(tmp_path: Path) -> None:
     path = tmp_path / "oversized.jsonl"
     path.write_bytes(b'{"private":"' + (b"x" * 400_000) + b'"}\n{}\n')
 
     with path.open("rb") as handle:
-        lines = list(CodexLocalDiscovery._reverse_lines(handle, path.stat().st_size))
+        lines = [
+            line
+            for _offset, line in CodexLocalDiscovery._reverse_lines(handle, path.stat().st_size)
+        ]
 
     assert lines == [b"{}"]
 
