@@ -48,13 +48,12 @@ scripts/install.sh
 
 ## 当前进度（2026-07-20）
 
-- `main` @ `9356ff2`：1.3.0-rc.3（Kimi Code 监控）+ muted 同步修复
-  （× 掉的任务重新运行自动回到面板）+ 任务卡片自定义改名 + install.sh 修复。
-- 工作区未提交：rc.4 评审修复（Kimi wire 三态反向扫描 + 隐私哨兵测试、
-  全项目版本/文档统一 rc.4 + 链接一致性测试、install/uninstall 安全修复、
-  GUI 订阅 Kimi health、SECURITY.md 修正、Event Tap 测试参数化、CI 工作流），
-  231 测试 / ruff / mypy 全过，待提交。
-- 已部署：`~/Applications/AACC.app`（运行中）与 `/Applications/AACC.app`。
-- 送审副本：`~/Desktop/summit01`（git archive 干净源码，102 个文件）。
-- 功能分支 `feat/kimi-code-status` 已合并进 main 并删除；新工作直接在
-  main 上开新分支。
+- `main` @ `ff95347`：1.3.0-rc.4 已发布（tag `v1.3.0-rc.4` + GitHub
+  Prerelease 附 DMG）。内容：Kimi wire 三态反向扫描 + 隐私哨兵测试、
+  版本/文档统一 + 链接一致性测试、install/uninstall 安全修复、GUI 订阅
+  Kimi health、SECURITY.md 修正、Event Tap 测试参数化、CI 工作流。
+- 已部署 rc.4：`~/Applications/AACC.app`（运行中）与 `/Applications/AACC.app`，
+  健康接口返回 1.3.0rc4。DMG：`~/Desktop/AACC-1.3.0-rc.4.dmg`，
+  SHA-256 `ba940a28c4ea2ad5322441be8e4df8a55d40d69b2a6b612fcc432d8b9a373567`。
+- 送审副本：`~/Desktop/summit01`（rc.3 时的 git archive；如需 rc.4 要重新导出）。
+- 新工作直接在 main 上开新分支。
