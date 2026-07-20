@@ -1,11 +1,14 @@
+from concurrent.futures import Future
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QApplication, QScrollArea
+from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea
 
-from aacc.automation import MacAutomation
+from aacc.automation import AutomationError, MacAutomation
+from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
-from aacc.config import default_config
+from aacc.config import create_default_config, default_config, rotate_api_token
 from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
@@ -18,7 +21,12 @@ def build_window(tmp_path: Path, qtbot: object) -> tuple[MainWindow, TaskManager
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
     settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
-    window = MainWindow(manager, MacAutomation(config), enable_tray=False, settings=settings)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        settings=settings,
+    )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
     return window, manager
 
@@ -177,7 +185,7 @@ def test_selector_marks_auto_running_task_checked_and_can_restore_automatic_dete
     store = StateStore(tmp_path / "gui.db")
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    window = MainWindow(manager, MacAutomation(config), enable_tray=False)
+    window = MainWindow(manager, AutomationExecutor(MacAutomation(config)), enable_tray=False)
     qtbot.addWidget(window)  # type: ignore[attr-defined]
     session = CodexSession(
         conversation_id="auto-now",
@@ -206,7 +214,7 @@ def test_auto_running_task_is_visible_without_manual_selection_and_can_be_muted(
     settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
     window = MainWindow(
         manager,
-        MacAutomation(config),
+        AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
         codex_auto_active_ids=lambda: set(auto_ids),
         set_codex_monitoring_preferences=lambda manual, retained, muted: preferences.append(
@@ -243,7 +251,7 @@ def test_completed_codex_task_remains_visible_until_removed(tmp_path: Path, qtbo
     settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
     window = MainWindow(
         manager,
-        MacAutomation(config),
+        AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
         set_codex_monitoring_preferences=lambda manual, retained, muted: preferences.append(
             (set(manual), set(retained), set(muted))
@@ -300,4 +308,88 @@ def test_codex_cards_are_grouped_running_before_retained_terminal(
     window.clear_retained_tasks()
     assert finished.id not in window.cards
     assert running.id in window.cards
+    manager.close()
+
+
+class DeferredExecutor:
+    def __init__(self) -> None:
+        self.future: Future[str] = Future()
+        self.submitted: list[tuple[str, tuple[object, ...]]] = []
+
+    def submit(self, method: str, *args: object) -> Future[str]:
+        self.submitted.append((method, args))
+        return self.future
+
+
+def test_automation_action_does_not_block_qt_and_reports_completion(
+    tmp_path: Path, qtbot: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    executor = DeferredExecutor()
+    window = MainWindow(manager, executor, enable_tray=False)  # type: ignore[arg-type]
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    marker: list[bool] = []
+    QTimer.singleShot(0, lambda: marker.append(True))
+
+    window._perform_action("focus", "task-1")
+
+    qtbot.waitUntil(lambda: marker == [True], timeout=100)  # type: ignore[attr-defined]
+    assert executor.submitted[0][0] == "focus"
+    assert not executor.future.done()
+    executor.future.set_result("已聚焦 Codex 任务")
+    qtbot.waitUntil(  # type: ignore[attr-defined]
+        lambda: window.subtitle.text() == "已聚焦 CODEX 任务", timeout=500
+    )
+    manager.close()
+
+
+def test_automation_failure_marks_warning_on_qt_thread(tmp_path: Path, qtbot: object) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    executor = DeferredExecutor()
+    window = MainWindow(manager, executor, enable_tray=False)  # type: ignore[arg-type]
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    window._perform_action("focus", "task-1")
+    executor.future.set_exception(AutomationError("window missing"))
+
+    qtbot.waitUntil(  # type: ignore[attr-defined]
+        lambda: manager.get("task-1").status is TaskStatus.WARNING, timeout=500
+    )
+    assert "window missing" in window.subtitle.text()
+    manager.close()
+
+
+def test_rotate_credentials_updates_live_config_and_clipboard(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config = create_default_config(config_path)
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    old = config.app.api.token
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox, "information", lambda *_args, **_kwargs: QMessageBox.StandardButton.Ok
+    )
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        rotate_api_token_callback=lambda: rotate_api_token(config_path, config),
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    window.rotate_credentials()
+
+    assert config.app.api.token != old
+    assert QGuiApplication.clipboard().text() == config.app.api.token
     manager.close()

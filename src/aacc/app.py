@@ -11,7 +11,8 @@ from PySide6.QtWidgets import QApplication
 
 from aacc.api import create_api
 from aacc.automation import MacAutomation
-from aacc.config import load_config
+from aacc.automation_executor import AutomationExecutor
+from aacc.config import load_config, rotate_api_token
 from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH, DEFAULT_DATABASE_PATH
 from aacc.discovery_service import CodexDiscoveryService
 from aacc.gui import MainWindow
@@ -24,13 +25,16 @@ from aacc.task_manager import TaskManager
 
 @dataclass
 class Runtime:
+    config_path: Path
     config: AppConfig
     manager: TaskManager
     automation: MacAutomation
+    automation_executor: AutomationExecutor
     discovery: CodexDiscoveryService
 
     def close(self) -> None:
         self.discovery.stop()
+        self.automation_executor.close()
         self.manager.close()
 
 
@@ -39,17 +43,20 @@ def build_runtime(config_path: Path, database_path: Path) -> Runtime:
     store = StateStore(database_path)
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
+    automation = MacAutomation(config)
     return Runtime(
+        config_path=config_path,
         config=config,
         manager=manager,
-        automation=MacAutomation(config),
+        automation=automation,
+        automation_executor=AutomationExecutor(automation),
         discovery=CodexDiscoveryService(manager),
     )
 
 
 class APIServerThread:
     def __init__(self, runtime: Runtime) -> None:
-        api = create_api(runtime.config, runtime.manager, runtime.automation)
+        api = create_api(runtime.config, runtime.manager, runtime.automation_executor)
         self.server = uvicorn.Server(
             uvicorn.Config(
                 api,
@@ -100,11 +107,14 @@ def main() -> int:
     qt_app.setQuitOnLastWindowClosed(False)
     window = MainWindow(
         runtime.manager,
-        runtime.automation,
+        runtime.automation_executor,
         codex_sessions=runtime.discovery.catalog,
         codex_auto_active_ids=runtime.discovery.auto_active_ids,
         codex_retained_ids=runtime.discovery.retained_ids,
         set_codex_monitoring_preferences=runtime.discovery.set_monitoring_preferences,
+        rotate_api_token_callback=lambda: rotate_api_token(
+            runtime.config_path, runtime.config
+        ),
     )
     window.show()
     runtime.discovery.start()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import Future
 from datetime import UTC, datetime
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSettings, Qt, QTimer, Signal
@@ -33,7 +34,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from aacc.automation import AutomationError, MacAutomation
+from aacc.automation import AutomationError
+from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.models import TaskConfig, TaskState, TaskStatus
@@ -276,6 +278,9 @@ class SettingsDialog(QDialog):
         )
         codex_tasks.clicked.connect(window.open_codex_task_selector)
         layout.addWidget(codex_tasks)
+        rotate_credentials = QPushButton("重置 API 凭证")
+        rotate_credentials.clicked.connect(window.rotate_credentials)
+        layout.addWidget(rotate_credentials)
         layout.addWidget(QLabel("显示哪些程序"))
         labels = {
             "codex_cli": "Codex",
@@ -373,12 +378,13 @@ class CodexTaskSelectionDialog(QDialog):
 class MainWindow(QWidget):
     state_received = Signal(object)
     external_action = Signal(str, str)
+    automation_finished = Signal(str, str, object)
     settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity", "visible_agents"}
 
     def __init__(
         self,
         manager: TaskManager,
-        automation: MacAutomation,
+        automation: AutomationExecutor,
         *,
         enable_tray: bool = True,
         codex_sessions: Callable[[], list[CodexSession]] | None = None,
@@ -386,6 +392,7 @@ class MainWindow(QWidget):
         codex_retained_ids: Callable[[], set[str]] | None = None,
         set_codex_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
         | None = None,
+        rotate_api_token_callback: Callable[[], str] | None = None,
         settings: QSettings | None = None,
     ) -> None:
         super().__init__()
@@ -405,6 +412,7 @@ class MainWindow(QWidget):
             set_codex_monitoring_preferences
             or (lambda _manual_ids, _retained_ids, _muted_ids: None)
         )
+        self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         saved_codex_tasks = self._settings.value(
             "codex_manual_tasks", self._settings.value("codex_selected_tasks")
         )
@@ -439,6 +447,7 @@ class MainWindow(QWidget):
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
+        self.automation_finished.connect(self._automation_completed)
 
         saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
         self.always_on_top = bool(saved_top)
@@ -862,11 +871,16 @@ class MainWindow(QWidget):
             if action == "select":
                 result = f"已选择 {task.name}"
             elif action == "focus":
-                result = self.automation.focus(task)
+                self._submit_automation(action, task_id, "focus", task)
+                return
             elif action == "voice":
-                result = self.automation.start_voice(task)
+                self._submit_automation(action, task_id, "start_voice", task)
+                return
             elif action.startswith("key:"):
-                result = self.automation.send_key(task, action.split(":", 1)[1])
+                self._submit_automation(
+                    action, task_id, "send_key", task, action.split(":", 1)[1]
+                )
+                return
             elif action.startswith("status:"):
                 status = action.split(":", 1)[1]
                 self.manager.update(
@@ -883,16 +897,52 @@ class MainWindow(QWidget):
                 return
             self.subtitle.setText(result.upper())
         except (AutomationError, KeyError, ValueError) as error:
-            self.subtitle.setText(f"⚠ {error}")
-            self.manager.update(
-                TaskState.new(
-                    task_id,
-                    TaskStatus.WARNING,
-                    message=str(error),
-                    source="automation",
-                    confidence=0.85,
-                )
+            self._show_automation_error(task_id, error)
+
+    def _submit_automation(
+        self, action: str, task_id: str, method: str, *arguments: object
+    ) -> None:
+        future = self.automation.submit(method, *arguments)
+
+        def notify(completed: Future[str]) -> None:
+            self.automation_finished.emit(action, task_id, completed)
+
+        future.add_done_callback(notify)
+        self.subtitle.setText("AUTOMATION QUEUED")
+
+    def _automation_completed(self, _action: str, task_id: str, value: object) -> None:
+        if not isinstance(value, Future):
+            return
+        try:
+            self.subtitle.setText(value.result().upper())
+        except (AutomationError, KeyError, ValueError) as error:
+            self._show_automation_error(task_id, error)
+
+    def _show_automation_error(self, task_id: str, error: Exception) -> None:
+        self.subtitle.setText(f"⚠ {error}")
+        self.manager.update(
+            TaskState.new(
+                task_id,
+                TaskStatus.WARNING,
+                message=str(error),
+                source="automation",
+                confidence=0.85,
             )
+        )
+
+    def rotate_credentials(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "重置凭证",
+            "旧凭证会立即失效，是否继续？",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        token = self._rotate_api_token()
+        QGuiApplication.clipboard().setText(token)
+        QMessageBox.information(self, "凭证已重置", "新凭证已复制；旧凭证已失效。")
 
     def open_settings(self) -> None:
         SettingsDialog(self).exec()
