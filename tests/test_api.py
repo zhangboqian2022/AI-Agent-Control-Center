@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -92,7 +93,9 @@ def test_reset_and_events(tmp_path: Path) -> None:
 
 def test_automation_failure_returns_actionable_conflict_response(tmp_path: Path) -> None:
     class FailingController:
-        def focus(self, _task: object) -> str:
+        def focus(
+            self, _task: object, *, cancel_event: threading.Event | None = None
+        ) -> str:
             raise AutomationError("window missing")
 
         send_key = focus
@@ -114,7 +117,9 @@ def test_automation_failure_returns_actionable_conflict_response(tmp_path: Path)
 
 def test_executor_controller_is_accepted_by_api(tmp_path: Path) -> None:
     class BlockingController:
-        def focus(self, _task: object) -> str:
+        def focus(
+            self, _task: object, *, cancel_event: threading.Event | None = None
+        ) -> str:
             return "focused"
 
         send_key = focus

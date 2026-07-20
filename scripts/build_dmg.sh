@@ -2,18 +2,14 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$project_root/scripts/release_env.sh"
+validate_release_credentials
 desktop_dir="${AACC_DMG_OUTPUT_DIR:-$(/usr/bin/osascript -e 'POSIX path of (path to desktop folder)')}"
 AACC_VERSION="${AACC_VERSION:-1.3.0-rc.1}"
 codesign_identity="${AACC_CODESIGN_IDENTITY:-}"
 notary_profile="${AACC_NOTARY_PROFILE:-}"
 # Default output: AACC-1.3.0-rc.1.dmg
 output_path="${desktop_dir%/}/AACC-${AACC_VERSION}.dmg"
-
-if [[ -n "$codesign_identity" && -z "$notary_profile" ]] || \
-   [[ -z "$codesign_identity" && -n "$notary_profile" ]]; then
-  echo "错误：正式签名需要同时设置 AACC_CODESIGN_IDENTITY 和 AACC_NOTARY_PROFILE" >&2
-  exit 1
-fi
 
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   "$project_root/scripts/build_app.sh"

@@ -4,11 +4,11 @@
 
 ## 1.3.0-rc.1 — 2026-07-20
 
-- [Security] Made configuration writes atomic, repaired invalid API tokens, enforced private config/database permissions, added local credential rotation, strengthened log redaction, and removed AppleScript text interpolation.
-- [Stability] Serialized complete desktop automation transactions in a bounded worker, kept Qt responsive, preserved task run timestamps, suppressed duplicate history, bounded SQLite retention, and exposed recoverable Codex discovery health.
+- [Security] Made configuration writes atomic, repaired invalid API tokens, rejected whitespace-bearing credentials, enforced private config/database permissions, added local credential rotation, strengthened log redaction, and removed AppleScript text interpolation.
+- [Stability] Serialized complete desktop automation transactions in a bounded worker, cancelled timed-out queued/input operations before delayed injection, kept Qt responsive, preserved task run timestamps, suppressed duplicate history, bounded SQLite retention, and exposed recoverable Codex discovery health.
 - [Stability] Added verified PID identity, single-instance locking, cooperative wrapper process cleanup, Accessibility guidance, event-tap recovery, and immediate adapter disconnect wake-up.
 - [Breaking] The source installer now places command-line tools in a runtime-only environment under Application Support instead of linking the repository `.venv`.
-- [Delivery] Added packaged QSS, build reuse, optional Developer ID/notarization branches, and explicit ad-hoc prerelease labeling.
+- [Delivery] Added packaged QSS, lockfile-reproducible production installs, sanitized current-format Codex fixtures, build reuse, paired Developer ID/notarization validation, and explicit ad-hoc prerelease labeling.
 
 ## 1.2.0 — 2026-07-19
 

@@ -44,3 +44,35 @@ def test_second_launch_activates_existing_instance_without_runtime(
 
     assert app_module.main() == 0
     assert activated == [True]
+
+
+def test_primary_launch_runs_application_and_closes_guard(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    closed: list[bool] = []
+    received: list[tuple[Path, Path, Path]] = []
+
+    class AcquiredGuard:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def acquire(self) -> bool:
+            return True
+
+        def close(self) -> None:
+            closed.append(True)
+
+    config_path = tmp_path / "config.yaml"
+    database_path = tmp_path / "aacc.db"
+    monkeypatch.setenv("AACC_CONFIG_PATH", str(config_path))  # type: ignore[attr-defined]
+    monkeypatch.setenv("AACC_DATABASE_PATH", str(database_path))  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "InstanceGuard", AcquiredGuard)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "_run_application",
+        lambda config, database, data: received.append((config, database, data)) or 7,
+    )
+
+    assert app_module.main() == 7
+    assert received == [(config_path, database_path, tmp_path)]
+    assert closed == [True]

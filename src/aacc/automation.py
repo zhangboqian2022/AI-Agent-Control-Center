@@ -115,8 +115,16 @@ class MacAutomation:
             self._run(["/usr/bin/open", "-b", bundle_id])
         return f"已聚焦 {task.name}"
 
-    def focus(self, task: TaskConfig) -> str:
+    @staticmethod
+    def _check_cancelled(cancel_event: threading.Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise AutomationError("Desktop automation was cancelled")
+
+    def focus(
+        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+    ) -> str:
         with self._lock:
+            self._check_cancelled(cancel_event)
             return self._focus_unlocked(task)
 
     def _ensure_injection(self) -> None:
@@ -125,14 +133,22 @@ class MacAutomation:
         if not self._accessibility_trusted():
             raise AutomationError("Accessibility permission is required")
 
-    def send_key(self, task: TaskConfig, key: str) -> str:
+    def send_key(
+        self,
+        task: TaskConfig,
+        key: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         with self._lock:
+            self._check_cancelled(cancel_event)
             self._ensure_injection()
             normalized = key.upper()
             if normalized not in {*KEY_CODES, "CTRL_C"}:
                 raise AutomationError(f"Key {normalized} is not allowed")
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
+            self._check_cancelled(cancel_event)
             if normalized == "CTRL_C":
                 statement = 'tell application "System Events" to keystroke "c" using control down'
             else:
@@ -142,8 +158,15 @@ class MacAutomation:
             self._run(["/usr/bin/osascript", "-e", statement])
             return f"已发送 {normalized}"
 
-    def send_text(self, task: TaskConfig, text: str) -> str:
+    def send_text(
+        self,
+        task: TaskConfig,
+        text: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         with self._lock:
+            self._check_cancelled(cancel_event)
             self._ensure_injection()
             if not text or len(text) > 2000:
                 raise AutomationError("Text must contain 1 to 2000 characters")
@@ -151,15 +174,20 @@ class MacAutomation:
                 raise AutomationError("Text must not contain NUL")
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
+            self._check_cancelled(cancel_event)
             self._run(["/usr/bin/osascript", "-e", TEXT_SCRIPT, "--", text])
             return "文本已发送"
 
-    def start_voice(self, task: TaskConfig) -> str:
+    def start_voice(
+        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+    ) -> str:
         with self._lock:
+            self._check_cancelled(cancel_event)
             self._ensure_injection()
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._sleep(self.config.voice.voice_delay_ms / 1000)
+            self._check_cancelled(cancel_event)
             if self.config.voice.hotkey.upper() != "FN_FN":
                 raise AutomationError("V1.0 voice hotkey currently supports FN_FN")
             statement = (

@@ -33,7 +33,17 @@ def test_default_config_has_four_agents_and_random_token(tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     "value",
-    ["", "short", " " * 32, "change-me", "replace-me", "your-token-here", "x" * 31],
+    [
+        "",
+        "short",
+        " " * 32,
+        "change-me",
+        "replace-me",
+        "your-token-here",
+        "x" * 31,
+        "x" * 16 + " " + "y" * 16,
+        "x" * 16 + "\t" + "y" * 16,
+    ],
 )
 def test_invalid_tokens_are_rejected(value: str) -> None:
     assert not is_valid_token(value)

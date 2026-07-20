@@ -2,6 +2,8 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$project_root/scripts/release_env.sh"
+validate_release_credentials
 AACC_VERSION="${AACC_VERSION:-1.3.0-rc.1}"
 codesign_identity="${AACC_CODESIGN_IDENTITY:-}"
 cd "$project_root"

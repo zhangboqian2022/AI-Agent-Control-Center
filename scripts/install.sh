@@ -28,12 +28,16 @@ mkdir -p "$runtime_root"
 rm -rf "$runtime_venv"
 uv venv "$runtime_venv"
 uv build --wheel --out-dir "$runtime_root/wheels"
+uv export --locked --no-dev --no-emit-project \
+  --output-file "$runtime_root/requirements.lock"
 wheels=("$runtime_root"/wheels/aacc_control_center-1.3.0rc1-*.whl)
 if [[ ! -f "${wheels[0]}" ]]; then
   echo "错误：未生成 AACC runtime wheel" >&2
   exit 1
 fi
-uv pip install --python "$runtime_venv/bin/python" "${wheels[0]}"
+uv pip install --python "$runtime_venv/bin/python" \
+  --requirements "$runtime_root/requirements.lock"
+uv pip install --python "$runtime_venv/bin/python" "${wheels[0]}" --no-deps
 
 mkdir -p "$user_apps" "$user_bin"
 if [[ -d "$user_apps/AACC.app" ]]; then

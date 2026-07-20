@@ -87,7 +87,8 @@ def test_installer_links_runtime_not_repository_virtualenv() -> None:
     assert "Application Support/AACC/runtime" in script
     assert '"$project_root/.venv/bin/aacc"' not in script
     assert "uv sync --extra dev" in script
-    assert "uv pip install" in script
+    assert "uv export --locked --no-dev --no-emit-project" in script
+    assert '"${wheels[0]}" --no-deps' in script
     assert "SKIP_BUILD" in script
 
 
@@ -103,3 +104,26 @@ def test_build_scripts_support_explicit_signing_and_notarization() -> None:
     assert "--options runtime" in app_script
     assert "notarytool submit" in dmg_script
     assert "stapler staple" in dmg_script
+
+
+def test_partial_release_credentials_fail_before_build() -> None:
+    cases = [
+        {"AACC_CODESIGN_IDENTITY": "Developer ID Application: Example"},
+        {"AACC_NOTARY_PROFILE": "example-notary-profile"},
+    ]
+    for extra_environment in cases:
+        environment = os.environ.copy()
+        environment.pop("AACC_CODESIGN_IDENTITY", None)
+        environment.pop("AACC_NOTARY_PROFILE", None)
+        environment.update(extra_environment)
+        completed = subprocess.run(
+            [str(ROOT / "scripts" / "build_app.sh")],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode != 0
+        assert "AACC_CODESIGN_IDENTITY" in completed.stderr
+        assert "AACC_NOTARY_PROFILE" in completed.stderr

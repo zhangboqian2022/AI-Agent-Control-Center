@@ -21,10 +21,26 @@ class AutomationBusyError(AutomationError):
 
 
 class AutomationController(Protocol):
-    def focus(self, task: TaskConfig) -> str: ...
-    def send_key(self, task: TaskConfig, key: str) -> str: ...
-    def send_text(self, task: TaskConfig, text: str) -> str: ...
-    def start_voice(self, task: TaskConfig) -> str: ...
+    def focus(
+        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+    ) -> str: ...
+    def send_key(
+        self,
+        task: TaskConfig,
+        key: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str: ...
+    def send_text(
+        self,
+        task: TaskConfig,
+        text: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str: ...
+    def start_voice(
+        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+    ) -> str: ...
 
 
 class AutomationExecutor:
@@ -47,46 +63,82 @@ class AutomationExecutor:
         self._closed = False
         self._logger = logging.getLogger("aacc.automation")
 
-    def _execute(self, method: str, *args: object) -> str:
+    def _execute(
+        self, method: str, cancel_event: threading.Event, *args: object
+    ) -> str:
         started = time.monotonic()
         task = args[0] if args and isinstance(args[0], TaskConfig) else None
         target = task.terminal.app_bundle_id if task is not None else None
+        outcome = "error"
         try:
+            if cancel_event.is_set():
+                outcome = "cancelled"
+                raise AutomationError("Desktop automation was cancelled")
             if method == "focus" and task is not None:
-                return self._controller.focus(task)
-            if method == "send_key" and task is not None and len(args) == 2:
-                return self._controller.send_key(task, str(args[1]))
-            if method == "send_text" and task is not None and len(args) == 2:
-                return self._controller.send_text(task, str(args[1]))
-            if method == "start_voice" and task is not None:
-                return self._controller.start_voice(task)
-            raise AutomationError("Unsupported desktop automation operation")
+                result = self._controller.focus(task, cancel_event=cancel_event)
+            elif method == "send_key" and task is not None and len(args) == 2:
+                result = self._controller.send_key(
+                    task, str(args[1]), cancel_event=cancel_event
+                )
+            elif method == "send_text" and task is not None and len(args) == 2:
+                result = self._controller.send_text(
+                    task, str(args[1]), cancel_event=cancel_event
+                )
+            elif method == "start_voice" and task is not None:
+                result = self._controller.start_voice(task, cancel_event=cancel_event)
+            else:
+                raise AutomationError("Unsupported desktop automation operation")
+            outcome = "success"
+            return result
+        except AutomationError:
+            if cancel_event.is_set():
+                outcome = "cancelled"
+            raise
         finally:
             self._logger.info(
-                "automation operation=%s target=%s elapsed_ms=%d",
+                "automation operation=%s target=%s outcome=%s elapsed_ms=%d",
                 method,
                 target or "unknown",
+                outcome,
                 round((time.monotonic() - started) * 1000),
             )
 
-    def submit(self, method: str, *args: object) -> Future[str]:
+    def _submit(self, method: str, *args: object) -> tuple[Future[str], threading.Event]:
+        cancel_event = threading.Event()
         with self._lock:
             if self._closed:
+                self._logger.warning(
+                    "automation operation=%s target=unknown outcome=busy reason=closed", method
+                )
                 raise AutomationBusyError("Desktop automation executor is closed")
             if not self._slots.acquire(blocking=False):
+                self._logger.warning(
+                    "automation operation=%s target=unknown outcome=busy reason=queue_full",
+                    method,
+                )
                 raise AutomationBusyError("Desktop automation queue is full")
             try:
-                future = self._pool.submit(self._execute, method, *args)
+                future = self._pool.submit(self._execute, method, cancel_event, *args)
             except Exception:
                 self._slots.release()
                 raise
         future.add_done_callback(lambda _future: self._slots.release())
+        return future, cancel_event
+
+    def submit(self, method: str, *args: object) -> Future[str]:
+        future, _cancel_event = self._submit(method, *args)
         return future
 
     def _wait(self, method: str, *args: object) -> str:
+        future, cancel_event = self._submit(method, *args)
         try:
-            return self.submit(method, *args).result(timeout=self._total_timeout)
+            return future.result(timeout=self._total_timeout)
         except FutureTimeoutError as error:
+            cancel_event.set()
+            future.cancel()
+            self._logger.warning(
+                "automation operation=%s target=unknown outcome=timeout", method
+            )
             raise AutomationError("Desktop automation timed out") from error
 
     def focus(self, task: TaskConfig) -> str:

@@ -1,4 +1,5 @@
 import threading
+import time
 from concurrent.futures import Future
 
 import pytest
@@ -13,19 +14,35 @@ class RecordingController:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def focus(self, task: TaskConfig) -> str:
+    def focus(
+        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+    ) -> str:
         self.calls.append(task.name)
         return task.name
 
-    def send_key(self, task: TaskConfig, key: str) -> str:
+    def send_key(
+        self,
+        task: TaskConfig,
+        key: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         self.calls.append(f"{task.name}:{key}")
         return key
 
-    def send_text(self, task: TaskConfig, value: str) -> str:
+    def send_text(
+        self,
+        task: TaskConfig,
+        value: str,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         self.calls.append(f"{task.name}:text")
         return value
 
-    def start_voice(self, task: TaskConfig) -> str:
+    def start_voice(
+        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+    ) -> str:
         self.calls.append(f"{task.name}:voice")
         return "voice"
 
@@ -50,7 +67,9 @@ def test_executor_rejects_overflow() -> None:
     release = threading.Event()
 
     class BlockingController(RecordingController):
-        def focus(self, task: TaskConfig) -> str:
+        def focus(
+            self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+        ) -> str:
             started.set()
             release.wait(timeout=1)
             return task.name
@@ -74,7 +93,9 @@ def test_synchronous_adapter_times_out() -> None:
     release = threading.Event()
 
     class BlockingController(RecordingController):
-        def focus(self, task: TaskConfig) -> str:
+        def focus(
+            self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+        ) -> str:
             release.wait(timeout=1)
             return task.name
 
@@ -82,6 +103,68 @@ def test_synchronous_adapter_times_out() -> None:
     with pytest.raises(AutomationError, match="timed out"):
         executor.focus(default_config().tasks[0])
     release.set()
+    executor.close()
+
+
+def test_timed_out_queued_operation_never_executes_later() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingController(RecordingController):
+        def focus(
+            self, task: TaskConfig, *, cancel_event: threading.Event | None = None
+        ) -> str:
+            if task.name == "blocker":
+                started.set()
+                release.wait(timeout=1)
+            return super().focus(task, cancel_event=cancel_event)
+
+    controller = BlockingController()
+    executor = executor_module.AutomationExecutor(controller, total_timeout=0.02)
+    blocker = default_config().tasks[0].model_copy(update={"name": "blocker"})
+    delayed = default_config().tasks[0].model_copy(update={"name": "must-not-run"})
+    first = executor.submit("focus", blocker)
+    assert started.wait(timeout=1)
+
+    with pytest.raises(AutomationError, match="timed out"):
+        executor.focus(delayed)
+
+    release.set()
+    assert first.result(timeout=1) == "blocker"
+    time.sleep(0.05)
+    assert controller.calls == ["blocker"]
+    executor.close()
+
+
+def test_running_operation_observes_cooperative_cancellation() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class CooperativeController(RecordingController):
+        def send_text(
+            self,
+            task: TaskConfig,
+            value: str,
+            *,
+            cancel_event: threading.Event | None = None,
+        ) -> str:
+            entered.set()
+            release.wait(timeout=1)
+            if cancel_event is not None and cancel_event.is_set():
+                raise AutomationError("Desktop automation was cancelled")
+            return super().send_text(task, value, cancel_event=cancel_event)
+
+    controller = CooperativeController()
+    executor = executor_module.AutomationExecutor(controller, total_timeout=0.02)
+    task = default_config().tasks[0]
+
+    with pytest.raises(AutomationError, match="timed out"):
+        executor.send_text(task, "do not inject")
+    assert entered.is_set()
+    release.set()
+    time.sleep(0.05)
+
+    assert controller.calls == []
     executor.close()
 
 

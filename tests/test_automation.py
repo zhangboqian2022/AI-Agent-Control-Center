@@ -148,6 +148,25 @@ def test_send_text_rejects_nul() -> None:
         MacAutomation(config, runner=Recorder()).send_text(config.tasks[0], "bad\0text")
 
 
+def test_send_text_cancellation_after_focus_prevents_input_injection() -> None:
+    config = default_config()
+    recorder = Recorder()
+    cancel_event = threading.Event()
+
+    def cancel_during_delay(_seconds: float) -> None:
+        cancel_event.set()
+
+    automation = MacAutomation(config, runner=recorder, sleeper=cancel_during_delay)
+
+    with pytest.raises(AutomationError, match="cancelled"):
+        automation.send_text(
+            config.tasks[0], "must not be injected", cancel_event=cancel_event
+        )
+
+    assert len(recorder.calls) == 1
+    assert "activate" in recorder.calls[0][2]
+
+
 def test_timeout_becomes_sanitized_automation_error() -> None:
     config = default_config()
 

@@ -81,7 +81,7 @@ def is_valid_token(value: str) -> bool:
     return (
         len(value) >= 32
         and value.isprintable()
-        and not value.isspace()
+        and not any(character.isspace() for character in value)
         and value not in PLACEHOLDER_TOKENS
     )
 

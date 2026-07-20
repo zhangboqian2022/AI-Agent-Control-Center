@@ -38,3 +38,15 @@ def test_open_accessibility_settings_uses_system_deep_link(monkeypatch: object) 
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
     ]
     assert calls[0][1]["timeout"] == 5
+
+
+def test_accessibility_failures_are_safe(monkeypatch: object) -> None:
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        accessibility, "_load_quartz", lambda: (_ for _ in ()).throw(ImportError())
+    )
+    assert not accessibility.is_accessibility_trusted()
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())
+    )
+    assert accessibility.open_accessibility_settings() is None

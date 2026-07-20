@@ -11,6 +11,8 @@ from aacc.codex_discovery import (
 )
 from aacc.models import TaskStatus
 
+FIXTURES = Path(__file__).parent / "fixtures" / "codex"
+
 
 def test_discovers_active_and_recent_codex_tasks_without_reading_session_content(
     tmp_path: Path,
@@ -356,3 +358,35 @@ def test_missing_session_index_is_empty_first_run(tmp_path: Path) -> None:
     )
     assert discovery.catalog() == []
     assert CODEX_METADATA_COMPATIBILITY == "2026-07"
+
+
+def test_current_codex_metadata_fixture_parses_running_and_completed_sessions(
+    tmp_path: Path,
+) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    for fixture_name in (
+        "rollout-fixture-running-0001.jsonl",
+        "rollout-fixture-complete-0002.jsonl",
+    ):
+        (sessions / fixture_name).write_bytes((FIXTURES / fixture_name).read_bytes())
+
+    discovery = CodexLocalDiscovery(
+        FIXTURES / "session_index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: datetime(2026, 7, 20, 8, 0, 30, tzinfo=UTC),
+        session_modified_at=lambda path: datetime.fromisoformat(
+            "2026-07-20T08:00:01+00:00"
+            if "running" in path.name
+            else "2026-07-20T07:55:01+00:00"
+        ),
+    )
+
+    tasks = discovery.discover()
+
+    assert CODEX_METADATA_COMPATIBILITY == "2026-07"
+    assert [(task.state.session_id, task.state.status) for task in tasks] == [
+        ("fixture-running-0001", TaskStatus.RUNNING),
+        ("fixture-complete-0002", TaskStatus.COMPLETED),
+    ]
