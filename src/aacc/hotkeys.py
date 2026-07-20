@@ -36,6 +36,12 @@ class GlobalHotkeys:
         self._run_loop: Any = None
         self._ready = threading.Event()
         self.error: str | None = None
+        self._quartz: Any = None
+        self._tap: Any = None
+
+    @property
+    def available(self) -> bool:
+        return self.error is None and self._thread is not None
 
     def start(self) -> bool:
         if self._thread is not None:
@@ -49,26 +55,19 @@ class GlobalHotkeys:
         try:
             import Quartz  # type: ignore[import-untyped]
 
-            def callback(_proxy: Any, event_type: int, event: Any, _refcon: Any) -> Any:
-                if event_type == Quartz.kCGEventKeyDown:
-                    code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
-                    action = self._actions_by_code.get(code)
-                    if action is not None:
-                        action()
-                        return None
-                return event
-
+            self._quartz = Quartz
             mask = Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
             tap = Quartz.CGEventTapCreate(
                 Quartz.kCGSessionEventTap,
                 Quartz.kCGHeadInsertEventTap,
                 Quartz.kCGEventTapOptionDefault,
                 mask,
-                callback,
+                self._callback,
                 None,
             )
             if tap is None:
                 raise RuntimeError("Accessibility permission is required for global hotkeys")
+            self._tap = tap
             source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
             self._run_loop = Quartz.CFRunLoopGetCurrent()
             Quartz.CFRunLoopAddSource(self._run_loop, source, Quartz.kCFRunLoopCommonModes)
@@ -79,6 +78,25 @@ class GlobalHotkeys:
             self.error = str(error)
             logging.getLogger("aacc.hotkeys").warning("Global hotkeys unavailable: %s", error)
             self._ready.set()
+
+    def _callback(self, _proxy: Any, event_type: int, event: Any, _refcon: Any) -> Any:
+        quartz = self._quartz
+        if quartz is None:
+            return event
+        if event_type in {
+            quartz.kCGEventTapDisabledByTimeout,
+            quartz.kCGEventTapDisabledByUserInput,
+        }:
+            if self._tap is not None:
+                quartz.CGEventTapEnable(self._tap, True)
+            return event
+        if event_type == quartz.kCGEventKeyDown:
+            code = quartz.CGEventGetIntegerValueField(event, quartz.kCGKeyboardEventKeycode)
+            action = self._actions_by_code.get(code)
+            if action is not None:
+                action()
+                return None
+        return event
 
     def stop(self) -> None:
         if self._run_loop is not None:
@@ -92,3 +110,5 @@ class GlobalHotkeys:
             self._thread.join(timeout=1)
         self._thread = None
         self._run_loop = None
+        self._tap = None
+        self._quartz = None

@@ -1,0 +1,1 @@
+{"timestamp":"2026-07-20T08:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"sanitized-turn-1","model_context_window":200000,"collaboration_mode_kind":"default","started_at":"2026-07-20T08:00:01Z"}}

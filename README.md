@@ -2,7 +2,7 @@
 
 > A local-first macOS desktop control center for the AI coding agents you choose to monitor.
 
-[中文文档](README.zh-CN.md) · [Download AACC 1.2.0](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.2.0/AACC-1.2.0.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.2.0) · [Product design](docs/product-design.md)
+[中文文档](README.zh-CN.md) · [Download AACC 1.3.0-rc.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.1/AACC-1.3.0-rc.1.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.3.0-rc.1) · [Product design](docs/product-design.md)
 
 AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative focus/input automation.
 
@@ -15,6 +15,8 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 - **Fast visual scanning.** Large status lights distinguish running, waiting, completed, warning, error, and unknown states.
 - **Local-first by design.** AACC reads only the local task metadata needed for status detection and never uploads task content.
 - **Reliable status boundaries.** Codex session `task_started` and `task_complete` events take priority over file activity to avoid stale “running” indicators.
+- **Visible discovery health.** Repeated Codex metadata errors show a recoverable warning banner with sanitized diagnostics instead of silently freezing task state.
+- **Responsive, serialized control.** Complete focus-and-input transactions run in a bounded worker so concurrent calls cannot inject into the wrong window and the panel stays responsive.
 - **Desktop control without blind input.** Cards select a task; the explicit context action focuses the target app. Keyboard injection is restricted to a small allowlist.
 - **Extensible integration.** Use the local API, `aacc` CLI, `aacc-run` wrapper, or configurable adapters for Codex CLI/App, Claude Code, Kimi Code, and generic CLIs.
 
@@ -22,9 +24,9 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 
 ### Recommended: download the DMG
 
-Download [AACC-1.2.0.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.2.0/AACC-1.2.0.dmg), open it, and drag `AACC.app` to Applications.
+Download [AACC-1.3.0-rc.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.1/AACC-1.3.0-rc.1.dmg), open it, and drag `AACC.app` to Applications.
 
-The public build is ad-hoc signed and is not notarized by Apple. If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** only after confirming that the DMG came from this release page.
+This RC is ad-hoc signed and is not notarized by Apple. If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** only after verifying the release checksum. Stable `v1.3.0` remains blocked until Developer ID signing and Apple notarization are available.
 
 ### Build from source
 
@@ -36,7 +38,7 @@ cd AI-Agent-Control-Center
 ./scripts/install.sh
 ```
 
-The installer resolves dependencies, runs tests, builds `AACC.app`, installs it under `~/Applications/AACC.app`, and adds `aacc` and `aacc-run` to `~/.local/bin`.
+The installer runs tests, builds `AACC.app`, installs it under `~/Applications/AACC.app`, creates a production-only CLI runtime under `~/Library/Application Support/AACC/runtime`, and adds `aacc` and `aacc-run` to `~/.local/bin`.
 
 To create a distributable image:
 
@@ -72,6 +74,8 @@ aacc doctor
 
 The API is bound only to `http://127.0.0.1:17650` and requires a random token generated in the local config file. It is intentionally not a remote-control API.
 
+Use **Settings → Reset API credentials** to rotate the token locally. The previous token becomes invalid immediately and the new token is copied once. Keyboard injection and global hotkeys require macOS Accessibility permission; AACC detects a missing permission and opens the correct System Settings pane on request.
+
 ## Architecture and privacy
 
 ```text
@@ -94,7 +98,7 @@ Security boundaries:
 - Target app/window activation must succeed before input is sent.
 - Logs redact common tokens, passwords, and Authorization headers.
 
-Read the full [product design](docs/product-design.md), [security policy](SECURITY.md), and [troubleshooting guide](docs/troubleshooting.en.md).
+Read the full [product design](docs/product-design.md), [security policy](SECURITY.md), [known limitations](KNOWN_LIMITATIONS.md), and [troubleshooting guide](docs/troubleshooting.en.md).
 
 ## Development
 

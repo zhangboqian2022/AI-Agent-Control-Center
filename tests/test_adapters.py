@@ -1,3 +1,7 @@
+import asyncio
+
+import pytest
+
 from aacc.adapters import AdapterRegistry, GenericCLIAdapter, strip_ansi
 from aacc.config import default_config
 from aacc.models import AgentConfig, TaskStatus
@@ -59,3 +63,17 @@ def test_codex_app_uses_process_capability_without_invented_log_patterns() -> No
     adapter = AdapterRegistry.create(task)
     assert adapter.capabilities["can_detect_process"] is True
     assert adapter.classify("Approve") is None
+
+
+def test_disconnect_unblocks_waiting_event_consumer() -> None:
+    adapter = GenericCLIAdapter("task-1", AgentConfig(type="generic_cli"))
+
+    async def scenario() -> None:
+        await adapter.connect()
+        consumer = asyncio.create_task(anext(adapter.events()))
+        await asyncio.sleep(0)
+        await adapter.disconnect()
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(consumer, timeout=0.1)
+
+    asyncio.run(scenario())

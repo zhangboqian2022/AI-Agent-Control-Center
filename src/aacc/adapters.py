@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import AsyncIterator
+from typing import cast
 
 import psutil
 import regex as safe_regex
@@ -11,6 +12,7 @@ from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus
 
 ANSI_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 MAX_LINE_LENGTH = 4096
+EVENTS_STOPPED = object()
 
 
 def strip_ansi(value: str) -> str:
@@ -33,7 +35,7 @@ class BaseAgentAdapter:
             "can_stop": False,
         }
         self._connected = False
-        self._events: asyncio.Queue[TaskState] = asyncio.Queue()
+        self._events: asyncio.Queue[TaskState | object] = asyncio.Queue()
 
     async def detect(self) -> bool:
         patterns = self.config.process_patterns + self.config.executable_patterns
@@ -50,14 +52,20 @@ class BaseAgentAdapter:
         return False
 
     async def connect(self) -> None:
+        if not self._connected:
+            self._events = asyncio.Queue()
         self._connected = True
 
     async def disconnect(self) -> None:
         self._connected = False
+        self._events.put_nowait(EVENTS_STOPPED)
 
     async def events(self) -> AsyncIterator[TaskState]:
-        while self._connected:
-            yield await self._events.get()
+        while True:
+            event = await self._events.get()
+            if event is EVENTS_STOPPED:
+                return
+            yield cast(TaskState, event)
 
     async def get_status(self) -> TaskState:
         detected = await self.detect()

@@ -3,19 +3,24 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from aacc.accessibility import is_accessibility_trusted, open_accessibility_settings
 from aacc.api import create_api
 from aacc.automation import MacAutomation
-from aacc.config import load_config
+from aacc.automation_executor import AutomationExecutor
+from aacc.config import load_config, rotate_api_token
 from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH, DEFAULT_DATABASE_PATH
 from aacc.discovery_service import CodexDiscoveryService
 from aacc.gui import MainWindow
 from aacc.hotkeys import GlobalHotkeys
+from aacc.instance_guard import InstanceGuard, activate_existing_instance
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
 from aacc.persistence import StateStore
@@ -24,32 +29,43 @@ from aacc.task_manager import TaskManager
 
 @dataclass
 class Runtime:
+    config_path: Path
     config: AppConfig
     manager: TaskManager
     automation: MacAutomation
+    automation_executor: AutomationExecutor
     discovery: CodexDiscoveryService
 
     def close(self) -> None:
         self.discovery.stop()
+        self.automation_executor.close()
         self.manager.close()
 
 
-def build_runtime(config_path: Path, database_path: Path) -> Runtime:
+def build_runtime(
+    config_path: Path,
+    database_path: Path,
+    *,
+    accessibility_trusted: Callable[[], bool] = lambda: True,
+) -> Runtime:
     config = load_config(config_path)
     store = StateStore(database_path)
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
+    automation = MacAutomation(config, accessibility_trusted=accessibility_trusted)
     return Runtime(
+        config_path=config_path,
         config=config,
         manager=manager,
-        automation=MacAutomation(config),
+        automation=automation,
+        automation_executor=AutomationExecutor(automation),
         discovery=CodexDiscoveryService(manager),
     )
 
 
 class APIServerThread:
     def __init__(self, runtime: Runtime) -> None:
-        api = create_api(runtime.config, runtime.manager, runtime.automation)
+        api = create_api(runtime.config, runtime.manager, runtime.automation_executor)
         self.server = uvicorn.Server(
             uvicorn.Config(
                 api,
@@ -86,12 +102,14 @@ def _hotkey_actions(window: MainWindow) -> dict[str, object]:
     return actions
 
 
-def main() -> int:
-    config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
-    database_path = Path(os.environ.get("AACC_DATABASE_PATH", DEFAULT_DATABASE_PATH))
-    data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
+def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
-    runtime = build_runtime(config_path, database_path)
+    trusted = is_accessibility_trusted()
+    runtime = build_runtime(
+        config_path,
+        database_path,
+        accessibility_trusted=is_accessibility_trusted,
+    )
 
     existing_app = QApplication.instance()
     qt_app = existing_app if isinstance(existing_app, QApplication) else QApplication(sys.argv)
@@ -100,13 +118,23 @@ def main() -> int:
     qt_app.setQuitOnLastWindowClosed(False)
     window = MainWindow(
         runtime.manager,
-        runtime.automation,
+        runtime.automation_executor,
         codex_sessions=runtime.discovery.catalog,
         codex_auto_active_ids=runtime.discovery.auto_active_ids,
         codex_retained_ids=runtime.discovery.retained_ids,
         set_codex_monitoring_preferences=runtime.discovery.set_monitoring_preferences,
+        rotate_api_token_callback=lambda: rotate_api_token(
+            runtime.config_path, runtime.config
+        ),
+        discovery_health=runtime.discovery.health,
+        subscribe_discovery_health=runtime.discovery.subscribe_health,
+        discovery_log_path=str(data_dir / "logs" / "app.log"),
+        accessibility_trusted=trusted,
+        open_accessibility_settings_callback=open_accessibility_settings,
     )
     window.show()
+    if not trusted:
+        QTimer.singleShot(0, window.show_accessibility_guidance)
     runtime.discovery.start()
 
     api_server: APIServerThread | None = None
@@ -115,7 +143,8 @@ def main() -> int:
         api_server.start()
 
     hotkeys = GlobalHotkeys(runtime.config.hotkeys, _hotkey_actions(window))  # type: ignore[arg-type]
-    hotkeys.start()
+    if trusted:
+        hotkeys.start()
 
     cleaned = False
 
@@ -134,3 +163,17 @@ def main() -> int:
         return qt_app.exec()
     finally:
         cleanup()
+
+
+def main() -> int:
+    config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
+    database_path = Path(os.environ.get("AACC_DATABASE_PATH", DEFAULT_DATABASE_PATH))
+    data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
+    guard = InstanceGuard(data_dir / "aacc.lock")
+    if not guard.acquire():
+        activate_existing_instance()
+        return 0
+    try:
+        return _run_application(config_path, database_path, data_dir)
+    finally:
+        guard.close()

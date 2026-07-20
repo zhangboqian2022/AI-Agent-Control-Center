@@ -15,6 +15,11 @@ PidExists = Callable[[int], bool]
 Clock = Callable[[], datetime]
 SessionModifiedAt = Callable[[Path], datetime]
 ProcessStartedAt = Callable[[int], int | None]
+CODEX_METADATA_COMPATIBILITY = "2026-07"
+
+
+class CodexDiscoveryError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -115,7 +120,10 @@ class CodexLocalDiscovery:
                         finished_at=updated_at if status is TaskStatus.COMPLETED else None,
                         pid=pid,
                         session_id=conversation_id,
-                        metadata={"discovered": True},
+                        metadata={
+                            "discovered": True,
+                            "source_event_at": updated_at.isoformat(),
+                        },
                     ),
                 )
             )
@@ -156,8 +164,10 @@ class CodexLocalDiscovery:
     def _sessions(self) -> list[dict[str, Any]]:
         try:
             lines = self.session_index_path.read_text(encoding="utf-8").splitlines()
-        except OSError:
+        except FileNotFoundError:
             return []
+        except OSError as error:
+            raise CodexDiscoveryError("Codex session index is unreadable") from error
         sessions_by_id: dict[str, dict[str, Any]] = {}
         for line in lines:
             if len(line) > 16_384:
@@ -281,11 +291,12 @@ class CodexLocalDiscovery:
             try:
                 record_started = item.get("startedAtMs")
                 process_started = self.process_started_at(pid)
-                process_matches = (
-                    not isinstance(record_started, int)
-                    or process_started is None
-                    or abs(process_started - record_started) <= 60_000
-                )
+                if isinstance(record_started, int):
+                    if process_started is None:
+                        continue
+                    process_matches = abs(process_started - record_started) <= 60_000
+                else:
+                    process_matches = True
                 if self.pid_exists(pid) and process_matches:
                     pids[conversation_id] = pid
             except (OSError, psutil.Error):

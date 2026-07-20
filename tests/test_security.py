@@ -1,3 +1,5 @@
+import pytest
+
 from aacc.security import redact
 
 
@@ -13,3 +15,19 @@ def test_redact_hides_common_secret_formats() -> None:
 
 def test_redact_leaves_normal_status_text() -> None:
     assert redact("task-1 completed in 12 seconds") == "task-1 completed in 12 seconds"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '"token": "abc123456"',
+        "password='hunter2'",
+        "secret: super-secret",
+        '"authorization": "Bearer abc.def"',
+    ],
+)
+def test_redacts_quoted_and_structured_secret_values(value: str) -> None:
+    cleaned = redact(value)
+    assert "[REDACTED]" in cleaned
+    secrets = ("abc123456", "hunter2", "super-secret", "abc.def")
+    assert all(secret not in cleaned for secret in secrets)

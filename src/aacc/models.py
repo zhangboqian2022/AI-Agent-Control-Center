@@ -54,6 +54,7 @@ class AppSettings(BaseModel):
     start_at_login: bool = False
     blink_attention: bool = True
     keyboard_injection: bool = True
+    automation_timeout_seconds: float = Field(default=5.0, ge=2.0, le=15.0)
     visible_agent_types: list[str] = Field(default_factory=lambda: ["codex_cli"])
     api: APIConfig = Field(default_factory=APIConfig)
 
@@ -114,6 +115,7 @@ class TaskConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    config_version: int = Field(default=1, ge=1)
     app: AppSettings = Field(default_factory=AppSettings)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     hotkeys: dict[str, str] = Field(default_factory=dict)
