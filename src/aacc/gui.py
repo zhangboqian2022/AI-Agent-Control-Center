@@ -38,6 +38,7 @@ from aacc.automation import AutomationError
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.constants import DEFAULT_CONFIG_PATH
+from aacc.discovery_service import DiscoveryHealth
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
 
@@ -379,6 +380,7 @@ class MainWindow(QWidget):
     state_received = Signal(object)
     external_action = Signal(str, str)
     automation_finished = Signal(str, str, object)
+    discovery_health_received = Signal(object)
     settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity", "visible_agents"}
 
     def __init__(
@@ -393,6 +395,11 @@ class MainWindow(QWidget):
         set_codex_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
         | None = None,
         rotate_api_token_callback: Callable[[], str] | None = None,
+        discovery_health: Callable[[], DiscoveryHealth] | None = None,
+        subscribe_discovery_health: (
+            Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
+        ) = None,
+        discovery_log_path: str = "~/Library/Application Support/AACC/logs/app.log",
         settings: QSettings | None = None,
     ) -> None:
         super().__init__()
@@ -413,6 +420,13 @@ class MainWindow(QWidget):
             or (lambda _manual_ids, _retained_ids, _muted_ids: None)
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
+        self._discovery_health = (discovery_health or DiscoveryHealth)()
+        self._discovery_log_path = discovery_log_path
+        self._unsubscribe_discovery_health = (
+            subscribe_discovery_health(self.discovery_health_received.emit)
+            if subscribe_discovery_health is not None
+            else lambda: None
+        )
         saved_codex_tasks = self._settings.value(
             "codex_manual_tasks", self._settings.value("codex_selected_tasks")
         )
@@ -448,6 +462,7 @@ class MainWindow(QWidget):
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
         self.automation_finished.connect(self._automation_completed)
+        self.discovery_health_received.connect(self._apply_discovery_health)
 
         saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
         self.always_on_top = bool(saved_top)
@@ -494,6 +509,21 @@ class MainWindow(QWidget):
             button.setFixedSize(28, 28)
             header.addWidget(button)
         layout.addLayout(header)
+
+        self.discovery_warning = QFrame()
+        self.discovery_warning.setObjectName("discoveryWarning")
+        discovery_warning_layout = QHBoxLayout(self.discovery_warning)
+        discovery_warning_layout.setContentsMargins(10, 8, 10, 8)
+        self.discovery_warning_label = QLabel()
+        self.discovery_warning_label.setObjectName("discoveryWarningLabel")
+        self.discovery_warning_label.setWordWrap(True)
+        copy_diagnostics = QPushButton("复制详情")
+        copy_diagnostics.setObjectName("copyDiagnosticsButton")
+        copy_diagnostics.clicked.connect(self.copy_discovery_diagnostics)
+        discovery_warning_layout.addWidget(self.discovery_warning_label, 1)
+        discovery_warning_layout.addWidget(copy_diagnostics)
+        layout.addWidget(self.discovery_warning)
+        self._apply_discovery_health(self._discovery_health)
 
         self.cards: dict[str, TaskCard] = {}
         self._card_order_ids: list[str] = []
@@ -613,6 +643,11 @@ class MainWindow(QWidget):
               border-radius: 7px;
             }
             #headerButton:hover { color: white; background: rgba(78,158,255,70); }
+            #discoveryWarning {
+              background: rgba(112, 82, 12, 220); border: 1px solid #d6a928; border-radius: 9px;
+            }
+            #discoveryWarningLabel { color: #ffe8a3; font-size: 11px; font-weight: 700; }
+            #copyDiagnosticsButton { color: #fff3c4; background: rgba(255,255,255,20); }
             QMenu { background: #1d2635; color: #e7edf7; border: 1px solid #38465b; padding: 6px; }
             QMenu::item { padding: 6px 22px; border-radius: 5px; }
             QMenu::item:selected { background: #347bd1; }
@@ -944,6 +979,18 @@ class MainWindow(QWidget):
         QGuiApplication.clipboard().setText(token)
         QMessageBox.information(self, "凭证已重置", "新凭证已复制；旧凭证已失效。")
 
+    def _apply_discovery_health(self, value: object) -> None:
+        if not isinstance(value, DiscoveryHealth):
+            return
+        self._discovery_health = value
+        self.discovery_warning_label.setText(value.summary[:80])
+        self.discovery_warning.setVisible(value.degraded)
+
+    def copy_discovery_diagnostics(self) -> None:
+        QGuiApplication.clipboard().setText(
+            self._discovery_health.diagnostics(self._discovery_log_path)
+        )
+
     def open_settings(self) -> None:
         SettingsDialog(self).exec()
 
@@ -981,4 +1028,5 @@ class MainWindow(QWidget):
             event.ignore()
             return
         self._unsubscribe()
+        self._unsubscribe_discovery_health()
         event.accept()

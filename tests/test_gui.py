@@ -9,6 +9,7 @@ from aacc.automation import AutomationError, MacAutomation
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.config import create_default_config, default_config, rotate_api_token
+from aacc.discovery_service import DiscoveryHealth
 from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
@@ -392,4 +393,32 @@ def test_rotate_credentials_updates_live_config_and_clipboard(
 
     assert config.app.api.token != old
     assert QGuiApplication.clipboard().text() == config.app.api.token
+    manager.close()
+
+
+def test_discovery_warning_banner_copies_sanitized_diagnostics(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    health = DiscoveryHealth(
+        degraded=True,
+        consecutive_failures=3,
+        diagnostic_id="abc123",
+        summary="Codex session index is unreadable",
+    )
+
+    window.discovery_health_received.emit(health)
+
+    qtbot.waitUntil(  # type: ignore[attr-defined]
+        lambda: not window.discovery_warning.isHidden(), timeout=500
+    )
+    assert len(window.discovery_warning_label.text()) <= 80
+    window.copy_discovery_diagnostics()
+    copied = QGuiApplication.clipboard().text()
+    assert "abc123" in copied
+    assert "traceback" not in copied.lower()
+    assert "token" not in copied.lower()
+
+    window.discovery_health_received.emit(DiscoveryHealth())
+    qtbot.waitUntil(window.discovery_warning.isHidden, timeout=500)  # type: ignore[attr-defined]
     manager.close()

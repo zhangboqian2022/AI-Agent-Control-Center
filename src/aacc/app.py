@@ -115,6 +115,9 @@ def main() -> int:
         rotate_api_token_callback=lambda: rotate_api_token(
             runtime.config_path, runtime.config
         ),
+        discovery_health=runtime.discovery.health,
+        subscribe_discovery_health=runtime.discovery.subscribe_health,
+        discovery_log_path=str(data_dir / "logs" / "app.log"),
     )
     window.show()
     runtime.discovery.start()
