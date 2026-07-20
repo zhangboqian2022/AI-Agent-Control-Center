@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import psutil
 
@@ -71,6 +71,7 @@ class CodexLocalDiscovery:
         self.process_started_at = process_started_at or self._process_started_at
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         self.max_tasks = max(1, min(max_tasks, 20))
+        self._session_start_cache: dict[Path, tuple[int, datetime | None]] = {}
 
     def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
         sessions = self._sessions()
@@ -143,7 +144,15 @@ class CodexLocalDiscovery:
                 )
             )
         discovered.sort(
-            key=lambda item: (item.state.status is TaskStatus.RUNNING, item.state.updated_at),
+            key=lambda item: (
+                item.state.status
+                in {
+                    TaskStatus.RUNNING,
+                    TaskStatus.WAITING_INPUT,
+                    TaskStatus.WAITING_APPROVAL,
+                },
+                item.state.updated_at,
+            ),
             reverse=True,
         )
         return [
@@ -328,25 +337,47 @@ class CodexLocalDiscovery:
             if item.get("type") == "event_msg" and event_type == "task_complete":
                 if latest_activity is not None:
                     status, activity_at, message = latest_activity
-                    return SessionSignal(status, activity_at, message)
+                    return self._finalize_session_signal(
+                        path, size, SessionSignal(status, activity_at, message), fallback
+                    )
                 terminal_at = observed_at
                 terminal_started_at = self._parse_time(payload.get("started_at"))
                 if terminal_started_at is not None:
-                    return SessionSignal(
-                        TaskStatus.COMPLETED,
-                        terminal_at,
-                        "已完成",
-                        terminal_started_at,
+                    return self._finalize_session_signal(
+                        path,
+                        size,
+                        SessionSignal(
+                            TaskStatus.COMPLETED,
+                            terminal_at,
+                            "已完成",
+                            terminal_started_at,
+                        ),
+                        fallback,
                     )
                 continue
             if item.get("type") == "event_msg" and event_type == "task_started":
                 started_at = self._parse_time(payload.get("started_at")) or observed_at
                 if terminal_at is not None:
-                    return SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", started_at)
+                    return self._finalize_session_signal(
+                        path,
+                        size,
+                        SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", started_at),
+                        fallback,
+                    )
                 if latest_activity is not None:
                     status, activity_at, message = latest_activity
-                    return SessionSignal(status, activity_at, message, started_at)
-                return SessionSignal(TaskStatus.RUNNING, observed_at, "正在分析任务", started_at)
+                    return self._finalize_session_signal(
+                        path,
+                        size,
+                        SessionSignal(status, activity_at, message, started_at),
+                        fallback,
+                    )
+                return self._finalize_session_signal(
+                    path,
+                    size,
+                    SessionSignal(TaskStatus.RUNNING, observed_at, "正在分析任务", started_at),
+                    fallback,
+                )
             if terminal_at is not None or latest_activity is not None:
                 continue
             waiting_status = (
@@ -380,11 +411,101 @@ class CodexLocalDiscovery:
             }:
                 latest_activity = (TaskStatus.RUNNING, observed_at, "正在分析任务")
         if terminal_at is not None:
-            return SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", terminal_started_at)
+            return self._finalize_session_signal(
+                path,
+                size,
+                SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", terminal_started_at),
+                fallback,
+            )
         if latest_activity is not None:
             status, observed_at, message = latest_activity
-            return SessionSignal(status, observed_at, message)
+            return self._finalize_session_signal(
+                path,
+                size,
+                SessionSignal(status, observed_at, message),
+                fallback,
+            )
         return None
+
+    def _finalize_session_signal(
+        self,
+        path: Path,
+        size: int,
+        signal: SessionSignal,
+        fallback: datetime,
+    ) -> SessionSignal:
+        started_at = signal.started_at
+        if started_at is None:
+            started_at = self._latest_task_start(path, size, fallback)
+        else:
+            self._session_start_cache[path] = (size, started_at)
+        return SessionSignal(
+            signal.status,
+            signal.observed_at,
+            signal.message,
+            started_at,
+        )
+
+    def _latest_task_start(self, path: Path, size: int, fallback: datetime) -> datetime | None:
+        cached = self._session_start_cache.get(path)
+        if cached is not None and 0 <= cached[0] <= size:
+            scanned_size, started_at = cached
+            if scanned_size == size:
+                return started_at
+            try:
+                with path.open("rb") as handle:
+                    handle.seek(scanned_size)
+                    appended = handle.read(size - scanned_size)
+            except OSError:
+                return started_at
+            for line in appended.splitlines():
+                candidate = self._task_start_from_line(line, fallback)
+                if candidate is not None:
+                    started_at = candidate
+            self._session_start_cache[path] = (size, started_at)
+            return started_at
+
+        started_at = None
+        try:
+            with path.open("rb") as handle:
+                for line in self._reverse_lines(handle, size):
+                    started_at = self._task_start_from_line(line, fallback)
+                    if started_at is not None:
+                        break
+        except OSError:
+            return None
+        self._session_start_cache[path] = (size, started_at)
+        return started_at
+
+    @staticmethod
+    def _reverse_lines(handle: BinaryIO, size: int) -> Iterator[bytes]:
+        position = size
+        remainder = b""
+        while position > 0:
+            read_size = min(262_144, position)
+            position -= read_size
+            handle.seek(position)
+            parts = (handle.read(read_size) + remainder).split(b"\n")
+            remainder = parts[0]
+            yield from reversed(parts[1:])
+        if remainder:
+            yield remainder
+
+    def _task_start_from_line(self, raw_line: bytes, fallback: datetime) -> datetime | None:
+        try:
+            item = json.loads(raw_line.decode("utf-8", errors="ignore"))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(item, dict) or item.get("type") != "event_msg":
+            return None
+        payload = item.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "task_started":
+            return None
+        return (
+            self._parse_time(payload.get("started_at"))
+            or self._parse_time(item.get("timestamp"))
+            or fallback
+        )
 
     def _active_pids(self, selected_ids: set[str]) -> dict[str, int]:
         try:
@@ -433,6 +554,11 @@ class CodexLocalDiscovery:
             return None
 
     def _parse_time(self, raw: object) -> datetime | None:
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            try:
+                return datetime.fromtimestamp(raw, UTC)
+            except (OSError, OverflowError, ValueError):
+                return None
         if not isinstance(raw, str):
             return None
         try:

@@ -529,6 +529,155 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
     assert tasks[0].state.finished_at == completed_at
 
 
+def test_completed_session_backfills_start_beyond_bounded_activity_tail(
+    tmp_path: Path,
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "long-finished-session"
+    completed_at = datetime(2026, 7, 18, 0, 20, tzinfo=UTC)
+    started_at = completed_at - timedelta(minutes=20)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": completed_at.isoformat()}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_file = sessions / f"rollout-{conversation_id}.jsonl"
+    session_file.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "timestamp": started_at.isoformat(),
+                        "type": "event_msg",
+                        "payload": {"type": "task_started"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "private_filler",
+                            "content": "private-long-tail-sentinel" * 20_000,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": completed_at.isoformat(),
+                        "type": "event_msg",
+                        "payload": {"type": "task_complete"},
+                    }
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: completed_at,
+        session_modified_at=lambda _path: completed_at,
+    ).discover({conversation_id})[0]
+
+    assert session_file.stat().st_size > 262_144
+    assert task.state.status is TaskStatus.COMPLETED
+    assert task.state.started_at == started_at
+    assert task.state.finished_at == completed_at
+
+
+def test_completed_session_accepts_numeric_epoch_start_time(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "numeric-start-session"
+    completed_at = datetime(2026, 7, 18, 0, 20, tzinfo=UTC)
+    started_at = completed_at - timedelta(minutes=7)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": completed_at.isoformat()}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": completed_at.isoformat(),
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "started_at": int(started_at.timestamp()),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: completed_at,
+        session_modified_at=lambda _path: completed_at,
+    ).discover({conversation_id})[0]
+
+    assert task.state.started_at == started_at
+    assert task.state.finished_at == completed_at
+
+
+def test_waiting_session_is_prioritized_before_newer_unknown_session(
+    tmp_path: Path,
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    waiting_id = "waiting-priority"
+    unknown_id = "unknown-priority"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        "\n".join(
+            (
+                json.dumps({"id": waiting_id, "updated_at": "2026-07-20T10:00:04Z"}),
+                json.dumps({"id": unknown_id, "updated_at": "2026-07-20T10:00:05Z"}),
+            )
+        ),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{waiting_id}.jsonl").write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "timestamp": "2026-07-20T10:00:00Z",
+                        "type": "event_msg",
+                        "payload": {"type": "task_started"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-07-20T10:00:04Z",
+                        "type": "event_msg",
+                        "payload": {"type": "request_user_input"},
+                    }
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    tasks = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+        max_tasks=1,
+    ).discover()
+
+    assert [task.state.session_id for task in tasks] == [waiting_id]
+    assert tasks[0].state.status is TaskStatus.WAITING_INPUT
+
+
 def test_pid_with_record_start_is_rejected_when_live_start_unknown(tmp_path: Path) -> None:
     index = tmp_path / "session_index.jsonl"
     index.write_text(
