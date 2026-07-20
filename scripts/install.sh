@@ -25,12 +25,13 @@ elif [[ ! -d "$project_root/dist/AACC.app" ]]; then
 fi
 
 mkdir -p "$runtime_root"
-rm -rf "$runtime_venv"
+rm -rf "$runtime_venv" "$runtime_root/wheels"
 uv venv "$runtime_venv"
 uv build --wheel --out-dir "$runtime_root/wheels"
 uv export --locked --no-dev --no-emit-project \
   --output-file "$runtime_root/requirements.lock" --quiet
-wheels=("$runtime_root"/wheels/aacc_control_center-1.3.0rc2-*.whl)
+app_version="$(uv version --short)"
+wheels=("$runtime_root"/wheels/aacc_control_center-"$app_version"-*.whl)
 if [[ ! -f "${wheels[0]}" ]]; then
   echo "错误：未生成 AACC runtime wheel" >&2
   exit 1

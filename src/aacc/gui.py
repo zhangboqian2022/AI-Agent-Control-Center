@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -117,6 +119,10 @@ class ElidedLabel(QLabel):
         self.setToolTip(text)
         self._update_elision()
 
+    def setText(self, text: str) -> None:
+        self._full_text = text
+        self._update_elision()
+
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._update_elision()
@@ -137,11 +143,18 @@ class TaskCard(QFrame):
     action_requested = Signal(str, str)
     remove_requested = Signal(str)
 
-    def __init__(self, task: TaskConfig, state: TaskState, blink_attention: bool = True) -> None:
+    def __init__(
+        self,
+        task: TaskConfig,
+        state: TaskState,
+        blink_attention: bool = True,
+        display_name: str | None = None,
+    ) -> None:
         super().__init__()
         self.task = task
         self.state = state
         self.blink_attention = blink_attention
+        self.display_name = display_name or task.name
         self.setObjectName("taskCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("单击切换任务，右键查看更多操作")
@@ -178,11 +191,11 @@ class TaskCard(QFrame):
         meta_row.addStretch()
         details_layout.addLayout(meta_row)
 
-        self.name_label = ElidedLabel(task.name)
+        self.name_label = ElidedLabel(self.display_name)
         self.name_label.setObjectName("taskName")
         self.name_label.setWordWrap(False)
         self.name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.name_label.setToolTip(task.name)
+        self.name_label.setToolTip(self.display_name)
         details_layout.addWidget(self.name_label)
 
         activity_row = QHBoxLayout()
@@ -222,6 +235,12 @@ class TaskCard(QFrame):
         self._pulse.setLoopCount(-1)
         self.set_state(state)
 
+    def set_display_name(self, display_name: str) -> None:
+        self.display_name = display_name
+        self.name_label.setText(display_name)
+        self.name_label.setToolTip(display_name)
+        self.set_state(self.state)
+
     def set_state(self, state: TaskState) -> None:
         self.state = state
         color = STATUS_COLORS[state.status]
@@ -234,7 +253,7 @@ class TaskCard(QFrame):
         )
         self.timer_label.setText(_elapsed_label(state))
         self.setToolTip(
-            f"{self.task.name}\n{STATUS_NAMES[state.status]} · {state.source} · "
+            f"{self.display_name}\n{STATUS_NAMES[state.status]} · {state.source} · "
             f"{state.confidence:.0%}\n"
             f"更新：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
         )
@@ -289,6 +308,10 @@ class TaskCard(QFrame):
         copy_action = menu.addAction("复制任务信息")
         copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
         if self.task.id.startswith(("codex:", "kimi:")):
+            rename_action = menu.addAction("重命名任务")
+            rename_action.triggered.connect(
+                lambda: self.action_requested.emit("rename", self.task.id)
+            )
             remove_action = menu.addAction("从面板移除")
             remove_action.triggered.connect(lambda: self.remove_requested.emit(self.task.id))
         return menu
@@ -501,11 +524,13 @@ class MainWindow(QWidget):
         codex_sessions: Callable[[], list[CodexSession]] | None = None,
         codex_auto_active_ids: Callable[[], set[str]] | None = None,
         codex_retained_ids: Callable[[], set[str]] | None = None,
+        codex_muted_ids: Callable[[], set[str]] | None = None,
         set_codex_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
         | None = None,
         kimi_sessions: Callable[[], list[KimiSession]] | None = None,
         kimi_auto_active_ids: Callable[[], set[str]] | None = None,
         kimi_retained_ids: Callable[[], set[str]] | None = None,
+        kimi_muted_ids: Callable[[], set[str]] | None = None,
         set_kimi_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
         | None = None,
         rotate_api_token_callback: Callable[[], str] | None = None,
@@ -532,12 +557,14 @@ class MainWindow(QWidget):
         self._codex_sessions = codex_sessions or (lambda: [])
         self._codex_auto_active_ids = codex_auto_active_ids or (lambda: set())
         self._codex_retained_ids = codex_retained_ids or (lambda: set())
+        self._codex_muted_ids = codex_muted_ids or (lambda: set())
         self._set_codex_monitoring_preferences = set_codex_monitoring_preferences or (
             lambda _manual_ids, _retained_ids, _muted_ids: None
         )
         self._kimi_sessions = kimi_sessions or (lambda: [])
         self._kimi_auto_active_ids = kimi_auto_active_ids or (lambda: set())
         self._kimi_retained_ids = kimi_retained_ids or (lambda: set())
+        self._kimi_muted_ids = kimi_muted_ids or (lambda: set())
         self._set_kimi_monitoring_preferences = set_kimi_monitoring_preferences or (
             lambda _manual_ids, _retained_ids, _muted_ids: None
         )
@@ -597,6 +624,16 @@ class MainWindow(QWidget):
         else:
             self.kimi_muted_ids = set()
         self._apply_kimi_monitoring_preferences()
+        saved_custom_names = self._settings.value("custom_task_names")
+        try:
+            parsed_names = json.loads(saved_custom_names) if saved_custom_names else {}
+        except (TypeError, json.JSONDecodeError):
+            parsed_names = {}
+        self.custom_task_names: dict[str, str] = (
+            {str(key): str(value) for key, value in parsed_names.items()}
+            if isinstance(parsed_names, dict)
+            else {}
+        )
         saved_agents = self._settings.value("visible_agents")
         if isinstance(saved_agents, str):
             self.visible_agent_types = {saved_agents}
@@ -778,7 +815,9 @@ class MainWindow(QWidget):
             self._timer.stop()
             return
         self._sync_codex_retained_ids()
+        self._sync_codex_muted_ids()
         self._sync_kimi_retained_ids()
+        self._sync_kimi_muted_ids()
         self.sync_cards()
         for state in self.manager.list():
             self._apply_state(state)
@@ -837,14 +876,19 @@ class MainWindow(QWidget):
                 card.deleteLater()
                 del self.cards[task_id]
         for task in visible:
+            display_name = self.custom_task_names.get(task.id, task.name)
             existing_card = self.cards.get(task.id)
             if existing_card is None:
-                new_card = TaskCard(task, states[task.id], self.config.app.blink_attention)
+                new_card = TaskCard(
+                    task, states[task.id], self.config.app.blink_attention, display_name
+                )
                 new_card.action_requested.connect(self._perform_action)
                 new_card.remove_requested.connect(self.remove_codex_task)
                 new_card.remove_requested.connect(self.remove_kimi_task)
                 new_card.set_compact(self.compact_mode)
                 self.cards[task.id] = new_card
+            elif existing_card.display_name != display_name:
+                existing_card.set_display_name(display_name)
         running_tasks, terminal_tasks = self._grouped_tasks(visible, states)
         self._rebuild_card_layout(self.running_cards_layout, running_tasks)
         self._rebuild_card_layout(self.retained_cards_layout, terminal_tasks)
@@ -979,6 +1023,12 @@ class MainWindow(QWidget):
             self.codex_retained_ids = set(retained_ids)
             self._settings.setValue("codex_retained_tasks", sorted(self.codex_retained_ids))
 
+    def _sync_codex_muted_ids(self) -> None:
+        muted_ids = self._codex_muted_ids()
+        if muted_ids != self.codex_muted_ids:
+            self.codex_muted_ids = set(muted_ids)
+            self._settings.setValue("codex_muted_tasks", sorted(self.codex_muted_ids))
+
     def set_kimi_selected_ids(self, selected_ids: set[str]) -> None:
         self.set_kimi_monitoring_preferences(selected_ids, set(), set())
 
@@ -1005,6 +1055,12 @@ class MainWindow(QWidget):
             self.kimi_retained_ids = set(retained_ids)
             self._settings.setValue("kimi_retained_tasks", sorted(self.kimi_retained_ids))
 
+    def _sync_kimi_muted_ids(self) -> None:
+        muted_ids = self._kimi_muted_ids()
+        if muted_ids != self.kimi_muted_ids:
+            self.kimi_muted_ids = set(muted_ids)
+            self._settings.setValue("kimi_muted_tasks", sorted(self.kimi_muted_ids))
+
     def remove_kimi_task(self, task_id: str) -> None:
         if not task_id.startswith("kimi:"):
             return
@@ -1016,6 +1072,27 @@ class MainWindow(QWidget):
         self._settings.setValue("kimi_retained_tasks", sorted(self.kimi_retained_ids))
         self._settings.setValue("kimi_muted_tasks", sorted(self.kimi_muted_ids))
         self._apply_kimi_monitoring_preferences()
+        self.sync_cards()
+
+    def rename_task(self, task_id: str) -> None:
+        if not task_id.startswith(("codex:", "kimi:")):
+            return
+        try:
+            task = self.manager.task_config(task_id)
+        except KeyError:
+            return
+        current_name = self.custom_task_names.get(task_id, task.name)
+        name, accepted = QInputDialog.getText(
+            self, "重命名任务", "任务名称（留空恢复默认）：", text=current_name
+        )
+        if not accepted:
+            return
+        name = name.strip()[:120]
+        if name and name != task.name:
+            self.custom_task_names[task_id] = name
+        else:
+            self.custom_task_names.pop(task_id, None)
+        self._settings.setValue("custom_task_names", json.dumps(self.custom_task_names))
         self.sync_cards()
 
     def remove_codex_task(self, task_id: str) -> None:
@@ -1123,6 +1200,9 @@ class MainWindow(QWidget):
                     TaskState.new(task_id, status, message="手动更新", source="manual")
                 )
                 result = f"已标记为 {STATUS_NAMES[TaskStatus.parse(status)]}"
+            elif action == "rename":
+                self.rename_task(task_id)
+                return
             elif action == "copy":
                 state = self.manager.get(task_id)
                 QGuiApplication.clipboard().setText(

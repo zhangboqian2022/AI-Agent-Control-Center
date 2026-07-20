@@ -123,6 +123,10 @@ class LocalDiscoveryService[SessionT]:
         with self._selection_lock:
             return set(self._retained_ids)
 
+    def muted_ids(self) -> set[str]:
+        with self._selection_lock:
+            return set(self._muted_ids)
+
     def remove_task(self, session_id: str) -> None:
         with self._selection_lock:
             self._manual_ids.discard(session_id)
