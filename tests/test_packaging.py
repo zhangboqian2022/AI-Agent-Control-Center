@@ -44,6 +44,22 @@ def test_required_documentation_exists_without_placeholders() -> None:
         assert "T" + "BD" not in content
 
 
+def test_rc2_documentation_has_one_discovery_cadence_and_current_limit_titles() -> None:
+    english_guide = (ROOT / "docs" / "user-guide.en.md").read_text(encoding="utf-8")
+    assert "every two seconds" not in english_guide
+    assert "Every five seconds" in english_guide
+    assert (
+        (ROOT / "KNOWN_LIMITATIONS.md")
+        .read_text(encoding="utf-8")
+        .startswith("# AACC Known Limitations")
+    )
+    assert (
+        (ROOT / "KNOWN_LIMITATIONS.zh-CN.md")
+        .read_text(encoding="utf-8")
+        .startswith("# AACC 已知限制")
+    )
+
+
 def test_console_entry_points_are_registered() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'aacc = "aacc.cli:main"' in pyproject

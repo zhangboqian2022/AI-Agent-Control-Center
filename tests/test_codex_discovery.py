@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -147,6 +147,7 @@ def test_selected_recent_session_file_is_reported_as_running(tmp_path: Path) -> 
                 "payload": {
                     "type": "custom_tool_call",
                     "name": "exec",
+                    "command_category": "test",
                     "input": '{"cmd":"uv run pytest -q","secret":"private-test-sentinel"}',
                 },
             },
@@ -158,10 +159,22 @@ def test_selected_recent_session_file_is_reported_as_running(tmp_path: Path) -> 
                 "payload": {
                     "type": "custom_tool_call",
                     "name": "exec",
+                    "command_category": "build",
                     "input": '{"cmd":"./scripts/build_dmg.sh","path":"private-build-sentinel"}',
                 },
             },
             "正在构建程序",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "input": ('{"cmd":"pytest build_dmg.sh","secret":"private-raw-sentinel"}'),
+                },
+            },
+            "正在执行命令",
         ),
         ({"type": "event_msg", "payload": {"type": "future_activity"}}, "正在分析任务"),
     ],
@@ -212,14 +225,69 @@ def test_recent_session_activity_is_reduced_to_a_fixed_private_summary(
 
     assert task.state.status is TaskStatus.RUNNING
     assert task.state.message == expected
+    assert task.state.started_at == datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    assert task.state.updated_at == datetime(2026, 7, 20, 10, 0, 4, tzinfo=UTC)
     assert len(task.state.message) <= 18
     for private_value in (
         "private-prompt-sentinel",
         "private-response-sentinel",
         "private-test-sentinel",
         "private-build-sentinel",
+        "private-raw-sentinel",
     ):
         assert private_value not in task.state.message
+
+
+@pytest.mark.parametrize(
+    ("event_type", "expected_status"),
+    [
+        ("request_user_input", TaskStatus.WAITING_INPUT),
+        ("approval_request", TaskStatus.WAITING_APPROVAL),
+    ],
+)
+def test_waiting_events_use_fixed_confirmation_summary(
+    tmp_path: Path, event_type: str, expected_status: TaskStatus
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = f"waiting-{event_type}"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": "2026-07-20T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                {
+                    "timestamp": "2026-07-20T10:00:00Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                },
+                {
+                    "timestamp": "2026-07-20T10:00:04Z",
+                    "type": "event_msg",
+                    "payload": {"type": event_type, "private": "private-waiting-sentinel"},
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    ).discover({conversation_id})[0]
+
+    assert task.state.status is expected_status
+    assert task.state.message == "等待你的确认"
+    assert task.state.started_at == datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    assert "private-waiting-sentinel" not in task.state.message
 
 
 def test_malformed_recent_activity_falls_back_without_exposing_content(tmp_path: Path) -> None:
@@ -424,13 +492,22 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     completed_at = datetime(2026, 7, 18, 0, 1, tzinfo=UTC)
+    started_at = completed_at - timedelta(minutes=18, seconds=42)
     (sessions / f"rollout-2026-07-18T00-00-00-{conversation_id}.jsonl").write_text(
-        json.dumps(
-            {
-                "timestamp": completed_at.isoformat().replace("+00:00", "Z"),
-                "type": "event_msg",
-                "payload": {"type": "task_complete"},
-            }
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                {
+                    "timestamp": started_at.isoformat().replace("+00:00", "Z"),
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                },
+                {
+                    "timestamp": completed_at.isoformat().replace("+00:00", "Z"),
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete"},
+                },
+            )
         ),
         encoding="utf-8",
     )
@@ -445,6 +522,8 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
 
     assert tasks[0].state.status is TaskStatus.COMPLETED
     assert tasks[0].state.message == "已完成"
+    assert tasks[0].state.started_at == started_at
+    assert tasks[0].state.finished_at == completed_at
 
 
 def test_pid_with_record_start_is_rejected_when_live_start_unknown(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from PySide6.QtGui import (
     QMoveEvent,
     QPainter,
     QPixmap,
+    QResizeEvent,
 )
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizeGrip,
+    QSizePolicy,
     QSlider,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -107,6 +109,29 @@ def _elapsed_label(state: TaskState, now: datetime | None = None) -> str:
     return f"{prefix}{_elapsed(state, now)}"
 
 
+class ElidedLabel(QLabel):
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self._full_text = text
+        self.setToolTip(text)
+        self._update_elision()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_elision()
+
+    def _update_elision(self) -> None:
+        available_width = max(0, self.contentsRect().width())
+        QLabel.setText(
+            self,
+            self.fontMetrics().elidedText(
+                self._full_text,
+                Qt.TextElideMode.ElideRight,
+                available_width,
+            ),
+        )
+
+
 class TaskCard(QFrame):
     action_requested = Signal(str, str)
     remove_requested = Signal(str)
@@ -152,9 +177,11 @@ class TaskCard(QFrame):
         meta_row.addStretch()
         details_layout.addLayout(meta_row)
 
-        self.name_label = QLabel(task.name)
+        self.name_label = ElidedLabel(task.name)
         self.name_label.setObjectName("taskName")
         self.name_label.setWordWrap(False)
+        self.name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.name_label.setToolTip(task.name)
         details_layout.addWidget(self.name_label)
 
         activity_row = QHBoxLayout()

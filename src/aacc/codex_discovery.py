@@ -40,6 +40,7 @@ class SessionSignal:
     status: TaskStatus
     observed_at: datetime
     message: str
+    started_at: datetime | None = None
 
 
 class CodexLocalDiscovery:
@@ -88,8 +89,12 @@ class CodexLocalDiscovery:
                 status = TaskStatus.COMPLETED
                 message = signal.message
                 confidence = 0.96
-            elif signal is not None and signal.status is TaskStatus.RUNNING:
-                status = TaskStatus.RUNNING
+            elif signal is not None and signal.status in {
+                TaskStatus.RUNNING,
+                TaskStatus.WAITING_INPUT,
+                TaskStatus.WAITING_APPROVAL,
+            }:
+                status = signal.status
                 message = signal.message
                 confidence = 0.9
             elif pid is not None:
@@ -101,6 +106,15 @@ class CodexLocalDiscovery:
                 message = "最近更新，未检测到运行进程"
                 confidence = 0.55
             task_id = f"codex:{conversation_id}"
+            timed_statuses = {
+                TaskStatus.RUNNING,
+                TaskStatus.WAITING_INPUT,
+                TaskStatus.WAITING_APPROVAL,
+                TaskStatus.COMPLETED,
+            }
+            started_at = signal.started_at if signal is not None else None
+            if started_at is None and status in timed_statuses - {TaskStatus.COMPLETED}:
+                started_at = updated_at
             discovered.append(
                 DiscoveredTask(
                     config=TaskConfig(
@@ -116,7 +130,7 @@ class CodexLocalDiscovery:
                         message=message,
                         source="codex_local",
                         confidence=confidence,
-                        started_at=updated_at if status is TaskStatus.RUNNING else None,
+                        started_at=started_at if status in timed_statuses else None,
                         updated_at=updated_at,
                         finished_at=updated_at if status is TaskStatus.COMPLETED else None,
                         pid=pid,
@@ -156,7 +170,15 @@ class CodexLocalDiscovery:
         """Return a small set of recently verified active sessions for auto-monitoring."""
         active: set[str] = set()
         for task in self.discover():
-            if task.state.status is TaskStatus.RUNNING and task.state.session_id is not None:
+            if (
+                task.state.status
+                in {
+                    TaskStatus.RUNNING,
+                    TaskStatus.WAITING_INPUT,
+                    TaskStatus.WAITING_APPROVAL,
+                }
+                and task.state.session_id is not None
+            ):
                 active.add(task.state.session_id)
                 if len(active) >= max(1, limit):
                     break
@@ -244,34 +266,13 @@ class CodexLocalDiscovery:
         return (now - observed_at).total_seconds() <= self.activity_window_seconds
 
     @staticmethod
-    def _command_activity(raw: object) -> str:
-        if not isinstance(raw, str):
-            return "正在执行命令"
-        normalized = raw[:16_384].casefold()
-        test_markers = (
-            "pytest",
-            "npm test",
-            "pnpm test",
-            "yarn test",
-            "cargo test",
-            "go test",
-        )
-        build_markers = (
-            "build_dmg",
-            "build_app",
-            "pyinstaller",
-            "uv build",
-            "npm run build",
-            "pnpm build",
-            "cargo build",
-            "hdiutil",
-        )
-        inspect_markers = ("rg ", "sed -n", "git diff", "git status", "find ", "ls ")
-        if any(marker in normalized for marker in test_markers):
+    def _command_activity(payload: dict[str, Any]) -> str:
+        category = payload.get("command_category")
+        if category == "test":
             return "正在运行测试"
-        if any(marker in normalized for marker in build_markers):
+        if category in {"build", "package"}:
             return "正在构建程序"
-        if any(marker in normalized for marker in inspect_markers):
+        if category in {"inspect", "read"}:
             return "正在检查代码"
         return "正在执行命令"
 
@@ -296,7 +297,7 @@ class CodexLocalDiscovery:
         if any(marker in name for marker in ("read", "view", "open", "list", "find")):
             return "正在检查代码"
         if name in {"exec", "exec_command", "functions.exec"}:
-            return cls._command_activity(payload.get("input"))
+            return cls._command_activity(payload)
         return None
 
     def _read_session_signal(self, path: Path, fallback: datetime) -> SessionSignal | None:
@@ -309,6 +310,9 @@ class CodexLocalDiscovery:
                 lines = handle.read().decode("utf-8", errors="ignore").splitlines()
         except OSError:
             return None
+        latest_activity: tuple[TaskStatus, datetime, str] | None = None
+        terminal_at: datetime | None = None
+        terminal_started_at: datetime | None = None
         for line in reversed(lines):
             try:
                 item = json.loads(line)
@@ -322,12 +326,60 @@ class CodexLocalDiscovery:
             event_type = payload.get("type")
             observed_at = self._parse_time(item.get("timestamp")) or fallback
             if item.get("type") == "event_msg" and event_type == "task_complete":
-                return SessionSignal(TaskStatus.COMPLETED, observed_at, "已完成")
+                if latest_activity is not None:
+                    status, activity_at, message = latest_activity
+                    return SessionSignal(status, activity_at, message)
+                terminal_at = observed_at
+                terminal_started_at = self._parse_time(payload.get("started_at"))
+                if terminal_started_at is not None:
+                    return SessionSignal(
+                        TaskStatus.COMPLETED,
+                        terminal_at,
+                        "已完成",
+                        terminal_started_at,
+                    )
+                continue
+            if item.get("type") == "event_msg" and event_type == "task_started":
+                started_at = self._parse_time(payload.get("started_at")) or observed_at
+                if terminal_at is not None:
+                    return SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", started_at)
+                if latest_activity is not None:
+                    status, activity_at, message = latest_activity
+                    return SessionSignal(status, activity_at, message, started_at)
+                return SessionSignal(TaskStatus.RUNNING, observed_at, "正在分析任务", started_at)
+            if terminal_at is not None or latest_activity is not None:
+                continue
+            waiting_status = (
+                {
+                    "request_user_input": TaskStatus.WAITING_INPUT,
+                    "waiting_input": TaskStatus.WAITING_INPUT,
+                    "input_required": TaskStatus.WAITING_INPUT,
+                    "approval_request": TaskStatus.WAITING_APPROVAL,
+                    "request_approval": TaskStatus.WAITING_APPROVAL,
+                    "waiting_approval": TaskStatus.WAITING_APPROVAL,
+                }.get(event_type)
+                if isinstance(event_type, str)
+                else None
+            )
+            if waiting_status is not None:
+                latest_activity = (waiting_status, observed_at, "等待你的确认")
+                continue
             activity_message = self._activity_message(item)
             if activity_message is not None:
-                return SessionSignal(TaskStatus.RUNNING, observed_at, activity_message)
-            if item.get("type") == "event_msg" and event_type == "task_started":
-                return SessionSignal(TaskStatus.RUNNING, observed_at, "正在分析任务")
+                latest_activity = (TaskStatus.RUNNING, observed_at, activity_message)
+                continue
+            if event_type in {
+                "agent_reasoning",
+                "reasoning",
+                "future_activity",
+                "custom_tool_call",
+            }:
+                latest_activity = (TaskStatus.RUNNING, observed_at, "正在分析任务")
+        if terminal_at is not None:
+            return SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", terminal_started_at)
+        if latest_activity is not None:
+            status, observed_at, message = latest_activity
+            return SessionSignal(status, observed_at, message)
         return None
 
     def _active_pids(self, selected_ids: set[str]) -> dict[str, int]:

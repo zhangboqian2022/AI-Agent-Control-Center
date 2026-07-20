@@ -94,6 +94,25 @@ def test_expanded_card_uses_compact_horizontal_information_hierarchy(
     manager.close()
 
 
+def test_long_task_name_is_elided_instead_of_clipped(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:long-title",
+        slot=1,
+        name="这是一个非常长的 Codex 任务名称用于验证窗口较窄时能够显示清晰的省略号",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.set_codex_selected_ids({"long-title"})
+    window.resize(350, window.height())
+    window.show()
+    QApplication.processEvents()
+
+    assert window.cards[task.id].name_label.text().endswith("…")
+    assert window.cards[task.id].name_label.toolTip() == task.name
+    manager.close()
+
+
 def test_refresh_updates_card_text_and_color(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     window.set_agent_visible("claude_code", True)
