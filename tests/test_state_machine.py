@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from aacc.models import TaskState, TaskStatus
 from aacc.state_machine import StateMachine
 
@@ -61,6 +63,37 @@ def test_transition_starts_fresh_run_after_terminal_state() -> None:
     restarted = StateMachine.transition(completed, candidate)
 
     assert restarted is not None
+    assert restarted.started_at == candidate.started_at
+    assert restarted.finished_at is None
+
+
+@pytest.mark.parametrize("waiting_status", [TaskStatus.WAITING_INPUT, TaskStatus.WAITING_APPROVAL])
+def test_terminal_state_restarts_when_new_run_is_first_seen_waiting(
+    waiting_status: TaskStatus,
+) -> None:
+    finished_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    completed = TaskState(
+        task_id="task-1",
+        status=TaskStatus.COMPLETED,
+        source="codex_local",
+        confidence=0.96,
+        started_at=finished_at - timedelta(minutes=4),
+        updated_at=finished_at,
+        finished_at=finished_at,
+    )
+    candidate = TaskState(
+        task_id="task-1",
+        status=waiting_status,
+        source="codex_local",
+        confidence=0.9,
+        started_at=finished_at + timedelta(seconds=10),
+        updated_at=finished_at + timedelta(seconds=15),
+    )
+
+    restarted = StateMachine.transition(completed, candidate)
+
+    assert restarted is not None
+    assert restarted.status is waiting_status
     assert restarted.started_at == candidate.started_at
     assert restarted.finished_at is None
 
