@@ -7,10 +7,27 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Protocol, TypeVar
 
-from aacc.codex_discovery import CodexDiscoveryError, CodexLocalDiscovery, CodexSession
+from aacc.codex_discovery import (
+    CodexDiscoveryError,
+    CodexLocalDiscovery,
+    CodexSession,
+    DiscoveredTask,
+)
+from aacc.kimi_discovery import KimiDiscoveryError, KimiLocalDiscovery, KimiSession
 from aacc.security import redact
 from aacc.task_manager import TaskManager
+
+SessionT = TypeVar("SessionT")
+
+
+class _LocalDiscovery(Protocol[SessionT]):
+    def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]: ...
+
+    def active_session_ids(self) -> set[str]: ...
+
+    def catalog(self) -> list[SessionT]: ...
 
 
 @dataclass(frozen=True)
@@ -23,13 +40,14 @@ class DiscoveryHealth:
     exception_class: str = ""
     last_failure_at: datetime | None = None
     last_success_at: datetime | None = None
+    brand: str = "Codex"
 
     def diagnostics(self, log_path: str) -> str:
         failure = self.last_failure_at.isoformat() if self.last_failure_at else "never"
         success = self.last_success_at.isoformat() if self.last_success_at else "never"
         return "\n".join(
             (
-                "AACC Codex discovery diagnostics",
+                f"AACC {self.brand} discovery diagnostics",
                 f"Diagnostic ID: {self.diagnostic_id or 'none'}",
                 f"Degraded: {self.degraded}",
                 f"Consecutive failures: {self.consecutive_failures}",
@@ -45,31 +63,36 @@ class DiscoveryHealth:
 HealthSubscriber = Callable[[DiscoveryHealth], None]
 
 
-class CodexDiscoveryService:
-    """Polls local Codex metadata outside the Qt event loop."""
+class LocalDiscoveryService[SessionT]:
+    """Polls local agent metadata outside the Qt event loop."""
 
     def __init__(
         self,
         manager: TaskManager,
         *,
-        discovery: CodexLocalDiscovery | None = None,
-        interval_seconds: float = 5.0,
+        discovery: _LocalDiscovery[SessionT],
+        interval_seconds: float,
+        thread_name: str,
+        error_type: type[Exception],
+        brand: str,
     ) -> None:
         self.manager = manager
-        self.discovery = discovery or CodexLocalDiscovery()
+        self.discovery = discovery
         self.interval_seconds = max(0.5, interval_seconds)
+        self._error_type = error_type
+        self._brand = brand
         self._manual_ids: set[str] = set()
         self._retained_ids: set[str] = set()
         self._muted_ids: set[str] = set()
         self._auto_active_ids: set[str] = set()
         self._selection_lock = threading.RLock()
         self._health_lock = threading.RLock()
-        self._health = DiscoveryHealth()
+        self._health = DiscoveryHealth(brand=brand)
         self._health_subscribers: list[HealthSubscriber] = []
         self._last_logged_errors: dict[str, float] = {}
         self._logger = logging.getLogger("aacc.discovery")
         self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, name="aacc-codex-discovery", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=thread_name, daemon=True)
 
     def poll_once(self) -> int:
         auto_active_ids = self.discovery.active_session_ids()
@@ -110,7 +133,7 @@ class CodexDiscoveryService:
         with self._selection_lock:
             return set(self._auto_active_ids)
 
-    def catalog(self) -> list[CodexSession]:
+    def catalog(self) -> list[SessionT]:
         return self.discovery.catalog()
 
     def health(self) -> DiscoveryHealth:
@@ -148,7 +171,8 @@ class CodexDiscoveryService:
         last_logged = self._last_logged_errors.get(fingerprint, 0.0)
         if monotonic_now - last_logged >= 60:
             self._logger.error(
-                "Codex discovery poll failed diagnostic_id=%s error=%s: %s",
+                "%s discovery poll failed diagnostic_id=%s error=%s: %s",
+                self._brand,
                 diagnostic_id,
                 exception_class,
                 summary,
@@ -157,7 +181,7 @@ class CodexDiscoveryService:
             self._last_logged_errors[fingerprint] = monotonic_now
         previous = self.health()
         failures = previous.consecutive_failures + 1
-        degraded = isinstance(error, CodexDiscoveryError) or failures >= 3
+        degraded = isinstance(error, self._error_type) or failures >= 3
         self._publish_health(
             DiscoveryHealth(
                 degraded=degraded or previous.degraded,
@@ -168,6 +192,7 @@ class CodexDiscoveryService:
                 exception_class=exception_class,
                 last_failure_at=now,
                 last_success_at=previous.last_success_at,
+                brand=self._brand,
             )
         )
 
@@ -185,6 +210,7 @@ class CodexDiscoveryService:
                 exception_class="" if recovered else previous.exception_class,
                 last_failure_at=previous.last_failure_at,
                 last_success_at=datetime.now(UTC),
+                brand=self._brand,
             )
         )
 
@@ -209,3 +235,43 @@ class CodexDiscoveryService:
     def _run(self) -> None:
         while not self._stop.wait(self.interval_seconds):
             self.poll_safely()
+
+
+class CodexDiscoveryService(LocalDiscoveryService[CodexSession]):
+    """Polls local Codex metadata outside the Qt event loop."""
+
+    def __init__(
+        self,
+        manager: TaskManager,
+        *,
+        discovery: CodexLocalDiscovery | None = None,
+        interval_seconds: float = 5.0,
+    ) -> None:
+        super().__init__(
+            manager,
+            discovery=discovery or CodexLocalDiscovery(),
+            interval_seconds=interval_seconds,
+            thread_name="aacc-codex-discovery",
+            error_type=CodexDiscoveryError,
+            brand="Codex",
+        )
+
+
+class KimiDiscoveryService(LocalDiscoveryService[KimiSession]):
+    """Polls local Kimi Code metadata outside the Qt event loop."""
+
+    def __init__(
+        self,
+        manager: TaskManager,
+        *,
+        discovery: KimiLocalDiscovery | None = None,
+        interval_seconds: float = 5.0,
+    ) -> None:
+        super().__init__(
+            manager,
+            discovery=discovery or KimiLocalDiscovery(),
+            interval_seconds=interval_seconds,
+            thread_name="aacc-kimi-discovery",
+            error_type=KimiDiscoveryError,
+            brand="Kimi",
+        )

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from aacc.codex_discovery import CodexDiscoveryError, DiscoveredTask
 from aacc.config import default_config
-from aacc.discovery_service import CodexDiscoveryService, DiscoveryHealth
+from aacc.discovery_service import CodexDiscoveryService, DiscoveryHealth, KimiDiscoveryService
 from aacc.models import AgentConfig, TaskConfig, TaskState
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -35,6 +35,16 @@ class FailingDiscovery(StubDiscovery):
         if self.error is not None:
             raise self.error
         return super().discover(selected_ids)
+
+
+class StubKimiDiscovery(StubDiscovery):
+    def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
+        self.selected_ids = selected_ids
+        if selected_ids is None:
+            return self.tasks
+        return [
+            task for task in self.tasks if task.config.id.removeprefix("kimi:") in selected_ids
+        ]
 
 
 def test_default_poll_interval_is_five_seconds(tmp_path: Path) -> None:
@@ -137,6 +147,40 @@ def test_active_task_is_retained_and_reappears_after_removal(tmp_path: Path) -> 
     service.poll_once()
 
     assert discovery.selected_ids == {"auto-retained"}
+    manager.close()
+
+
+def test_kimi_service_poll_registers_auto_active_task_and_remove_task_mutes(
+    tmp_path: Path,
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "states.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    task = TaskConfig(
+        id="kimi:session-1234",
+        slot=1,
+        name="Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    discovery = StubKimiDiscovery(
+        [DiscoveredTask(task, TaskState.new(task.id, "running"))], active_ids={"session-1234"}
+    )
+    service = KimiDiscoveryService(manager, discovery=discovery)  # type: ignore[arg-type]
+
+    service.set_monitoring_preferences(set(), set(), set())
+    count = service.poll_once()
+
+    assert count == 1
+    assert discovery.selected_ids == {"session-1234"}
+    assert service.auto_active_ids() == {"session-1234"}
+    assert manager.get(task.id).status.value == "RUNNING"
+
+    discovery.active_ids = set()
+    service.remove_task("session-1234")
+    service.poll_once()
+
+    assert discovery.selected_ids == set()
     manager.close()
 
 

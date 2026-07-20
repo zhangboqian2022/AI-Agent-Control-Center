@@ -1,3 +1,3 @@
 """AI Agent Control Center."""
 
-__version__ = "1.3.0rc2"
+__version__ = "1.3.0rc3"

@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.3.0-rc.3 — 2026-07-20
+
+- [Stability] Added Kimi Code local session discovery with running/idle/completed status lights and wire-tail turn-completion detection that inspects event types only, never prompt or response content.
+- [UX] Added Kimi task selection and monitoring preferences to the panel, mirroring the Codex auto-monitoring, retention, and muting behavior.
+- [Delivery] Version housekeeping for the 1.3.0-rc.3 prerelease across the package, build scripts, and packaging tests.
+
 ## 1.3.0-rc.2 — 2026-07-20
 
 - [UX] Rebuilt task cards as a compact horizontal hierarchy with a large left status light, small agent badge, prominent task name, raised whole-run timer, and one-line activity summary.
