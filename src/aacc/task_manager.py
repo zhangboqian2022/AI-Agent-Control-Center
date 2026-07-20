@@ -42,9 +42,13 @@ class TaskManager:
         self.task_config(candidate.task_id)
         with self._lock:
             current = self.store.get(candidate.task_id)
-            if not StateMachine.accept(current, candidate):
+            transitioned = StateMachine.transition(current, candidate)
+            if transitioned is None:
+                if StateMachine.heartbeat_due(current, candidate):
+                    heartbeat = current.model_copy(update={"updated_at": candidate.updated_at})
+                    return self.store.heartbeat(heartbeat)
                 return current
-            saved = self.store.update(candidate)
+            saved = self.store.update(transitioned)
             subscribers = tuple(self._subscribers)
         for callback in subscribers:
             try:
@@ -63,7 +67,10 @@ class TaskManager:
             return self.store.get(task.id)
         if is_new:
             with self._lock:
-                saved = self.store.update(state)
+                transitioned = StateMachine.transition(None, state)
+                if transitioned is None:
+                    raise ValueError("Initial task state was rejected")
+                saved = self.store.update(transitioned)
                 subscribers = tuple(self._subscribers)
             for callback in subscribers:
                 try:

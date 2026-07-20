@@ -14,9 +14,11 @@ For selected sessions, AACC reads only task ID, title, update time, session-file
 
 The panel starts near the top-right of the main display and remembers its position. **Always on top** persists your preference; **Dock to desktop top right** restores the default placement. Codex does not currently expose a reliable public API for jumping to an exact task.
 
+If Codex metadata polling repeatedly fails, a yellow banner appears without discarding the last-known task states. **Copy diagnostics** copies a sanitized ID, counters, timestamps, and log path. The banner clears after two healthy polls.
+
 ## DMG installation
 
-Run `./scripts/build_dmg.sh` to create `AACC-1.2.0.dmg` on the desktop. Open it and drag `AACC.app` to Applications. The public release build is ad-hoc signed and not notarized.
+Run `./scripts/build_dmg.sh` to create `AACC-1.3.0-rc.1.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This RC is ad-hoc signed and not notarized; verify the published SHA-256 before using **Open Anyway**.
 
 ## Terminal and iTerm2 binding
 
@@ -28,7 +30,9 @@ The most reliable integration is an agent hook that calls the local API. Without
 
 ## Global shortcuts
 
-F13–F16 focus tasks 1–4; F17 sends Enter; F18/F19 send `1`/`2`; F20 starts dictation. Karabiner-Elements or keyboard firmware can map physical keys to these function keys. Global listening and key injection require macOS Accessibility permission; set `keyboard_injection: false` to disable input actions completely.
+F13–F16 focus tasks 1–4; F17 sends Enter; F18/F19 send `1`/`2`; F20 starts dictation. Karabiner-Elements or keyboard firmware can map physical keys to these function keys. Global listening and key injection require macOS Accessibility permission; AACC offers a direct System Settings link when it is missing. Set `keyboard_injection: false` to disable input actions completely.
+
+Use **Settings → Reset API credentials** to replace the localhost API token. The old token becomes invalid immediately and the new token is copied once.
 
 ## Launch at login
 

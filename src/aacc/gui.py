@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import Future
 from datetime import UTC, datetime
+from importlib import resources
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -33,9 +35,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from aacc.automation import AutomationError, MacAutomation
+from aacc.automation import AutomationError
+from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.constants import DEFAULT_CONFIG_PATH
+from aacc.discovery_service import DiscoveryHealth
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
 
@@ -74,6 +78,10 @@ STATUS_NAMES = {
 }
 
 STATUS_LIGHT_FONT_SIZE = 95
+
+
+def load_stylesheet() -> str:
+    return resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
 
 
 def _elapsed(state: TaskState) -> str:
@@ -260,6 +268,11 @@ class SettingsDialog(QDialog):
         slider.valueChanged.connect(lambda value: window.setWindowOpacity(value / 100))
         layout.addWidget(slider)
         layout.addWidget(QLabel(f"配置文件\n{DEFAULT_CONFIG_PATH}"))
+        layout.addWidget(QLabel(window.accessibility_status_text()))
+        if not window.accessibility_trusted:
+            accessibility = QPushButton("打开辅助功能设置")
+            accessibility.clicked.connect(window.open_accessibility_settings)
+            layout.addWidget(accessibility)
         compact = QPushButton("切换紧凑 / 展开模式")
         compact.clicked.connect(lambda: window.set_compact(not window.compact_mode))
         layout.addWidget(compact)
@@ -276,6 +289,9 @@ class SettingsDialog(QDialog):
         )
         codex_tasks.clicked.connect(window.open_codex_task_selector)
         layout.addWidget(codex_tasks)
+        rotate_credentials = QPushButton("重置 API 凭证")
+        rotate_credentials.clicked.connect(window.rotate_credentials)
+        layout.addWidget(rotate_credentials)
         layout.addWidget(QLabel("显示哪些程序"))
         labels = {
             "codex_cli": "Codex",
@@ -373,12 +389,14 @@ class CodexTaskSelectionDialog(QDialog):
 class MainWindow(QWidget):
     state_received = Signal(object)
     external_action = Signal(str, str)
+    automation_finished = Signal(str, str, object)
+    discovery_health_received = Signal(object)
     settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity", "visible_agents"}
 
     def __init__(
         self,
         manager: TaskManager,
-        automation: MacAutomation,
+        automation: AutomationExecutor,
         *,
         enable_tray: bool = True,
         codex_sessions: Callable[[], list[CodexSession]] | None = None,
@@ -386,6 +404,14 @@ class MainWindow(QWidget):
         codex_retained_ids: Callable[[], set[str]] | None = None,
         set_codex_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
         | None = None,
+        rotate_api_token_callback: Callable[[], str] | None = None,
+        discovery_health: Callable[[], DiscoveryHealth] | None = None,
+        subscribe_discovery_health: (
+            Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
+        ) = None,
+        discovery_log_path: str = "~/Library/Application Support/AACC/logs/app.log",
+        accessibility_trusted: bool = True,
+        open_accessibility_settings_callback: Callable[[], None] | None = None,
         settings: QSettings | None = None,
     ) -> None:
         super().__init__()
@@ -404,6 +430,16 @@ class MainWindow(QWidget):
         self._set_codex_monitoring_preferences = (
             set_codex_monitoring_preferences
             or (lambda _manual_ids, _retained_ids, _muted_ids: None)
+        )
+        self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
+        self._discovery_health = (discovery_health or DiscoveryHealth)()
+        self._discovery_log_path = discovery_log_path
+        self.accessibility_trusted = accessibility_trusted
+        self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
+        self._unsubscribe_discovery_health = (
+            subscribe_discovery_health(self.discovery_health_received.emit)
+            if subscribe_discovery_health is not None
+            else lambda: None
         )
         saved_codex_tasks = self._settings.value(
             "codex_manual_tasks", self._settings.value("codex_selected_tasks")
@@ -439,6 +475,8 @@ class MainWindow(QWidget):
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
+        self.automation_finished.connect(self._automation_completed)
+        self.discovery_health_received.connect(self._apply_discovery_health)
 
         saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
         self.always_on_top = bool(saved_top)
@@ -485,6 +523,21 @@ class MainWindow(QWidget):
             button.setFixedSize(28, 28)
             header.addWidget(button)
         layout.addLayout(header)
+
+        self.discovery_warning = QFrame()
+        self.discovery_warning.setObjectName("discoveryWarning")
+        discovery_warning_layout = QHBoxLayout(self.discovery_warning)
+        discovery_warning_layout.setContentsMargins(10, 8, 10, 8)
+        self.discovery_warning_label = QLabel()
+        self.discovery_warning_label.setObjectName("discoveryWarningLabel")
+        self.discovery_warning_label.setWordWrap(True)
+        copy_diagnostics = QPushButton("复制详情")
+        copy_diagnostics.setObjectName("copyDiagnosticsButton")
+        copy_diagnostics.clicked.connect(self.copy_discovery_diagnostics)
+        discovery_warning_layout.addWidget(self.discovery_warning_label, 1)
+        discovery_warning_layout.addWidget(copy_diagnostics)
+        layout.addWidget(self.discovery_warning)
+        self._apply_discovery_health(self._discovery_health)
 
         self.cards: dict[str, TaskCard] = {}
         self._card_order_ids: list[str] = []
@@ -560,55 +613,7 @@ class MainWindow(QWidget):
         self.sync_cards()
 
     def _apply_styles(self) -> None:
-        self.setStyleSheet(
-            """
-            #panel {
-              background: rgba(18, 23, 34, 238);
-              border: 1px solid rgba(122, 145, 180, 70);
-              border-radius: 18px;
-            }
-            #title { color: #f2f6ff; font-size: 14px; font-weight: 800; letter-spacing: 1.2px; }
-            #subtitle { color: #5fd7ce; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
-            #taskCard {
-              background: rgba(31, 39, 55, 220);
-              border: 1px solid rgba(112, 132, 165, 48);
-              border-radius: 13px;
-            }
-            #taskCard:hover {
-              background: rgba(40, 50, 70, 235);
-              border-color: rgba(91, 158, 255, 110);
-            }
-            #cardsScroll { background: transparent; border: none; }
-            #emptyTasks { color: #8997aa; padding: 40px 12px; }
-            #slotLabel { color: #77879f; font-size: 12px; font-weight: 800; }
-            #agentLabel { color: #eef3fc; font-size: 13px; font-weight: 800; }
-            #timerLabel { color: #8f9cb0; font-family: Menlo; font-size: 11px; }
-            #taskName { color: #d6deea; font-size: 13px; font-weight: 600; }
-            #messageLabel { color: #8997aa; font-size: 11px; }
-            #updatedLabel { color: #687890; font-size: 10px; }
-            #taskSummary { color: #94a3b8; font-size: 11px; font-weight: 700; }
-            #taskGroupLabel {
-              color: #8fa1bb; font-size: 10px; font-weight: 800; letter-spacing: 1px;
-            }
-            #removeTaskButton, #clearRetainedButton {
-              color: #94a3b8; background: transparent; border: none; border-radius: 7px;
-            }
-            #removeTaskButton:hover, #clearRetainedButton:hover {
-              color: #ffffff; background: rgba(255,255,255,25);
-            }
-            #footer { color: #65758b; font-size: 10px; }
-            #headerButton {
-              color: #aab6c7;
-              background: rgba(255,255,255,12);
-              border: none;
-              border-radius: 7px;
-            }
-            #headerButton:hover { color: white; background: rgba(78,158,255,70); }
-            QMenu { background: #1d2635; color: #e7edf7; border: 1px solid #38465b; padding: 6px; }
-            QMenu::item { padding: 6px 22px; border-radius: 5px; }
-            QMenu::item:selected { background: #347bd1; }
-            """
-        )
+        self.setStyleSheet(load_stylesheet())
 
     def _create_tray(self) -> None:
         pixmap = QPixmap(24, 24)
@@ -862,11 +867,16 @@ class MainWindow(QWidget):
             if action == "select":
                 result = f"已选择 {task.name}"
             elif action == "focus":
-                result = self.automation.focus(task)
+                self._submit_automation(action, task_id, "focus", task)
+                return
             elif action == "voice":
-                result = self.automation.start_voice(task)
+                self._submit_automation(action, task_id, "start_voice", task)
+                return
             elif action.startswith("key:"):
-                result = self.automation.send_key(task, action.split(":", 1)[1])
+                self._submit_automation(
+                    action, task_id, "send_key", task, action.split(":", 1)[1]
+                )
+                return
             elif action.startswith("status:"):
                 status = action.split(":", 1)[1]
                 self.manager.update(
@@ -883,16 +893,85 @@ class MainWindow(QWidget):
                 return
             self.subtitle.setText(result.upper())
         except (AutomationError, KeyError, ValueError) as error:
-            self.subtitle.setText(f"⚠ {error}")
-            self.manager.update(
-                TaskState.new(
-                    task_id,
-                    TaskStatus.WARNING,
-                    message=str(error),
-                    source="automation",
-                    confidence=0.85,
-                )
+            self._show_automation_error(task_id, error)
+
+    def _submit_automation(
+        self, action: str, task_id: str, method: str, *arguments: object
+    ) -> None:
+        future = self.automation.submit(method, *arguments)
+
+        def notify(completed: Future[str]) -> None:
+            self.automation_finished.emit(action, task_id, completed)
+
+        future.add_done_callback(notify)
+        self.subtitle.setText("AUTOMATION QUEUED")
+
+    def _automation_completed(self, _action: str, task_id: str, value: object) -> None:
+        if not isinstance(value, Future):
+            return
+        try:
+            self.subtitle.setText(value.result().upper())
+        except (AutomationError, KeyError, ValueError) as error:
+            self._show_automation_error(task_id, error)
+
+    def _show_automation_error(self, task_id: str, error: Exception) -> None:
+        self.subtitle.setText(f"⚠ {error}")
+        self.manager.update(
+            TaskState.new(
+                task_id,
+                TaskStatus.WARNING,
+                message=str(error),
+                source="automation",
+                confidence=0.85,
             )
+        )
+
+    def rotate_credentials(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "重置凭证",
+            "旧凭证会立即失效，是否继续？",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        token = self._rotate_api_token()
+        QGuiApplication.clipboard().setText(token)
+        QMessageBox.information(self, "凭证已重置", "新凭证已复制；旧凭证已失效。")
+
+    def _apply_discovery_health(self, value: object) -> None:
+        if not isinstance(value, DiscoveryHealth):
+            return
+        self._discovery_health = value
+        self.discovery_warning_label.setText(value.summary[:80])
+        self.discovery_warning.setVisible(value.degraded)
+
+    def copy_discovery_diagnostics(self) -> None:
+        QGuiApplication.clipboard().setText(
+            self._discovery_health.diagnostics(self._discovery_log_path)
+        )
+
+    def accessibility_status_text(self) -> str:
+        if self.accessibility_trusted:
+            return "辅助功能权限：已开启"
+        return "辅助功能权限：未开启；全局热键与键盘输入不可用"
+
+    def open_accessibility_settings(self) -> None:
+        self._open_accessibility_settings()
+
+    def show_accessibility_guidance(self) -> None:
+        if self.accessibility_trusted:
+            return
+        answer = QMessageBox.question(
+            self,
+            "需要辅助功能权限",
+            "AACC 需要辅助功能权限才能使用全局热键和键盘输入。是否打开系统设置？",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.open_accessibility_settings()
 
     def open_settings(self) -> None:
         SettingsDialog(self).exec()
@@ -931,4 +1010,5 @@ class MainWindow(QWidget):
             event.ignore()
             return
         self._unsubscribe()
+        self._unsubscribe_discovery_health()
         event.accept()

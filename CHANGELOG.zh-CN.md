@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.3.0-rc.1 — 2026-07-20
+
+- [Security] 配置改为原子写入，自动修复无效 API Token，并拒绝带空白字符的凭证；强制配置与数据库私有权限，新增本地凭证轮换，并加强日志脱敏与 AppleScript 文本隔离。
+- [Stability] 完整桌面自动化事务进入有界单工作线程，超时后的排队或待注入动作会在延迟输入前取消，Qt 不再阻塞；任务起始时间保持稳定，重复历史被抑制，SQLite 历史有上限，Codex 发现故障可见且可恢复。
+- [Stability] 新增 PID 身份校验、单实例锁、包装器协作式子进程清理、辅助功能权限引导、事件 tap 恢复及 Adapter 断开唤醒。
+- [Breaking] 源码安装器不再把 CLI 链接到仓库 `.venv`，而是安装到 Application Support 下的运行时专用环境。
+- [Delivery] QSS 作为资源打包，生产依赖严格来自锁文件，加入当前 Codex 格式脱敏夹具；DMG 支持复用构建，并加入成对的 Developer ID/公证配置校验及明确的 ad-hoc 预发布标识。
+
 [English version](CHANGELOG.md)
 
 ## 1.2.0 — 2026-07-19
