@@ -127,6 +127,15 @@ def test_refresh_updates_card_text_and_color(tmp_path: Path, qtbot: object) -> N
     manager.close()
 
 
+def test_refresh_timer_stops_after_task_manager_closes(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+
+    manager.close()
+    window.refresh()
+
+    assert not window._timer.isActive()
+
+
 def test_elapsed_time_always_includes_hours() -> None:
     started_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
     state = TaskState(

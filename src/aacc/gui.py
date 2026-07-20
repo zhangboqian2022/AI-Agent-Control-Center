@@ -689,6 +689,9 @@ class MainWindow(QWidget):
         self.tray.show()
 
     def refresh(self) -> None:
+        if self.manager.closed:
+            self._timer.stop()
+            return
         self._sync_codex_retained_ids()
         self.sync_cards()
         for state in self.manager.list():
@@ -1087,6 +1090,7 @@ class MainWindow(QWidget):
             self.hide()
             event.ignore()
             return
+        self._timer.stop()
         self._unsubscribe()
         self._unsubscribe_discovery_health()
         event.accept()

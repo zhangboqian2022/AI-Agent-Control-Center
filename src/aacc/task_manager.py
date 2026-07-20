@@ -18,6 +18,12 @@ class TaskManager:
         self._tasks = {task.id: task for task in config.tasks}
         self._subscribers: list[Subscriber] = []
         self._lock = threading.RLock()
+        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
 
     def task_config(self, task_id: str) -> TaskConfig:
         with self._lock:
@@ -101,4 +107,9 @@ class TaskManager:
         return unsubscribe
 
     def close(self) -> None:
-        self.store.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._subscribers.clear()
+            self.store.close()
