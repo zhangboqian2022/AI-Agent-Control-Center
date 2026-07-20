@@ -10,6 +10,7 @@
 - [Stability] Preserved one timer across short active/waiting turns, froze terminal total duration, and reset timing only when a terminal task starts a new run.
 - [Stability] Recognized current Codex input, command, patch, and permission approval events; recovered cold-start run times beyond the activity tail with cached incremental metadata scans; and prioritized waiting tasks with other active work.
 - [Privacy] Activity classification never copies prompt, response, command, credential, or file-content payloads into task messages, logs, or the panel.
+- [Stability] Stopped GUI refresh timers before shutdown and made task-manager closure idempotent, preventing a queued Qt refresh from touching a closed SQLite connection.
 
 ## 1.3.0-rc.1 — 2026-07-20
 
