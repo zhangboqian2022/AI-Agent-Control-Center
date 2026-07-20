@@ -1,4 +1,4 @@
-# AACC v1.3.0-rc.1 Known Limitations
+# AACC Known Limitations
 
 - This GitHub prerelease is ad-hoc signed and not Apple-notarized. Verify its SHA-256 before using **Open Anyway**. Stable `v1.3.0` is not released under this condition.
 - Desktop automation defaults to a five-second osascript timeout, configurable from 2 to 15 seconds. A slow first activation may need a higher value.

@@ -71,9 +71,7 @@ def test_keyboard_injection_can_be_disabled() -> None:
 def test_missing_accessibility_permission_blocks_injection_without_subprocess() -> None:
     config = default_config()
     recorder = Recorder()
-    automation = MacAutomation(
-        config, runner=recorder, accessibility_trusted=lambda: False
-    )
+    automation = MacAutomation(config, runner=recorder, accessibility_trusted=lambda: False)
 
     with pytest.raises(AutomationError, match="Accessibility permission"):
         automation.send_key(config.tasks[0], "ENTER")
@@ -159,9 +157,7 @@ def test_send_text_cancellation_after_focus_prevents_input_injection() -> None:
     automation = MacAutomation(config, runner=recorder, sleeper=cancel_during_delay)
 
     with pytest.raises(AutomationError, match="cancelled"):
-        automation.send_text(
-            config.tasks[0], "must not be injected", cancel_event=cancel_event
-        )
+        automation.send_text(config.tasks[0], "must not be injected", cancel_event=cancel_event)
 
     assert len(recorder.calls) == 1
     assert "activate" in recorder.calls[0][2]

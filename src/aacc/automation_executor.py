@@ -21,9 +21,7 @@ class AutomationBusyError(AutomationError):
 
 
 class AutomationController(Protocol):
-    def focus(
-        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-    ) -> str: ...
+    def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str: ...
     def send_key(
         self,
         task: TaskConfig,
@@ -63,9 +61,7 @@ class AutomationExecutor:
         self._closed = False
         self._logger = logging.getLogger("aacc.automation")
 
-    def _execute(
-        self, method: str, cancel_event: threading.Event, *args: object
-    ) -> str:
+    def _execute(self, method: str, cancel_event: threading.Event, *args: object) -> str:
         started = time.monotonic()
         task = args[0] if args and isinstance(args[0], TaskConfig) else None
         target = task.terminal.app_bundle_id if task is not None else None
@@ -77,13 +73,9 @@ class AutomationExecutor:
             if method == "focus" and task is not None:
                 result = self._controller.focus(task, cancel_event=cancel_event)
             elif method == "send_key" and task is not None and len(args) == 2:
-                result = self._controller.send_key(
-                    task, str(args[1]), cancel_event=cancel_event
-                )
+                result = self._controller.send_key(task, str(args[1]), cancel_event=cancel_event)
             elif method == "send_text" and task is not None and len(args) == 2:
-                result = self._controller.send_text(
-                    task, str(args[1]), cancel_event=cancel_event
-                )
+                result = self._controller.send_text(task, str(args[1]), cancel_event=cancel_event)
             elif method == "start_voice" and task is not None:
                 result = self._controller.start_voice(task, cancel_event=cancel_event)
             else:
@@ -136,9 +128,7 @@ class AutomationExecutor:
         except FutureTimeoutError as error:
             cancel_event.set()
             future.cancel()
-            self._logger.warning(
-                "automation operation=%s target=unknown outcome=timeout", method
-            )
+            self._logger.warning("automation operation=%s target=unknown outcome=timeout", method)
             raise AutomationError("Desktop automation timed out") from error
 
     def focus(self, task: TaskConfig) -> str:

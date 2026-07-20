@@ -18,9 +18,7 @@ def redact(value: str) -> str:
     for pattern in SECRET_PATTERNS:
         if pattern.groups == 4:
             cleaned = pattern.sub(
-                lambda match: (
-                    f"{match.group(1)}{match.group(2)}[REDACTED]{match.group(4)}"
-                ),
+                lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]{match.group(4)}",
                 cleaned,
             )
         elif pattern.groups:

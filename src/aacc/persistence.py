@@ -110,6 +110,7 @@ class StateStore:
 
     def update(self, state: TaskState, *, append_history: bool = True) -> TaskState:
         payload = state.model_dump_json()
+
         def operation() -> None:
             with self._connection:
                 cursor = self._connection.execute(

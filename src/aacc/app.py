@@ -123,9 +123,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         codex_auto_active_ids=runtime.discovery.auto_active_ids,
         codex_retained_ids=runtime.discovery.retained_ids,
         set_codex_monitoring_preferences=runtime.discovery.set_monitoring_preferences,
-        rotate_api_token_callback=lambda: rotate_api_token(
-            runtime.config_path, runtime.config
-        ),
+        rotate_api_token_callback=lambda: rotate_api_token(runtime.config_path, runtime.config),
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
         discovery_log_path=str(data_dir / "logs" / "app.log"),

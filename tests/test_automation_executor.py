@@ -14,9 +14,7 @@ class RecordingController:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def focus(
-        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-    ) -> str:
+    def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
         self.calls.append(task.name)
         return task.name
 
@@ -40,9 +38,7 @@ class RecordingController:
         self.calls.append(f"{task.name}:text")
         return value
 
-    def start_voice(
-        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-    ) -> str:
+    def start_voice(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
         self.calls.append(f"{task.name}:voice")
         return "voice"
 
@@ -67,9 +63,7 @@ def test_executor_rejects_overflow() -> None:
     release = threading.Event()
 
     class BlockingController(RecordingController):
-        def focus(
-            self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-        ) -> str:
+        def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
             started.set()
             release.wait(timeout=1)
             return task.name
@@ -93,9 +87,7 @@ def test_synchronous_adapter_times_out() -> None:
     release = threading.Event()
 
     class BlockingController(RecordingController):
-        def focus(
-            self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-        ) -> str:
+        def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
             release.wait(timeout=1)
             return task.name
 
@@ -111,9 +103,7 @@ def test_timed_out_queued_operation_never_executes_later() -> None:
     release = threading.Event()
 
     class BlockingController(RecordingController):
-        def focus(
-            self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-        ) -> str:
+        def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
             if task.name == "blocker":
                 started.set()
                 release.wait(timeout=1)

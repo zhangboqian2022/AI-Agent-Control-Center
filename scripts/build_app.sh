@@ -4,7 +4,7 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$project_root/scripts/release_env.sh"
 validate_release_credentials
-AACC_VERSION="${AACC_VERSION:-1.3.0-rc.1}"
+AACC_VERSION="${AACC_VERSION:-1.3.0-rc.2}"
 codesign_identity="${AACC_CODESIGN_IDENTITY:-}"
 cd "$project_root"
 
@@ -26,7 +26,7 @@ uv run pyinstaller \
 
 /usr/bin/plutil -replace CFBundleShortVersionString -string "$AACC_VERSION" \
   "$project_root/dist/AACC.app/Contents/Info.plist"
-/usr/bin/plutil -replace CFBundleVersion -string "2" \
+/usr/bin/plutil -replace CFBundleVersion -string "3" \
   "$project_root/dist/AACC.app/Contents/Info.plist"
 
 if command -v codesign >/dev/null 2>&1; then

@@ -19,9 +19,7 @@ class StubDiscovery:
         if selected_ids is None:
             return self.tasks
         return [
-            task
-            for task in self.tasks
-            if task.config.id.removeprefix("codex:") in selected_ids
+            task for task in self.tasks if task.config.id.removeprefix("codex:") in selected_ids
         ]
 
     def active_session_ids(self) -> set[str]:
@@ -37,6 +35,17 @@ class FailingDiscovery(StubDiscovery):
         if self.error is not None:
             raise self.error
         return super().discover(selected_ids)
+
+
+def test_default_poll_interval_is_five_seconds(tmp_path: Path) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "states.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    service = CodexDiscoveryService(manager, discovery=StubDiscovery([]))  # type: ignore[arg-type]
+
+    assert service.interval_seconds == 5.0
+    manager.close()
 
 
 def test_poll_registers_discovered_codex_task(tmp_path: Path) -> None:

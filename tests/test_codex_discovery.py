@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -120,7 +120,211 @@ def test_selected_recent_session_file_is_reported_as_running(tmp_path: Path) -> 
     tasks = discovery.discover({conversation_id})
 
     assert tasks[0].state.status is TaskStatus.RUNNING
-    assert tasks[0].state.message == "检测到 Codex 会话活动"
+    assert tasks[0].state.message == "正在分析任务"
+
+
+@pytest.mark.parametrize(
+    ("activity", "expected"),
+    [
+        ({"type": "event_msg", "payload": {"type": "patch_apply_end"}}, "正在修改代码"),
+        (
+            {
+                "type": "response_item",
+                "payload": {"type": "custom_tool_call", "name": "web__run"},
+            },
+            "正在查询资料",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {"type": "custom_tool_call", "name": "read_mcp_resource"},
+            },
+            "正在检查代码",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "command_category": "test",
+                    "input": '{"cmd":"uv run pytest -q","secret":"private-test-sentinel"}',
+                },
+            },
+            "正在运行测试",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "command_category": "build",
+                    "input": '{"cmd":"./scripts/build_dmg.sh","path":"private-build-sentinel"}',
+                },
+            },
+            "正在构建程序",
+        ),
+        (
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "input": ('{"cmd":"pytest build_dmg.sh","secret":"private-raw-sentinel"}'),
+                },
+            },
+            "正在执行命令",
+        ),
+        ({"type": "event_msg", "payload": {"type": "future_activity"}}, "正在分析任务"),
+    ],
+)
+def test_recent_session_activity_is_reduced_to_a_fixed_private_summary(
+    tmp_path: Path, activity: dict[str, object], expected: str
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "activity-summary"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        json.dumps(
+            {
+                "id": conversation_id,
+                "thread_name": "隐私概括测试",
+                "updated_at": "2026-07-20T10:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    records = [
+        {
+            "timestamp": "2026-07-20T10:00:00Z",
+            "type": "event_msg",
+            "payload": {"type": "task_started", "prompt": "private-prompt-sentinel"},
+        },
+        {
+            "timestamp": "2026-07-20T10:00:04Z",
+            **activity,
+            "private_response": "private-response-sentinel",
+        },
+    ]
+    session_path = sessions / f"rollout-{conversation_id}.jsonl"
+    session_path.write_text(
+        "\n".join(json.dumps(record) for record in records),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    ).discover({conversation_id})[0]
+
+    assert task.state.status is TaskStatus.RUNNING
+    assert task.state.message == expected
+    assert task.state.started_at == datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    assert task.state.updated_at == datetime(2026, 7, 20, 10, 0, 4, tzinfo=UTC)
+    assert len(task.state.message) <= 18
+    for private_value in (
+        "private-prompt-sentinel",
+        "private-response-sentinel",
+        "private-test-sentinel",
+        "private-build-sentinel",
+        "private-raw-sentinel",
+    ):
+        assert private_value not in task.state.message
+
+
+@pytest.mark.parametrize(
+    ("event_type", "expected_status"),
+    [
+        ("request_user_input", TaskStatus.WAITING_INPUT),
+        ("approval_request", TaskStatus.WAITING_APPROVAL),
+        ("exec_approval_request", TaskStatus.WAITING_APPROVAL),
+        ("apply_patch_approval_request", TaskStatus.WAITING_APPROVAL),
+        ("request_permissions", TaskStatus.WAITING_APPROVAL),
+    ],
+)
+def test_waiting_events_use_fixed_confirmation_summary(
+    tmp_path: Path, event_type: str, expected_status: TaskStatus
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = f"waiting-{event_type}"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": "2026-07-20T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                {
+                    "timestamp": "2026-07-20T10:00:00Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                },
+                {
+                    "timestamp": "2026-07-20T10:00:04Z",
+                    "type": "event_msg",
+                    "payload": {"type": event_type, "private": "private-waiting-sentinel"},
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    ).discover({conversation_id})[0]
+
+    assert task.state.status is expected_status
+    assert task.state.message == "等待你的确认"
+    assert task.state.started_at == datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    assert "private-waiting-sentinel" not in task.state.message
+
+
+def test_malformed_recent_activity_falls_back_without_exposing_content(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "malformed-activity"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": "2026-07-20T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        "not-json private-malformed-sentinel\n"
+        + json.dumps(
+            {
+                "timestamp": "2026-07-20T10:00:00Z",
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    ).discover({conversation_id})[0]
+
+    assert task.state.message == "正在分析任务"
+    assert "private-malformed-sentinel" not in task.state.message
 
 
 def test_discovery_only_returns_explicitly_selected_tasks(tmp_path: Path) -> None:
@@ -291,13 +495,22 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     completed_at = datetime(2026, 7, 18, 0, 1, tzinfo=UTC)
+    started_at = completed_at - timedelta(minutes=18, seconds=42)
     (sessions / f"rollout-2026-07-18T00-00-00-{conversation_id}.jsonl").write_text(
-        json.dumps(
-            {
-                "timestamp": completed_at.isoformat().replace("+00:00", "Z"),
-                "type": "event_msg",
-                "payload": {"type": "task_complete"},
-            }
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                {
+                    "timestamp": started_at.isoformat().replace("+00:00", "Z"),
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                },
+                {
+                    "timestamp": completed_at.isoformat().replace("+00:00", "Z"),
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete"},
+                },
+            )
         ),
         encoding="utf-8",
     )
@@ -311,7 +524,339 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
     ).discover({conversation_id})
 
     assert tasks[0].state.status is TaskStatus.COMPLETED
-    assert tasks[0].state.message == "Codex 回合已完成"
+    assert tasks[0].state.message == "已完成"
+    assert tasks[0].state.started_at == started_at
+    assert tasks[0].state.finished_at == completed_at
+
+
+def test_completed_session_backfills_start_beyond_bounded_activity_tail(
+    tmp_path: Path,
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "long-finished-session"
+    completed_at = datetime(2026, 7, 18, 0, 20, tzinfo=UTC)
+    started_at = completed_at - timedelta(minutes=20)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": completed_at.isoformat()}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_file = sessions / f"rollout-{conversation_id}.jsonl"
+    session_file.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "timestamp": started_at.isoformat(),
+                        "type": "event_msg",
+                        "payload": {"type": "task_started"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "private_filler",
+                            "content": "private-long-tail-sentinel" * 20_000,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": completed_at.isoformat(),
+                        "type": "event_msg",
+                        "payload": {"type": "task_complete"},
+                    }
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: completed_at,
+        session_modified_at=lambda _path: completed_at,
+    ).discover({conversation_id})[0]
+
+    assert session_file.stat().st_size > 262_144
+    assert task.state.status is TaskStatus.COMPLETED
+    assert task.state.started_at == started_at
+    assert task.state.finished_at == completed_at
+
+
+def test_completed_session_accepts_numeric_epoch_start_time(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "numeric-start-session"
+    completed_at = datetime(2026, 7, 18, 0, 20, tzinfo=UTC)
+    started_at = completed_at - timedelta(minutes=7)
+    index.write_text(
+        json.dumps({"id": conversation_id, "updated_at": completed_at.isoformat()}),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": completed_at.isoformat(),
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "started_at": int(started_at.timestamp()),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    task = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: completed_at,
+        session_modified_at=lambda _path: completed_at,
+    ).discover({conversation_id})[0]
+
+    assert task.state.started_at == started_at
+    assert task.state.finished_at == completed_at
+
+
+def test_waiting_session_is_prioritized_before_newer_unknown_session(
+    tmp_path: Path,
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    waiting_id = "waiting-priority"
+    unknown_id = "unknown-priority"
+    now = datetime(2026, 7, 20, 10, 0, 5, tzinfo=UTC)
+    index.write_text(
+        "\n".join(
+            (
+                json.dumps({"id": waiting_id, "updated_at": "2026-07-20T10:00:04Z"}),
+                json.dumps({"id": unknown_id, "updated_at": "2026-07-20T10:00:05Z"}),
+            )
+        ),
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{waiting_id}.jsonl").write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "timestamp": "2026-07-20T10:00:00Z",
+                        "type": "event_msg",
+                        "payload": {"type": "task_started"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-07-20T10:00:04Z",
+                        "type": "event_msg",
+                        "payload": {"type": "request_user_input"},
+                    }
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    tasks = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+        max_tasks=1,
+    ).discover()
+
+    assert [task.state.session_id for task in tasks] == [waiting_id]
+    assert tasks[0].state.status is TaskStatus.WAITING_INPUT
+
+
+def test_start_cache_retries_a_task_started_line_seen_during_partial_append(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partial-append.jsonl"
+    old_start = datetime(2026, 7, 20, 1, 0, tzinfo=UTC)
+    new_start = datetime(2026, 7, 20, 2, 0, tzinfo=UTC)
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp": old_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    discovery = CodexLocalDiscovery(tmp_path / "index.jsonl", tmp_path / "processes.json")
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == old_start
+
+    encoded = (
+        json.dumps(
+            {
+                "timestamp": new_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n"
+    ).encode()
+    midpoint = len(encoded) // 2
+    with path.open("ab") as handle:
+        handle.write(encoded[:midpoint])
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == old_start
+
+    with path.open("ab") as handle:
+        handle.write(encoded[midpoint:])
+
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == new_start
+
+
+def test_start_cache_invalidates_when_file_is_truncated_and_regrown(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "regrown.jsonl"
+    old_start = datetime(2026, 7, 20, 1, 0, tzinfo=UTC)
+    new_start = datetime(2026, 7, 20, 2, 0, tzinfo=UTC)
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp": old_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    discovery = CodexLocalDiscovery(tmp_path / "index.jsonl", tmp_path / "processes.json")
+    original_size = path.stat().st_size
+    assert discovery._latest_task_start(path, original_size, old_start) == old_start
+
+    replacement = (
+        json.dumps(
+            {
+                "timestamp": new_start.isoformat(),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        )
+        + "\n"
+    )
+    path.write_text(replacement + (" " * original_size) + "\n", encoding="utf-8")
+
+    assert path.stat().st_size > original_size
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == new_start
+
+
+def test_start_cache_invalidates_same_size_rewrite_with_unchanged_tail(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "same-size-rewrite.jsonl"
+    old_start = datetime(2026, 7, 20, 1, 0, tzinfo=UTC)
+    new_start = datetime(2026, 7, 20, 2, 0, tzinfo=UTC)
+
+    def content(started_at: datetime) -> str:
+        return (
+            json.dumps(
+                {
+                    "timestamp": started_at.isoformat(),
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                }
+            )
+            + "\n"
+            + json.dumps({"type": "private_filler", "content": "x" * 7_000})
+            + "\n"
+        )
+
+    path.write_text(content(old_start), encoding="utf-8")
+    discovery = CodexLocalDiscovery(tmp_path / "index.jsonl", tmp_path / "processes.json")
+    original_size = path.stat().st_size
+    assert discovery._latest_task_start(path, original_size, old_start) == old_start
+
+    path.write_text(content(new_start), encoding="utf-8")
+
+    assert path.stat().st_size == original_size
+    assert discovery._latest_task_start(path, path.stat().st_size, old_start) == new_start
+
+
+def test_selected_discovery_does_not_evict_other_live_session_start_cache(
+    tmp_path: Path,
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    conversation_ids = {"cache-one", "cache-two"}
+    index.write_text(
+        "\n".join(
+            json.dumps({"id": value, "updated_at": "2026-07-20T10:00:00Z"})
+            for value in conversation_ids
+        ),
+        encoding="utf-8",
+    )
+    for value in conversation_ids:
+        (sessions / f"rollout-{value}.jsonl").write_text(
+            "\n".join(
+                (
+                    json.dumps(
+                        {
+                            "timestamp": "2026-07-20T09:59:00Z",
+                            "type": "event_msg",
+                            "payload": {"type": "task_started"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "timestamp": "2026-07-20T10:00:00Z",
+                            "type": "event_msg",
+                            "payload": {"type": "task_complete"},
+                        }
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    now = datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    discovery = CodexLocalDiscovery(
+        index,
+        tmp_path / "processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+        session_modified_at=lambda _path: now,
+    )
+
+    discovery.discover()
+    assert set(discovery._session_start_cache) == {
+        sessions / f"rollout-{value}.jsonl" for value in conversation_ids
+    }
+
+    discovery.discover({"cache-one"})
+
+    assert set(discovery._session_start_cache) == {
+        sessions / f"rollout-{value}.jsonl" for value in conversation_ids
+    }
+
+
+def test_reverse_start_scan_discards_oversized_private_lines(tmp_path: Path) -> None:
+    path = tmp_path / "oversized.jsonl"
+    path.write_bytes(b'{"private":"' + (b"x" * 400_000) + b'"}\n{}\n')
+
+    with path.open("rb") as handle:
+        lines = [
+            line
+            for _offset, line in CodexLocalDiscovery._reverse_lines(handle, path.stat().st_size)
+        ]
+
+    assert lines == [b"{}"]
 
 
 def test_pid_with_record_start_is_rejected_when_live_start_unknown(tmp_path: Path) -> None:
@@ -353,9 +898,7 @@ def test_existing_unreadable_session_index_raises_discovery_error(tmp_path: Path
 
 
 def test_missing_session_index_is_empty_first_run(tmp_path: Path) -> None:
-    discovery = CodexLocalDiscovery(
-        tmp_path / "missing-index.jsonl", tmp_path / "processes.json"
-    )
+    discovery = CodexLocalDiscovery(tmp_path / "missing-index.jsonl", tmp_path / "processes.json")
     assert discovery.catalog() == []
     assert CODEX_METADATA_COMPATIBILITY == "2026-07"
 
@@ -377,9 +920,7 @@ def test_current_codex_metadata_fixture_parses_running_and_completed_sessions(
         session_directory=sessions,
         now=lambda: datetime(2026, 7, 20, 8, 0, 30, tzinfo=UTC),
         session_modified_at=lambda path: datetime.fromisoformat(
-            "2026-07-20T08:00:01+00:00"
-            if "running" in path.name
-            else "2026-07-20T07:55:01+00:00"
+            "2026-07-20T08:00:01+00:00" if "running" in path.name else "2026-07-20T07:55:01+00:00"
         ),
     )
 
