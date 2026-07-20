@@ -11,11 +11,12 @@ Build runtime: uv-managed CPython 3.13.11
 - `uv run ruff check .`: passed with no lint errors.
 - `uv run ruff format --check .`: passed; all 44 files are formatted.
 - `uv run mypy src/aacc`: passed; 23 source files have no type errors.
-- `uv run pytest -q`: passed; all 177 tests passed.
-- The installer reran the complete suite before the real installation: all 177 tests passed.
-- Codex discovery/service selection: 25 tests passed, covering the five-second default, private fixed summaries, malformed formats, completion events, and discovery health.
-- State-machine and timer/GUI selection: 30 tests passed, covering one run across short turns and waiting states, terminal freeze, and reset after terminal-to-active restart.
-- Complete GUI selection: 24 tests passed, covering horizontal cards, selection, removal, adaptive height, the 80% cap, and internal scrolling.
+- `uv run pytest -q`: passed; all 182 tests passed.
+- The installer reran the complete suite before the real installation: all 182 tests passed.
+- Codex discovery/service selection: 28 tests passed, covering the five-second default, private fixed summaries, malformed formats, whole-run start times, confirmation waits, completion events, and discovery health.
+- State-machine/model selection: 13 tests passed, covering one run across short turns and waiting states, terminal freeze, and reset after terminal-to-active restart.
+- Complete GUI selection: 25 tests passed, covering horizontal cards, long-title elision, selection, removal, adaptive height, the 80% cap, and internal scrolling.
+- Privacy regression tests confirm that raw command arguments are neither classified nor displayed; only explicit safe categories and fixed tool event names can produce an activity label.
 
 ## Build and installation verification
 
@@ -24,9 +25,9 @@ Build runtime: uv-managed CPython 3.13.11
 - `codesign --verify --deep --strict`: passed; the current build uses an ad-hoc signature.
 - DMG: `/Users/zhangboqian/Desktop/AACC-1.3.0-rc.2.dmg`, approximately 50 MB.
 - `hdiutil verify`: passed; the disk image checksum is valid.
-- SHA-256: `8864db967046a9aadf8a53f2345102851b357ab7981da6ba6b1b0d9b921e1bdc`.
+- SHA-256: `fd7ecd0c5ea395447e02a40430085b5a5093d8ca97e382b44b65eb7d7c6e3eeb`.
 - The installer built the `aacc_control_center-1.3.0rc2` wheel, created a production-dependency runtime, and replaced the prior installation.
-- One AACC process remained after installation, using approximately 63 MB RSS.
+- One AACC process remained after installation, using approximately 51 MB RSS at the stable check.
 - The local health endpoint returned `{"status":"ok","version":"1.3.0rc2"}`.
 - `aacc doctor`: config, SQLite, and the local API all passed.
 - Config and SQLite both have mode `0600` (`-rw-------`).
