@@ -27,11 +27,7 @@ KEY_CODES = {
     "2": 19,
 }
 
-TEXT_SCRIPT = (
-    "on run argv\n"
-    'tell application "System Events" to keystroke (item 1 of argv)\n'
-    "end run"
-)
+TEXT_SCRIPT = 'on run argv\ntell application "System Events" to keystroke (item 1 of argv)\nend run'
 
 
 def applescript_quote(value: str) -> str:
@@ -120,9 +116,7 @@ class MacAutomation:
         if cancel_event is not None and cancel_event.is_set():
             raise AutomationError("Desktop automation was cancelled")
 
-    def focus(
-        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-    ) -> str:
+    def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
         with self._lock:
             self._check_cancelled(cancel_event)
             return self._focus_unlocked(task)
@@ -152,9 +146,7 @@ class MacAutomation:
             if normalized == "CTRL_C":
                 statement = 'tell application "System Events" to keystroke "c" using control down'
             else:
-                statement = (
-                    f'tell application "System Events" to key code {KEY_CODES[normalized]}'
-                )
+                statement = f'tell application "System Events" to key code {KEY_CODES[normalized]}'
             self._run(["/usr/bin/osascript", "-e", statement])
             return f"已发送 {normalized}"
 
@@ -178,9 +170,7 @@ class MacAutomation:
             self._run(["/usr/bin/osascript", "-e", TEXT_SCRIPT, "--", text])
             return "文本已发送"
 
-    def start_voice(
-        self, task: TaskConfig, *, cancel_event: threading.Event | None = None
-    ) -> str:
+    def start_voice(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
         with self._lock:
             self._check_cancelled(cancel_event)
             self._ensure_injection()

@@ -44,6 +44,22 @@ def test_required_documentation_exists_without_placeholders() -> None:
         assert "T" + "BD" not in content
 
 
+def test_rc2_documentation_has_one_discovery_cadence_and_current_limit_titles() -> None:
+    english_guide = (ROOT / "docs" / "user-guide.en.md").read_text(encoding="utf-8")
+    assert "every two seconds" not in english_guide
+    assert "Every five seconds" in english_guide
+    assert (
+        (ROOT / "KNOWN_LIMITATIONS.md")
+        .read_text(encoding="utf-8")
+        .startswith("# AACC Known Limitations")
+    )
+    assert (
+        (ROOT / "KNOWN_LIMITATIONS.zh-CN.md")
+        .read_text(encoding="utf-8")
+        .startswith("# AACC 已知限制")
+    )
+
+
 def test_console_entry_points_are_registered() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'aacc = "aacc.cli:main"' in pyproject
@@ -62,7 +78,7 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-1.3.0-rc.1.dmg" in script
+    assert "AACC-1.3.0-rc.2.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
     assert "SKIP_BUILD" in script
@@ -70,9 +86,9 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
 
 
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
-    assert __version__ == "1.3.0rc1"
-    assert 'version = "1.3.0rc1"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'AACC_VERSION="${AACC_VERSION:-1.3.0-rc.1}"' in (
+    assert __version__ == "1.3.0rc2"
+    assert 'version = "1.3.0rc2"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'AACC_VERSION="${AACC_VERSION:-1.3.0-rc.2}"' in (
         ROOT / "scripts" / "build_app.sh"
     ).read_text(encoding="utf-8")
 

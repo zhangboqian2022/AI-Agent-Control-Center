@@ -8,9 +8,9 @@ Clicking a card selects it and leaves AACC visible. Double-clicking focuses the 
 
 ## Codex task discovery
 
-AACC refreshes local Codex metadata every two seconds. Up to four recently verified running tasks are automatically checked, displayed, and monitored. When a monitored task reaches a terminal state, it remains in the **Completed · retained until removed** section instead of disappearing. Use the card’s `×`, **Remove from panel** in its context menu, or confirmed **Clear retained tasks** to stop monitoring it. A removed task reappears automatically if it later has verified new activity. Open settings and choose **Choose Codex tasks to monitor** to add a non-running task manually or uncheck an automatic task to mute it. **Restore automatic detection** removes these mutes.
+AACC refreshes local Codex metadata every five seconds. Up to four recently verified running tasks are automatically checked, displayed, and monitored. When a monitored task reaches a terminal state, it remains in the **Completed · retained until removed** section instead of disappearing. Use the card’s `×`, **Remove from panel** in its context menu, or confirmed **Clear retained tasks** to stop monitoring it. A removed task reappears automatically if it later has verified new activity. Open settings and choose **Choose Codex tasks to monitor** to add a non-running task manually or uncheck an automatic task to mute it. **Restore automatic detection** removes these mutes.
 
-For selected sessions, AACC reads only task ID, title, update time, session-file modification time, turn events, and PID records. It does not read conversation bodies, prompts, code, or commands. `task_complete` means the turn completed and wins over recent file activity. `task_started` counts as running only with recent activity; a stale start event becomes unknown. A verified matching process or recent session write can also establish running state.
+Every five seconds, AACC checks task ID, title, update time, session-file modification time, turn events, PID records, and a bounded recent tool-event category. It may inspect command category markers to distinguish tests and builds, but never copies raw conversation, prompt, response, code, command, credential, or file content into the UI, history, or logs. `task_complete` means the turn completed and wins over recent file activity. `task_started` counts as running only with recent activity; a stale start event becomes unknown. A verified matching process or recent session write can also establish running state.
 
 The panel starts near the top-right of the main display and remembers its position. **Always on top** persists your preference; **Dock to desktop top right** restores the default placement. Codex does not currently expose a reliable public API for jumping to an exact task.
 
@@ -18,7 +18,7 @@ If Codex metadata polling repeatedly fails, a yellow banner appears without disc
 
 ## DMG installation
 
-Run `./scripts/build_dmg.sh` to create `AACC-1.3.0-rc.1.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This RC is ad-hoc signed and not notarized; verify the published SHA-256 before using **Open Anyway**.
+Run `./scripts/build_dmg.sh` to create `AACC-1.3.0-rc.2.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This RC is ad-hoc signed and not notarized; verify the published SHA-256 before using **Open Anyway**.
 
 ## Terminal and iTerm2 binding
 

@@ -12,8 +12,10 @@ from PySide6.QtGui import (
     QGuiApplication,
     QIcon,
     QMouseEvent,
+    QMoveEvent,
     QPainter,
     QPixmap,
+    QResizeEvent,
 )
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizeGrip,
+    QSizePolicy,
     QSlider,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -77,20 +80,56 @@ STATUS_NAMES = {
     TaskStatus.UNKNOWN: "状态未知",
 }
 
-STATUS_LIGHT_FONT_SIZE = 95
+STATUS_LIGHT_FONT_SIZE = 64
 
 
 def load_stylesheet() -> str:
     return resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
 
 
-def _elapsed(state: TaskState) -> str:
+TERMINAL_STATUSES = {
+    TaskStatus.COMPLETED,
+    TaskStatus.ERROR,
+    TaskStatus.CANCELLED,
+    TaskStatus.STOPPED,
+}
+
+
+def _elapsed(state: TaskState, now: datetime | None = None) -> str:
     anchor = state.started_at or state.updated_at
-    end = state.finished_at or datetime.now(UTC)
+    end = state.finished_at or now or datetime.now(UTC)
     seconds = max(0, int((end - anchor).total_seconds()))
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _elapsed_label(state: TaskState, now: datetime | None = None) -> str:
+    prefix = "总用时 " if state.status in TERMINAL_STATUSES else ""
+    return f"{prefix}{_elapsed(state, now)}"
+
+
+class ElidedLabel(QLabel):
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self._full_text = text
+        self.setToolTip(text)
+        self._update_elision()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_elision()
+
+    def _update_elision(self) -> None:
+        available_width = max(0, self.contentsRect().width())
+        QLabel.setText(
+            self,
+            self.fontMetrics().elidedText(
+                self._full_text,
+                Qt.TextElideMode.ElideRight,
+                available_width,
+            ),
+        )
 
 
 class TaskCard(QFrame):
@@ -106,59 +145,71 @@ class TaskCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("单击切换任务，右键查看更多操作")
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(15, 12, 15, 12)
-        root.setSpacing(7)
-        top = QHBoxLayout()
+        root = QHBoxLayout(self)
+        root.setContentsMargins(11, 8, 10, 8)
+        root.setSpacing(11)
         self.dot = QLabel("●")
         self.dot.setObjectName("statusDot")
         self.dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dot.setFixedSize(100, 100)
+        self.dot.setFixedSize(68, 68)
+        root.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.slot_label = QLabel(f"{task.slot:02d}")
         self.slot_label.setObjectName("slotLabel")
+        self.slot_label.hide()
         self.agent_label = QLabel(
-            task.agent.display_name or task.agent.type.replace("_", " ").title()
+            (task.agent.display_name or task.agent.type.replace("_", " ")).upper()
         )
         self.agent_label.setObjectName("agentLabel")
-        self.timer_label = QLabel("00:00")
+
+        self.details = QWidget()
+        details_layout = QVBoxLayout(self.details)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(2)
+
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(7)
+        self.status_label = QLabel()
+        self.status_label.setObjectName("statusLabel")
+        meta_row.addWidget(self.agent_label)
+        meta_row.addWidget(self.status_label)
+        meta_row.addStretch()
+        details_layout.addLayout(meta_row)
+
+        self.name_label = ElidedLabel(task.name)
+        self.name_label.setObjectName("taskName")
+        self.name_label.setWordWrap(False)
+        self.name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.name_label.setToolTip(task.name)
+        details_layout.addWidget(self.name_label)
+
+        activity_row = QHBoxLayout()
+        activity_row.setContentsMargins(0, 0, 0, 0)
+        activity_row.setSpacing(9)
+        self.timer_label = QLabel("00:00:00")
         self.timer_label.setObjectName("timerLabel")
-        top.addWidget(self.dot)
-        top.addWidget(self.slot_label)
-        top.addWidget(self.agent_label)
-        top.addStretch()
-        top.addWidget(self.timer_label)
+        self.message_label = QLabel()
+        self.message_label.setObjectName("messageLabel")
+        self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.message_label.setWordWrap(False)
+        activity_row.addWidget(self.timer_label)
+        activity_row.addWidget(self.message_label, 1)
+        details_layout.addLayout(activity_row)
+
+        self.updated_label = QLabel()
+        self.updated_label.setObjectName("updatedLabel")
+        self.updated_label.hide()
+        root.addWidget(self.details, 1)
+
         if task.id.startswith("codex:"):
             remove_button = QPushButton("×")
             remove_button.setObjectName("removeTaskButton")
             remove_button.setAccessibleName("从面板移除")
             remove_button.setToolTip("停止监控并从面板移除")
-            remove_button.setFixedSize(28, 28)
+            remove_button.setFixedSize(24, 24)
             remove_button.clicked.connect(lambda: self.remove_requested.emit(self.task.id))
-            top.addWidget(remove_button)
-        root.addLayout(top)
-
-        self.details = QWidget()
-        details_layout = QVBoxLayout(self.details)
-        details_layout.setContentsMargins(37, 0, 0, 0)
-        details_layout.setSpacing(3)
-        self.name_label = QLabel(task.name)
-        self.name_label.setObjectName("taskName")
-        status_line = QHBoxLayout()
-        self.status_label = QLabel()
-        self.status_label.setObjectName("statusLabel")
-        self.message_label = QLabel()
-        self.message_label.setObjectName("messageLabel")
-        self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.message_label.setWordWrap(True)
-        status_line.addWidget(self.status_label)
-        status_line.addWidget(QLabel("·"))
-        status_line.addWidget(self.message_label, 1)
-        details_layout.addWidget(self.name_label)
-        details_layout.addLayout(status_line)
-        self.updated_label = QLabel()
-        self.updated_label.setObjectName("updatedLabel")
-        details_layout.addWidget(self.updated_label)
-        root.addWidget(self.details)
+            root.addWidget(remove_button, 0, Qt.AlignmentFlag.AlignTop)
 
         self._effect = QGraphicsOpacityEffect(self.dot)
         self.dot.setGraphicsEffect(self._effect)
@@ -180,7 +231,7 @@ class TaskCard(QFrame):
         self.updated_label.setText(
             f"最后活动：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
         )
-        self.timer_label.setText(_elapsed(state))
+        self.timer_label.setText(_elapsed_label(state))
         self.setToolTip(
             f"{self.task.name}\n{STATUS_NAMES[state.status]} · {state.source} · "
             f"{state.confidence:.0%}\n"
@@ -198,7 +249,7 @@ class TaskCard(QFrame):
         self.details.setVisible(not compact)
         card_layout = self.layout()
         if card_layout is not None:
-            card_layout.setContentsMargins(13, 7 if compact else 12, 13, 7 if compact else 12)
+            card_layout.setContentsMargins(10, 6 if compact else 8, 9, 6 if compact else 8)
 
     def create_context_menu(self) -> QMenu:
         menu = QMenu(self)
@@ -325,9 +376,7 @@ class CodexTaskSelectionDialog(QDialog):
         self._auto_active_ids = set(auto_active_ids)
         self._restore_auto = False
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel("运行中的任务会自动勾选；取消勾选可停止自动监控该任务。")
-        )
+        layout.addWidget(QLabel("运行中的任务会自动勾选；取消勾选可停止自动监控该任务。"))
         self.tasks = QListWidget()
         for session in sessions:
             automatic = session.conversation_id in self._auto_active_ids
@@ -422,14 +471,14 @@ class MainWindow(QWidget):
         self.compact_mode = self.config.app.compact_mode
         self.always_on_top = self.config.app.always_on_top
         self._drag_position: QPoint | None = None
+        self._adaptive_resize_pending = False
         self._quitting = False
         self._settings = settings or QSettings("AACC", "AACC")
         self._codex_sessions = codex_sessions or (lambda: [])
         self._codex_auto_active_ids = codex_auto_active_ids or (lambda: set())
         self._codex_retained_ids = codex_retained_ids or (lambda: set())
-        self._set_codex_monitoring_preferences = (
-            set_codex_monitoring_preferences
-            or (lambda _manual_ids, _retained_ids, _muted_ids: None)
+        self._set_codex_monitoring_preferences = set_codex_monitoring_preferences or (
+            lambda _manual_ids, _retained_ids, _muted_ids: None
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_health = (discovery_health or DiscoveryHealth)()
@@ -705,15 +754,41 @@ class MainWindow(QWidget):
         self.clear_retained_button.setVisible(
             any(task.id.startswith("codex:") for task in terminal_tasks)
         )
+        self._schedule_adaptive_resize()
+
+    def _schedule_adaptive_resize(self) -> None:
+        if self._adaptive_resize_pending:
+            return
+        self._adaptive_resize_pending = True
+        QTimer.singleShot(0, self._resize_to_card_content)
+
+    def _available_screen_height(self) -> int:
+        screen = QGuiApplication.screenAt(self.frameGeometry().center())
+        screen = screen or self.screen() or QGuiApplication.primaryScreen()
+        return screen.availableGeometry().height() if screen is not None else self.height()
+
+    def _resize_to_card_content(self) -> None:
+        self._adaptive_resize_pending = False
+        self.cards_layout.invalidate()
+        self.cards_layout.activate()
+        content_height = self.cards_layout.sizeHint().height()
+        viewport_height = self.cards_scroll.viewport().height()
+        chrome_height = max(0, self.height() - viewport_height)
+        desired_height = max(self.minimumHeight(), chrome_height + content_height)
+        height_cap = max(self.minimumHeight(), int(self._available_screen_height() * 0.8))
+        overflow = desired_height > height_cap
+        self.cards_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if overflow
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        target_height = min(desired_height, height_cap)
+        if target_height != self.height():
+            self.resize(self.width(), target_height)
 
     @staticmethod
     def _is_terminal(state: TaskState) -> bool:
-        return state.status in {
-            TaskStatus.COMPLETED,
-            TaskStatus.ERROR,
-            TaskStatus.CANCELLED,
-            TaskStatus.STOPPED,
-        }
+        return state.status in TERMINAL_STATUSES
 
     def _grouped_tasks(
         self, visible: list[TaskConfig], states: dict[str, TaskState]
@@ -758,7 +833,7 @@ class MainWindow(QWidget):
         self.compact_mode = compact
         for card in self.cards.values():
             card.set_compact(compact)
-        self.adjustSize()
+        self._schedule_adaptive_resize()
         self._settings.setValue("compact_mode", compact)
 
     def set_agent_visible(self, agent_type: str, visible: bool) -> None:
@@ -873,9 +948,7 @@ class MainWindow(QWidget):
                 self._submit_automation(action, task_id, "start_voice", task)
                 return
             elif action.startswith("key:"):
-                self._submit_automation(
-                    action, task_id, "send_key", task, action.split(":", 1)[1]
-                )
+                self._submit_automation(action, task_id, "send_key", task, action.split(":", 1)[1])
                 return
             elif action.startswith("status:"):
                 status = action.split(":", 1)[1]
@@ -987,6 +1060,11 @@ class MainWindow(QWidget):
     def quit_application(self) -> None:
         self._quitting = True
         QGuiApplication.quit()
+
+    def moveEvent(self, event: QMoveEvent) -> None:
+        super().moveEvent(event)
+        if hasattr(self, "cards_scroll"):
+            self._schedule_adaptive_resize()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

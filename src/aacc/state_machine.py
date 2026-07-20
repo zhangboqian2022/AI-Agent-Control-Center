@@ -12,7 +12,13 @@ class StateMachine:
         TaskStatus.CANCELLED,
         TaskStatus.STOPPED,
     }
-    RESTART = {TaskStatus.STARTING, TaskStatus.THINKING, TaskStatus.RUNNING}
+    RESTART = {
+        TaskStatus.STARTING,
+        TaskStatus.THINKING,
+        TaskStatus.RUNNING,
+        TaskStatus.WAITING_INPUT,
+        TaskStatus.WAITING_APPROVAL,
+    }
     RUN_STATES = {
         TaskStatus.STARTING,
         TaskStatus.THINKING,

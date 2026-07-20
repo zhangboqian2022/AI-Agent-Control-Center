@@ -2,7 +2,7 @@
 
 > A local-first macOS desktop control center for the AI coding agents you choose to monitor.
 
-[中文文档](README.zh-CN.md) · [Download AACC 1.3.0-rc.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.1/AACC-1.3.0-rc.1.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.3.0-rc.1) · [Product design](docs/product-design.md)
+[中文文档](README.zh-CN.md) · [Download AACC 1.3.0-rc.2](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.2/AACC-1.3.0-rc.2.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.3.0-rc.2) · [Product design](docs/product-design.md)
 
 AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative focus/input automation.
 
@@ -13,6 +13,9 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 - **Automatic active-task discovery.** Recent, verified running Codex tasks appear automatically; mute any task you do not want AACC to observe.
 - **Results stay visible.** Completed, failed, stopped, and cancelled Codex tasks stay on the panel until you remove them, so a green result light is never lost automatically.
 - **Fast visual scanning.** Large status lights distinguish running, waiting, completed, warning, error, and unknown states.
+- **Compact multi-agent cards.** A small agent badge identifies Codex or a configured adapter, while the larger task name, whole-run timer, and short activity label remain easy to scan.
+- **Adaptive desktop footprint.** The panel grows or shrinks with monitored tasks and switches to internal scrolling at 80% of the current screen's available height.
+- **Timely private summaries.** Codex metadata is checked every five seconds and reduced to fixed labels such as “editing code” or “running tests,” without displaying raw payload content.
 - **Local-first by design.** AACC reads only the local task metadata needed for status detection and never uploads task content.
 - **Reliable status boundaries.** Codex session `task_started` and `task_complete` events take priority over file activity to avoid stale “running” indicators.
 - **Visible discovery health.** Repeated Codex metadata errors show a recoverable warning banner with sanitized diagnostics instead of silently freezing task state.
@@ -24,7 +27,7 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 
 ### Recommended: download the DMG
 
-Download [AACC-1.3.0-rc.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.1/AACC-1.3.0-rc.1.dmg), open it, and drag `AACC.app` to Applications.
+Download [AACC-1.3.0-rc.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.3.0-rc.2/AACC-1.3.0-rc.2.dmg), open it, and drag `AACC.app` to Applications.
 
 This RC is ad-hoc signed and is not notarized by Apple. If macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** only after verifying the release checksum. Stable `v1.3.0` remains blocked until Developer ID signing and Apple notarization are available.
 
@@ -57,7 +60,7 @@ To create a distributable image:
 
 A single click selects a card and keeps AACC visible. Use the card’s context menu and **Switch to task** when you intentionally want to focus Codex.
 
-For selected Codex sessions, AACC reads task IDs, titles, timestamps, session-file modification times, event names, and matching process identifiers. It does **not** read prompts, code, commands, or conversation bodies. A historical `task_started` event without recent activity is deliberately treated as unknown rather than running. See the [English user guide](docs/user-guide.en.md) or [中文用户指南](docs/user-guide.md).
+For selected Codex sessions, AACC reads task IDs, titles, timestamps, session-file modification times, event names, matching process identifiers, and a bounded recent tool-event category. It may inspect command category markers to distinguish tests and builds, but never copies raw prompts, responses, commands, credentials, code, or file contents into the panel, task history, or logs. A historical `task_started` event without recent activity is deliberately treated as unknown rather than running. See the [English user guide](docs/user-guide.en.md) or [中文用户指南](docs/user-guide.md).
 
 ## CLI and local API
 

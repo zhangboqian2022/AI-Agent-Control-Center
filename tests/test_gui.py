@@ -1,16 +1,17 @@
 from concurrent.futures import Future
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QMessageBox, QScrollArea
 
 from aacc.automation import AutomationError, MacAutomation
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.config import create_default_config, default_config, rotate_api_token
 from aacc.discovery_service import DiscoveryHealth
-from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard
+from aacc.gui import STATUS_COLORS, CodexTaskSelectionDialog, MainWindow, TaskCard, _elapsed
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -58,8 +59,57 @@ def test_status_light_is_five_times_larger_for_fast_visual_scanning(
     manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
     window.set_codex_selected_ids({"large-light"})
 
-    assert "font-size: 95px" in window.cards[task.id].dot.styleSheet()
+    assert "font-size: 64px" in window.cards[task.id].dot.styleSheet()
     assert window.minimumHeight() >= 270
+    manager.close()
+
+
+def test_expanded_card_uses_compact_horizontal_information_hierarchy(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:horizontal-card",
+        slot=1,
+        name="突出显示的任务名称",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(
+        task,
+        TaskState.new(task.id, "running", message="正在修改代码", source="codex_local"),
+    )
+    window.set_codex_selected_ids({"horizontal-card"})
+    window.show()
+    QApplication.processEvents()
+    card = window.cards[task.id]
+
+    assert isinstance(card.layout(), QHBoxLayout)
+    assert 56 <= card.dot.width() <= 72
+    assert card.dot.height() == card.dot.width()
+    assert card.agent_label.text() == "CODEX"
+    assert card.name_label.text() == "突出显示的任务名称"
+    assert card.name_label.font().pixelSize() > card.agent_label.font().pixelSize()
+    assert card.sizeHint().height() <= 110
+    assert card.updated_label.isHidden()
+    manager.close()
+
+
+def test_long_task_name_is_elided_instead_of_clipped(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:long-title",
+        slot=1,
+        name="这是一个非常长的 Codex 任务名称用于验证窗口较窄时能够显示清晰的省略号",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.set_codex_selected_ids({"long-title"})
+    window.resize(350, window.height())
+    window.show()
+    QApplication.processEvents()
+
+    assert window.cards[task.id].name_label.text().endswith("…")
+    assert window.cards[task.id].name_label.toolTip() == task.name
     manager.close()
 
 
@@ -75,6 +125,36 @@ def test_refresh_updates_card_text_and_color(tmp_path: Path, qtbot: object) -> N
     assert card.message_label.text() == "等待批准 npm test"
     assert STATUS_COLORS[TaskStatus.WAITING_APPROVAL] in card.dot.styleSheet()
     manager.close()
+
+
+def test_elapsed_time_always_includes_hours() -> None:
+    started_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    state = TaskState(
+        task_id="task-1",
+        status=TaskStatus.COMPLETED,
+        started_at=started_at,
+        updated_at=started_at + timedelta(minutes=18, seconds=42),
+        finished_at=started_at + timedelta(minutes=18, seconds=42),
+    )
+
+    assert _elapsed(state) == "00:18:42"
+
+
+def test_completed_card_labels_frozen_total_duration(qtbot: object) -> None:
+    task = TaskConfig(id="task-1", slot=1, name="完整计时任务")
+    started_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    state = TaskState(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        message="已完成",
+        started_at=started_at,
+        updated_at=started_at + timedelta(hours=1, minutes=26, seconds=8),
+        finished_at=started_at + timedelta(hours=1, minutes=26, seconds=8),
+    )
+    card = TaskCard(task, state)
+    qtbot.addWidget(card)  # type: ignore[attr-defined]
+
+    assert card.timer_label.text() == "总用时 01:26:08"
 
 
 def test_compact_mode_hides_detail_rows(tmp_path: Path, qtbot: object) -> None:
@@ -103,6 +183,76 @@ def test_discovered_codex_task_replaces_placeholder_card(tmp_path: Path, qtbot: 
     assert list(window.cards) == ["codex:task-1234"]
     assert window.cards["codex:task-1234"].name_label.text() == "自动识别任务"
     assert window.findChild(QScrollArea, "cardsScroll") is not None
+    manager.close()
+
+
+def test_window_height_grows_and_shrinks_with_visible_task_cards(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window._available_screen_height = lambda: 1200  # type: ignore[method-assign]
+    tasks = [
+        TaskConfig(
+            id=f"codex:adaptive-{index}",
+            slot=index,
+            name=f"自动高度任务 {index}",
+            agent=AgentConfig(type="codex_cli", display_name="Codex"),
+        )
+        for index in range(1, 6)
+    ]
+    for task in tasks:
+        manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.show()
+    QApplication.processEvents()
+    window.move(180, 120)
+    original_position = window.pos()
+
+    window.set_codex_selected_ids({task.id.removeprefix("codex:") for task in tasks})
+    qtbot.waitUntil(lambda: len(window.cards) == 5)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+    expanded_height = window.height()
+
+    window.set_codex_selected_ids({tasks[0].id.removeprefix("codex:")})
+    qtbot.waitUntil(lambda: len(window.cards) == 1)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+
+    assert window.height() < expanded_height
+    assert window.pos() == original_position
+    manager.close()
+
+
+def test_window_height_caps_at_eighty_percent_and_enables_internal_scroll(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window._available_screen_height = lambda: 500  # type: ignore[method-assign]
+    tasks = [
+        TaskConfig(
+            id=f"codex:capped-{index}",
+            slot=index,
+            name=f"高度上限任务 {index}",
+            agent=AgentConfig(type="codex_cli", display_name="Codex"),
+        )
+        for index in range(1, 9)
+    ]
+    for task in tasks:
+        manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.show()
+    QApplication.processEvents()
+
+    window.set_codex_selected_ids({task.id.removeprefix("codex:") for task in tasks})
+    qtbot.waitUntil(lambda: len(window.cards) == 8)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+
+    assert window.height() == 400
+    assert window.cards_scroll.verticalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+
+    window.set_codex_selected_ids({tasks[0].id.removeprefix("codex:")})
+    qtbot.waitUntil(lambda: len(window.cards) == 1)  # type: ignore[attr-defined]
+    QApplication.processEvents()
+
+    assert window.height() < 400
+    assert window.cards_scroll.verticalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     manager.close()
 
 
