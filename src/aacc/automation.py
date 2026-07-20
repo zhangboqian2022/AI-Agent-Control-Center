@@ -46,10 +46,12 @@ class MacAutomation:
         *,
         runner: Runner = subprocess.run,
         sleeper: Callable[[float], Any] = time.sleep,
+        accessibility_trusted: Callable[[], bool] = lambda: True,
     ) -> None:
         self.config = config
         self._runner = runner
         self._sleep = sleeper
+        self._accessibility_trusted = accessibility_trusted
         self._lock = threading.RLock()
 
     def _run(self, args: list[str]) -> str:
@@ -120,6 +122,8 @@ class MacAutomation:
     def _ensure_injection(self) -> None:
         if not self.config.app.keyboard_injection:
             raise AutomationError("Keyboard injection is disabled in AACC settings")
+        if not self._accessibility_trusted():
+            raise AutomationError("Accessibility permission is required")
 
     def send_key(self, task: TaskConfig, key: str) -> str:
         with self._lock:

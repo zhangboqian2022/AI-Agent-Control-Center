@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from aacc.accessibility import is_accessibility_trusted, open_accessibility_settings
 from aacc.api import create_api
 from aacc.automation import MacAutomation
 from aacc.automation_executor import AutomationExecutor
@@ -39,12 +42,17 @@ class Runtime:
         self.manager.close()
 
 
-def build_runtime(config_path: Path, database_path: Path) -> Runtime:
+def build_runtime(
+    config_path: Path,
+    database_path: Path,
+    *,
+    accessibility_trusted: Callable[[], bool] = lambda: True,
+) -> Runtime:
     config = load_config(config_path)
     store = StateStore(database_path)
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    automation = MacAutomation(config)
+    automation = MacAutomation(config, accessibility_trusted=accessibility_trusted)
     return Runtime(
         config_path=config_path,
         config=config,
@@ -96,7 +104,12 @@ def _hotkey_actions(window: MainWindow) -> dict[str, object]:
 
 def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
-    runtime = build_runtime(config_path, database_path)
+    trusted = is_accessibility_trusted()
+    runtime = build_runtime(
+        config_path,
+        database_path,
+        accessibility_trusted=is_accessibility_trusted,
+    )
 
     existing_app = QApplication.instance()
     qt_app = existing_app if isinstance(existing_app, QApplication) else QApplication(sys.argv)
@@ -116,8 +129,12 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
         discovery_log_path=str(data_dir / "logs" / "app.log"),
+        accessibility_trusted=trusted,
+        open_accessibility_settings_callback=open_accessibility_settings,
     )
     window.show()
+    if not trusted:
+        QTimer.singleShot(0, window.show_accessibility_guidance)
     runtime.discovery.start()
 
     api_server: APIServerThread | None = None
@@ -126,7 +143,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         api_server.start()
 
     hotkeys = GlobalHotkeys(runtime.config.hotkeys, _hotkey_actions(window))  # type: ignore[arg-type]
-    hotkeys.start()
+    if trusted:
+        hotkeys.start()
 
     cleaned = False
 

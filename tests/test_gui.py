@@ -422,3 +422,30 @@ def test_discovery_warning_banner_copies_sanitized_diagnostics(
     window.discovery_health_received.emit(DiscoveryHealth())
     qtbot.waitUntil(window.discovery_warning.isHidden, timeout=500)  # type: ignore[attr-defined]
     manager.close()
+
+
+def test_missing_accessibility_guidance_can_open_system_settings(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    opened: list[bool] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
+    )
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        accessibility_trusted=False,
+        open_accessibility_settings_callback=lambda: opened.append(True),
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    window.show_accessibility_guidance()
+
+    assert opened == [True]
+    assert "辅助功能" in window.accessibility_status_text()
+    manager.close()

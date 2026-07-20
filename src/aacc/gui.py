@@ -263,6 +263,11 @@ class SettingsDialog(QDialog):
         slider.valueChanged.connect(lambda value: window.setWindowOpacity(value / 100))
         layout.addWidget(slider)
         layout.addWidget(QLabel(f"配置文件\n{DEFAULT_CONFIG_PATH}"))
+        layout.addWidget(QLabel(window.accessibility_status_text()))
+        if not window.accessibility_trusted:
+            accessibility = QPushButton("打开辅助功能设置")
+            accessibility.clicked.connect(window.open_accessibility_settings)
+            layout.addWidget(accessibility)
         compact = QPushButton("切换紧凑 / 展开模式")
         compact.clicked.connect(lambda: window.set_compact(not window.compact_mode))
         layout.addWidget(compact)
@@ -400,6 +405,8 @@ class MainWindow(QWidget):
             Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
         ) = None,
         discovery_log_path: str = "~/Library/Application Support/AACC/logs/app.log",
+        accessibility_trusted: bool = True,
+        open_accessibility_settings_callback: Callable[[], None] | None = None,
         settings: QSettings | None = None,
     ) -> None:
         super().__init__()
@@ -422,6 +429,8 @@ class MainWindow(QWidget):
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_health = (discovery_health or DiscoveryHealth)()
         self._discovery_log_path = discovery_log_path
+        self.accessibility_trusted = accessibility_trusted
+        self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
         self._unsubscribe_discovery_health = (
             subscribe_discovery_health(self.discovery_health_received.emit)
             if subscribe_discovery_health is not None
@@ -990,6 +999,27 @@ class MainWindow(QWidget):
         QGuiApplication.clipboard().setText(
             self._discovery_health.diagnostics(self._discovery_log_path)
         )
+
+    def accessibility_status_text(self) -> str:
+        if self.accessibility_trusted:
+            return "辅助功能权限：已开启"
+        return "辅助功能权限：未开启；全局热键与键盘输入不可用"
+
+    def open_accessibility_settings(self) -> None:
+        self._open_accessibility_settings()
+
+    def show_accessibility_guidance(self) -> None:
+        if self.accessibility_trusted:
+            return
+        answer = QMessageBox.question(
+            self,
+            "需要辅助功能权限",
+            "AACC 需要辅助功能权限才能使用全局热键和键盘输入。是否打开系统设置？",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.open_accessibility_settings()
 
     def open_settings(self) -> None:
         SettingsDialog(self).exec()
