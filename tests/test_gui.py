@@ -226,20 +226,14 @@ def test_window_height_caps_at_eighty_percent_and_enables_internal_scroll(
     QApplication.processEvents()
 
     assert window.height() == 400
-    assert (
-        window.cards_scroll.verticalScrollBarPolicy()
-        is Qt.ScrollBarPolicy.ScrollBarAlwaysOn
-    )
+    assert window.cards_scroll.verticalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOn
 
     window.set_codex_selected_ids({tasks[0].id.removeprefix("codex:")})
     qtbot.waitUntil(lambda: len(window.cards) == 1)  # type: ignore[attr-defined]
     QApplication.processEvents()
 
     assert window.height() < 400
-    assert (
-        window.cards_scroll.verticalScrollBarPolicy()
-        is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    )
+    assert window.cards_scroll.verticalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     manager.close()
 
 

@@ -25,7 +25,7 @@ def auth(token: str) -> dict[str, str]:
 
 def test_health_is_available_without_token(tmp_path: Path) -> None:
     client, _, manager = api_client(tmp_path)
-    assert client.get("/api/v1/health").json() == {"status": "ok", "version": "1.3.0rc1"}
+    assert client.get("/api/v1/health").json() == {"status": "ok", "version": "1.3.0rc2"}
     manager.close()
 
 
@@ -93,9 +93,7 @@ def test_reset_and_events(tmp_path: Path) -> None:
 
 def test_automation_failure_returns_actionable_conflict_response(tmp_path: Path) -> None:
     class FailingController:
-        def focus(
-            self, _task: object, *, cancel_event: threading.Event | None = None
-        ) -> str:
+        def focus(self, _task: object, *, cancel_event: threading.Event | None = None) -> str:
             raise AutomationError("window missing")
 
         send_key = focus
@@ -117,9 +115,7 @@ def test_automation_failure_returns_actionable_conflict_response(tmp_path: Path)
 
 def test_executor_controller_is_accepted_by_api(tmp_path: Path) -> None:
     class BlockingController:
-        def focus(
-            self, _task: object, *, cancel_event: threading.Event | None = None
-        ) -> str:
+        def focus(self, _task: object, *, cancel_event: threading.Event | None = None) -> str:
             return "focused"
 
         send_key = focus

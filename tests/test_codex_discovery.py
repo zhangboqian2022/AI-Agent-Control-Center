@@ -486,9 +486,7 @@ def test_existing_unreadable_session_index_raises_discovery_error(tmp_path: Path
 
 
 def test_missing_session_index_is_empty_first_run(tmp_path: Path) -> None:
-    discovery = CodexLocalDiscovery(
-        tmp_path / "missing-index.jsonl", tmp_path / "processes.json"
-    )
+    discovery = CodexLocalDiscovery(tmp_path / "missing-index.jsonl", tmp_path / "processes.json")
     assert discovery.catalog() == []
     assert CODEX_METADATA_COMPATIBILITY == "2026-07"
 
@@ -510,9 +508,7 @@ def test_current_codex_metadata_fixture_parses_running_and_completed_sessions(
         session_directory=sessions,
         now=lambda: datetime(2026, 7, 20, 8, 0, 30, tzinfo=UTC),
         session_modified_at=lambda path: datetime.fromisoformat(
-            "2026-07-20T08:00:01+00:00"
-            if "running" in path.name
-            else "2026-07-20T07:55:01+00:00"
+            "2026-07-20T08:00:01+00:00" if "running" in path.name else "2026-07-20T07:55:01+00:00"
         ),
     )
 

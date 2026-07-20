@@ -19,9 +19,7 @@ class StubDiscovery:
         if selected_ids is None:
             return self.tasks
         return [
-            task
-            for task in self.tasks
-            if task.config.id.removeprefix("codex:") in selected_ids
+            task for task in self.tasks if task.config.id.removeprefix("codex:") in selected_ids
         ]
 
     def active_session_ids(self) -> set[str]:

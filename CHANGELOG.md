@@ -2,6 +2,14 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.3.0-rc.2 — 2026-07-20
+
+- [UX] Rebuilt task cards as a compact horizontal hierarchy with a large left status light, small agent badge, prominent task name, raised whole-run timer, and one-line activity summary.
+- [UX] Made the floating window grow and shrink with visible tasks, capped it at 80% of the current screen's available height, and enabled internal scrolling only beyond that cap.
+- [Stability] Changed Codex discovery to a five-second cadence and added fixed privacy-safe activity labels for analysis, code edits, tests, builds, inspection, searches, command execution, and completion.
+- [Stability] Preserved one timer across short active/waiting turns, froze terminal total duration, and reset timing only when a terminal task starts a new run.
+- [Privacy] Activity classification never copies prompt, response, command, credential, or file-content payloads into task messages, logs, or the panel.
+
 ## 1.3.0-rc.1 — 2026-07-20
 
 - [Security] Made configuration writes atomic, repaired invalid API tokens, rejected whitespace-bearing credentials, enforced private config/database permissions, added local credential rotation, strengthened log redaction, and removed AppleScript text interpolation.

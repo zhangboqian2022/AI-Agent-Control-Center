@@ -349,9 +349,7 @@ class CodexTaskSelectionDialog(QDialog):
         self._auto_active_ids = set(auto_active_ids)
         self._restore_auto = False
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel("运行中的任务会自动勾选；取消勾选可停止自动监控该任务。")
-        )
+        layout.addWidget(QLabel("运行中的任务会自动勾选；取消勾选可停止自动监控该任务。"))
         self.tasks = QListWidget()
         for session in sessions:
             automatic = session.conversation_id in self._auto_active_ids
@@ -452,9 +450,8 @@ class MainWindow(QWidget):
         self._codex_sessions = codex_sessions or (lambda: [])
         self._codex_auto_active_ids = codex_auto_active_ids or (lambda: set())
         self._codex_retained_ids = codex_retained_ids or (lambda: set())
-        self._set_codex_monitoring_preferences = (
-            set_codex_monitoring_preferences
-            or (lambda _manual_ids, _retained_ids, _muted_ids: None)
+        self._set_codex_monitoring_preferences = set_codex_monitoring_preferences or (
+            lambda _manual_ids, _retained_ids, _muted_ids: None
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_health = (discovery_health or DiscoveryHealth)()
@@ -924,9 +921,7 @@ class MainWindow(QWidget):
                 self._submit_automation(action, task_id, "start_voice", task)
                 return
             elif action.startswith("key:"):
-                self._submit_automation(
-                    action, task_id, "send_key", task, action.split(":", 1)[1]
-                )
+                self._submit_automation(action, task_id, "send_key", task, action.split(":", 1)[1])
                 return
             elif action.startswith("status:"):
                 status = action.split(":", 1)[1]
