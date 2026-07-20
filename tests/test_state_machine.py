@@ -36,3 +36,46 @@ def test_terminal_state_restarts_on_explicit_starting_update() -> None:
     current = state(TaskStatus.COMPLETED, "api", 1.0)
     candidate = state(TaskStatus.STARTING, "wrapper", 0.9)
     assert StateMachine.accept(current, candidate)
+
+
+def test_transition_preserves_run_start_and_finishes() -> None:
+    started = TaskState.new("task-1", "RUNNING", source="codex_local")
+    waiting_candidate = TaskState.new("task-1", "WAITING_INPUT", source="codex_local")
+
+    waiting = StateMachine.transition(started, waiting_candidate)
+
+    assert waiting is not None
+    assert waiting.started_at == started.started_at
+    completed = StateMachine.transition(
+        waiting, TaskState.new("task-1", "COMPLETED", source="codex_local")
+    )
+    assert completed is not None
+    assert completed.started_at == started.started_at
+    assert completed.finished_at is not None
+
+
+def test_transition_starts_fresh_run_after_terminal_state() -> None:
+    completed = TaskState.new("task-1", "COMPLETED", source="codex_local")
+    candidate = TaskState.new("task-1", "RUNNING", source="codex_local")
+
+    restarted = StateMachine.transition(completed, candidate)
+
+    assert restarted is not None
+    assert restarted.started_at == candidate.started_at
+    assert restarted.finished_at is None
+
+
+def test_semantic_duplicate_returns_none() -> None:
+    current = TaskState.new("task-1", "RUNNING", message="working", source="codex_local")
+    candidate = current.model_copy(update={"updated_at": current.updated_at})
+
+    assert StateMachine.transition(current, candidate) is None
+
+
+def test_duplicate_becomes_heartbeat_only_after_one_minute() -> None:
+    current = TaskState.new("task-1", "RUNNING", message="working", source="codex_local")
+    early = current.model_copy(update={"updated_at": current.updated_at + timedelta(seconds=59)})
+    due = current.model_copy(update={"updated_at": current.updated_at + timedelta(seconds=60)})
+
+    assert not StateMachine.heartbeat_due(current, early)
+    assert StateMachine.heartbeat_due(current, due)
