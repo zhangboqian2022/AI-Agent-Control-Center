@@ -1,7 +1,9 @@
 # AACC v1.3.0-rc.2 测试报告
 
-测试日期：2026-07-20  
-测试平台：macOS 26.5.2（Build 25F84），Apple Silicon arm64  
+测试日期：2026-07-20
+
+测试平台：macOS 26.5.2（Build 25F84），Apple Silicon arm64
+
 构建环境：uv 管理的 CPython 3.13.11
 
 ## 自动化质量门禁

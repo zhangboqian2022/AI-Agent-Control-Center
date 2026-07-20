@@ -1,7 +1,9 @@
 # AACC v1.3.0-rc.2 Test Report
 
-Test date: 2026-07-20  
-Platform: macOS 26.5.2 (Build 25F84), Apple Silicon arm64  
+Test date: 2026-07-20
+
+Platform: macOS 26.5.2 (Build 25F84), Apple Silicon arm64
+
 Build runtime: uv-managed CPython 3.13.11
 
 ## Automated quality gates

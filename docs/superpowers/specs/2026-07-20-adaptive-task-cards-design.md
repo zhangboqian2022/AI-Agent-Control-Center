@@ -1,7 +1,9 @@
 # AACC Adaptive Task Cards and Live Activity Design
 
-**Status:** Approved design candidate for v1.3.0-rc.2  
-**Date:** 2026-07-20  
+**Status:** Approved design candidate for v1.3.0-rc.2
+
+**Date:** 2026-07-20
+
 **Author:** zhangboqian <zhangboqian@hotmail.com>
 
 ## Goal
