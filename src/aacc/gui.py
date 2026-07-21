@@ -373,6 +373,13 @@ class SettingsDialog(QDialog):
         )
         kimi_tasks.clicked.connect(window.open_kimi_task_selector)
         layout.addWidget(kimi_tasks)
+        kimi_desktop_tasks = QPushButton(
+            "选择监控的 Kimi Desktop 任务"
+            f"（{len(window.kimi_desktop_selected_ids)} 已选 · "
+            f"{len(window.kimi_desktop_auto_active_ids())} 自动运行）"
+        )
+        kimi_desktop_tasks.clicked.connect(window.open_kimi_desktop_task_selector)
+        layout.addWidget(kimi_desktop_tasks)
         rotate_credentials = QPushButton("重置 API 凭证")
         rotate_credentials.clicked.connect(window.rotate_credentials)
         layout.addWidget(rotate_credentials)
@@ -381,6 +388,7 @@ class SettingsDialog(QDialog):
             "codex_cli": "Codex",
             "claude_code": "Claude Code",
             "kimi_code": "Kimi Code",
+            "kimi_desktop": "Kimi Desktop",
             "generic_cli": "Z Code / 通用 CLI",
         }
         for agent_type, label in labels.items():
@@ -510,12 +518,33 @@ class KimiTaskSelectionDialog(TaskSelectionDialog):
         )
 
 
+class KimiDesktopTaskSelectionDialog(TaskSelectionDialog):
+    def __init__(
+        self,
+        sessions: list[KimiDesktopSession],
+        selected_ids: set[str],
+        auto_active_ids: set[str],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(
+            [
+                (session.session_id, session.title, session.updated_at)
+                for session in sessions
+            ],
+            selected_ids,
+            auto_active_ids,
+            parent,
+            window_title="选择监控的 Kimi Desktop 任务",
+        )
+
+
 class MainWindow(QWidget):
     state_received = Signal(object)
     external_action = Signal(str, str)
     automation_finished = Signal(str, str, object)
     discovery_health_received = Signal(object)
     kimi_discovery_health_received = Signal(object)
+    kimi_desktop_discovery_health_received = Signal(object)
     settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity", "visible_agents"}
 
     def __init__(
@@ -549,6 +578,10 @@ class MainWindow(QWidget):
         ) = None,
         kimi_discovery_health: Callable[[], DiscoveryHealth] | None = None,
         subscribe_kimi_discovery_health: (
+            Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
+        ) = None,
+        kimi_desktop_discovery_health: Callable[[], DiscoveryHealth] | None = None,
+        subscribe_kimi_desktop_discovery_health: (
             Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
         ) = None,
         discovery_log_path: str = "~/Library/Application Support/AACC/logs/app.log",
@@ -590,10 +623,16 @@ class MainWindow(QWidget):
             or (lambda _manual_ids, _retained_ids, _muted_ids: None)
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
-        self._discovery_health = (discovery_health or DiscoveryHealth)()
-        self._kimi_discovery_health = (
-            kimi_discovery_health or (lambda: DiscoveryHealth(brand="Kimi"))
-        )()
+        self._discovery_healths: dict[str, DiscoveryHealth] = {}
+        for health in (
+            (discovery_health or DiscoveryHealth)(),
+            (kimi_discovery_health or (lambda: DiscoveryHealth(brand="Kimi")))(),
+            (
+                kimi_desktop_discovery_health
+                or (lambda: DiscoveryHealth(brand="Kimi Desktop"))
+            )(),
+        ):
+            self._discovery_healths[health.brand] = health
         self._discovery_log_path = discovery_log_path
         self.accessibility_trusted = accessibility_trusted
         self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
@@ -605,6 +644,13 @@ class MainWindow(QWidget):
         self._unsubscribe_kimi_discovery_health = (
             subscribe_kimi_discovery_health(self.kimi_discovery_health_received.emit)
             if subscribe_kimi_discovery_health is not None
+            else lambda: None
+        )
+        self._unsubscribe_kimi_desktop_discovery_health = (
+            subscribe_kimi_desktop_discovery_health(
+                self.kimi_desktop_discovery_health_received.emit
+            )
+            if subscribe_kimi_desktop_discovery_health is not None
             else lambda: None
         )
         saved_codex_tasks = self._settings.value(
@@ -702,7 +748,8 @@ class MainWindow(QWidget):
         self.external_action.connect(self._perform_action)
         self.automation_finished.connect(self._automation_completed)
         self.discovery_health_received.connect(self._apply_discovery_health)
-        self.kimi_discovery_health_received.connect(self._apply_kimi_discovery_health)
+        self.kimi_discovery_health_received.connect(self._apply_discovery_health)
+        self.kimi_desktop_discovery_health_received.connect(self._apply_discovery_health)
 
         saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
         self.always_on_top = bool(saved_top)
@@ -766,7 +813,7 @@ class MainWindow(QWidget):
         discovery_warning_layout.addWidget(self.discovery_warning_label, 1)
         discovery_warning_layout.addWidget(copy_diagnostics)
         layout.addWidget(self.discovery_warning)
-        self._apply_discovery_health(self._discovery_health)
+        self._refresh_discovery_warning()
 
         self.cards: dict[str, TaskCard] = {}
         self._card_order_ids: list[str] = []
@@ -776,7 +823,9 @@ class MainWindow(QWidget):
         self.cards_layout.setContentsMargins(0, 0, 0, 0)
         self.task_summary_label = QLabel("运行中：0 · 已完成：0 · 显示：0")
         self.task_summary_label.setObjectName("taskSummary")
-        self.empty_tasks_label = QLabel("未选择 Codex / Kimi Code 任务 · 点击 ⚙ 选择监控任务")
+        self.empty_tasks_label = QLabel(
+            "未选择 Codex / Kimi Code / Kimi Desktop 任务 · 点击 ⚙ 选择监控任务"
+        )
         self.empty_tasks_label.setObjectName("emptyTasks")
         self.empty_tasks_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.running_group_label = QLabel("运行中")
@@ -1312,6 +1361,29 @@ class MainWindow(QWidget):
                 muted_ids -= auto_active_ids
             self.set_kimi_monitoring_preferences(manual_ids, retained_ids, muted_ids)
 
+    def open_kimi_desktop_task_selector(self) -> None:
+        auto_active_ids = self.kimi_desktop_auto_active_ids()
+        dialog = KimiDesktopTaskSelectionDialog(
+            self._kimi_desktop_sessions(),
+            self.kimi_desktop_selected_ids,
+            auto_active_ids,
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_ids = dialog.selected_ids()
+            retained_ids = self.kimi_desktop_retained_ids & selected_ids
+            manual_ids = (self.kimi_desktop_manual_ids & selected_ids) | (
+                selected_ids - auto_active_ids - retained_ids
+            )
+            muted_ids = (
+                self.kimi_desktop_muted_ids | (auto_active_ids - selected_ids)
+            ) - selected_ids
+            if dialog.restore_auto_requested():
+                muted_ids -= auto_active_ids
+            self.set_kimi_desktop_monitoring_preferences(
+                manual_ids, retained_ids, muted_ids
+            )
+
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
         if screen is None:
@@ -1410,20 +1482,12 @@ class MainWindow(QWidget):
     def _apply_discovery_health(self, value: object) -> None:
         if not isinstance(value, DiscoveryHealth):
             return
-        self._discovery_health = value
-        self._refresh_discovery_warning()
-
-    def _apply_kimi_discovery_health(self, value: object) -> None:
-        if not isinstance(value, DiscoveryHealth):
-            return
-        self._kimi_discovery_health = value
+        self._discovery_healths[value.brand] = value
         self._refresh_discovery_warning()
 
     def _refresh_discovery_warning(self) -> None:
         degraded = [
-            health
-            for health in (self._discovery_health, self._kimi_discovery_health)
-            if health.degraded
+            health for health in self._discovery_healths.values() if health.degraded
         ]
         if not degraded:
             self.discovery_warning.setVisible(False)
@@ -1436,7 +1500,7 @@ class MainWindow(QWidget):
         QGuiApplication.clipboard().setText(
             "\n\n".join(
                 health.diagnostics(self._discovery_log_path)
-                for health in (self._discovery_health, self._kimi_discovery_health)
+                for health in self._discovery_healths.values()
             )
         )
 
@@ -1514,4 +1578,5 @@ class MainWindow(QWidget):
         self._unsubscribe()
         self._unsubscribe_discovery_health()
         self._unsubscribe_kimi_discovery_health()
+        self._unsubscribe_kimi_desktop_discovery_health()
         event.accept()
