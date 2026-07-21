@@ -51,18 +51,15 @@ scripts/install.sh
 
 ## 当前进度（2026-07-21）
 
-- `main`：1.3.0-rc.5 已发布（tag `v1.3.0-rc.5` + GitHub Prerelease 附 DMG）。
-  内容：修复 Kimi 会话回合内长静默（模型慢响应、长工具调用、上下文汇总）
-  被误判空闲——回合仍在进行时，在有界活跃回合窗口（默认 30 分钟）内保持
-  运行中，超时回落空闲以防崩溃会话永远显示运行。
-- 已部署 rc.5：`~/Applications/AACC.app`（运行中），健康接口返回 1.3.0rc5。
-  DMG：`~/Desktop/AACC-1.3.0-rc.5.dmg`，
-  SHA-256 `6319903bbae77cf87f554c83c293f54273854586ccc50a4c3eb22b3455d04f5e`。
+- `main`：1.3.0-rc.6 已发布（tag `v1.3.0-rc.6` + GitHub Prerelease 附 DMG）。
+  内容：新增 Kimi Desktop（Kimi.app）监控——从 daimon `conversations.sqlite`
+  （WAL 感知只读）发现会话，Agent 会话复用 Kimi Code 回合判定，聊天会话
+  简化状态，卡片聚焦走 `mac_app` + `com.moonshot.kimichat`；GUI 第三品牌
+  接线；发现健康报告改品牌字典合并。
+- 已部署：`~/Applications/AACC.app` 已替换为 main 构建，但替换发生在升版
+  提交之前，关于对话框仍显示 rc.5；重新跑 `scripts/install.sh` 即可对齐 rc.6。
+  DMG：`~/Desktop/AACC-1.3.0-rc.6.dmg`，
+  SHA-256 `1adb44eec47bb11d526a4c318e8e00e4770ac963028bc53701726cf57a73deff`。
 - 送审副本：`~/Desktop/summit01`（rc.4 之后 HEAD `6369ba6` 的导出；如需
-  rc.5 要重新导出）。
+  rc.6 要重新导出）。
 - 新工作直接在 main 上开新分支。
-- 2026-07-21：Kimi Desktop（Kimi.app）监控支持已合入 main（HEAD `ee20920`，
-  分支 feat/kimi-desktop-monitoring 已删）。新模块
-  `src/aacc/kimi_desktop_discovery.py` 读 daimon `conversations.sqlite`
-  （WAL 感知的只读打开）；GUI 第三品牌接线完整。注意：本机已部署的
-  AACC.app 仍是 rc.5，不含此功能；要实机验证需重新 build + install。
