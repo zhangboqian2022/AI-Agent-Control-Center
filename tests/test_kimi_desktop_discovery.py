@@ -223,3 +223,34 @@ def test_active_session_ids_collects_running(tmp_path: Path) -> None:
         ],
     )
     assert _build(root).active_session_ids() == {"conv-1"}
+
+
+def test_conversations_written_through_wal_are_visible(tmp_path: Path) -> None:
+    root = tmp_path / "daimon"
+    db_path = _db_path(root)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute(
+            """
+            CREATE TABLE conversations (
+                conversation_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                kernel_session_dir TEXT,
+                workspace_path TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO conversations VALUES (?, ?, ?, ?, ?)",
+            ("conv-wal", "WAL 会话", _ms(NOW - timedelta(minutes=10)), None, None),
+        )
+        connection.commit()
+        # Keep the connection open so the WAL is not checkpointed away:
+        # discovery must see rows that only exist in the WAL.
+        tasks = _build(root).discover()
+        assert [task.config.id for task in tasks] == ["kimi_desktop:conv-wal"]
+    finally:
+        connection.close()
