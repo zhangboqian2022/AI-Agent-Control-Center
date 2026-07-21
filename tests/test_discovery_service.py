@@ -2,7 +2,13 @@ from pathlib import Path
 
 from aacc.codex_discovery import CodexDiscoveryError, DiscoveredTask
 from aacc.config import default_config
-from aacc.discovery_service import CodexDiscoveryService, DiscoveryHealth, KimiDiscoveryService
+from aacc.discovery_service import (
+    CodexDiscoveryService,
+    DiscoveryHealth,
+    KimiDesktopDiscoveryService,
+    KimiDiscoveryService,
+)
+from aacc.kimi_desktop_discovery import KimiDesktopDiscoveryError
 from aacc.models import AgentConfig, TaskConfig, TaskState
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
@@ -44,6 +50,18 @@ class StubKimiDiscovery(StubDiscovery):
             return self.tasks
         return [
             task for task in self.tasks if task.config.id.removeprefix("kimi:") in selected_ids
+        ]
+
+
+class StubKimiDesktopDiscovery(StubDiscovery):
+    def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
+        self.selected_ids = selected_ids
+        if selected_ids is None:
+            return self.tasks
+        return [
+            task
+            for task in self.tasks
+            if task.config.id.removeprefix("kimi_desktop:") in selected_ids
         ]
 
 
@@ -230,4 +248,58 @@ def test_existing_unreadable_index_degrades_immediately_and_preserves_state(
     assert service.health().consecutive_failures == 1
     assert manager.get("task-1").message == "known"
     assert len(service.health().summary) <= 80
+    manager.close()
+
+
+def test_kimi_desktop_service_poll_registers_task(tmp_path: Path) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "states.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    task = TaskConfig(
+        id="kimi_desktop:conv-1",
+        slot=1,
+        name="Kimi Desktop 任务",
+        agent=AgentConfig(type="kimi_desktop", display_name="Kimi Desktop"),
+    )
+    discovery = StubKimiDesktopDiscovery(
+        [DiscoveredTask(task, TaskState.new(task.id, "running"))]
+    )
+    service = KimiDesktopDiscoveryService(
+        manager,
+        discovery=discovery,  # type: ignore[arg-type]
+    )
+    service.set_selected_ids({"conv-1"})
+
+    count = service.poll_once()
+
+    assert count == 1
+    assert discovery.selected_ids == {"conv-1"}
+    assert manager.get(task.id).status.value == "RUNNING"
+    manager.close()
+
+
+def test_kimi_desktop_health_degrades_on_discovery_error(tmp_path: Path) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "states.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+
+    class FailingKimiDesktopDiscovery(StubKimiDesktopDiscovery):
+        def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
+            raise KimiDesktopDiscoveryError("index unreadable")
+
+        def active_session_ids(self) -> set[str]:
+            return set()
+
+    service = KimiDesktopDiscoveryService(
+        manager,
+        discovery=FailingKimiDesktopDiscovery([]),  # type: ignore[arg-type]
+    )
+
+    assert service.poll_safely() == 0
+
+    health = service.health()
+    assert health.degraded
+    assert health.brand == "Kimi Desktop"
     manager.close()

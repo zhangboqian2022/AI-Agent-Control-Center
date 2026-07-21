@@ -15,6 +15,11 @@ from aacc.codex_discovery import (
     CodexSession,
     DiscoveredTask,
 )
+from aacc.kimi_desktop_discovery import (
+    KimiDesktopDiscoveryError,
+    KimiDesktopLocalDiscovery,
+    KimiDesktopSession,
+)
 from aacc.kimi_discovery import KimiDiscoveryError, KimiLocalDiscovery, KimiSession
 from aacc.security import redact
 from aacc.task_manager import TaskManager
@@ -278,4 +283,24 @@ class KimiDiscoveryService(LocalDiscoveryService[KimiSession]):
             thread_name="aacc-kimi-discovery",
             error_type=KimiDiscoveryError,
             brand="Kimi",
+        )
+
+
+class KimiDesktopDiscoveryService(LocalDiscoveryService[KimiDesktopSession]):
+    """Polls local Kimi Desktop metadata outside the Qt event loop."""
+
+    def __init__(
+        self,
+        manager: TaskManager,
+        *,
+        discovery: KimiDesktopLocalDiscovery | None = None,
+        interval_seconds: float = 5.0,
+    ) -> None:
+        super().__init__(
+            manager,
+            discovery=discovery or KimiDesktopLocalDiscovery(),
+            interval_seconds=interval_seconds,
+            thread_name="aacc-kimi-desktop-discovery",
+            error_type=KimiDesktopDiscoveryError,
+            brand="Kimi Desktop",
         )
