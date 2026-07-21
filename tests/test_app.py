@@ -2,7 +2,11 @@ from pathlib import Path
 
 import aacc.app as app_module
 from aacc.app import build_runtime
-from aacc.discovery_service import CodexDiscoveryService, KimiDiscoveryService
+from aacc.discovery_service import (
+    CodexDiscoveryService,
+    KimiDesktopDiscoveryService,
+    KimiDiscoveryService,
+)
 
 
 def test_build_runtime_creates_default_config_database_and_four_tasks(tmp_path: Path) -> None:
@@ -15,6 +19,12 @@ def test_build_runtime_creates_default_config_database_and_four_tasks(tmp_path: 
     assert runtime.automation.config is runtime.config
     assert isinstance(runtime.discovery, CodexDiscoveryService)
     assert isinstance(runtime.kimi_discovery, KimiDiscoveryService)
+    runtime.close()
+
+
+def test_runtime_includes_kimi_desktop_discovery(tmp_path: Path) -> None:
+    runtime = build_runtime(tmp_path / "config.yaml", tmp_path / "aacc.db")
+    assert isinstance(runtime.kimi_desktop_discovery, KimiDesktopDiscoveryService)
     runtime.close()
 
 
