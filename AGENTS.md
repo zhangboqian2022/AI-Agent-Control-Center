@@ -46,14 +46,15 @@ scripts/install.sh
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-20）
+## 当前进度（2026-07-21）
 
-- `main` @ `ff95347`：1.3.0-rc.4 已发布（tag `v1.3.0-rc.4` + GitHub
-  Prerelease 附 DMG）。内容：Kimi wire 三态反向扫描 + 隐私哨兵测试、
-  版本/文档统一 + 链接一致性测试、install/uninstall 安全修复、GUI 订阅
-  Kimi health、SECURITY.md 修正、Event Tap 测试参数化、CI 工作流。
-- 已部署 rc.4：`~/Applications/AACC.app`（运行中）与 `/Applications/AACC.app`，
-  健康接口返回 1.3.0rc4。DMG：`~/Desktop/AACC-1.3.0-rc.4.dmg`，
-  SHA-256 `ba940a28c4ea2ad5322441be8e4df8a55d40d69b2a6b612fcc432d8b9a373567`。
-- 送审副本：`~/Desktop/summit01`（rc.3 时的 git archive；如需 rc.4 要重新导出）。
+- `main`：1.3.0-rc.5 已发布（tag `v1.3.0-rc.5` + GitHub Prerelease 附 DMG）。
+  内容：修复 Kimi 会话回合内长静默（模型慢响应、长工具调用、上下文汇总）
+  被误判空闲——回合仍在进行时，在有界活跃回合窗口（默认 30 分钟）内保持
+  运行中，超时回落空闲以防崩溃会话永远显示运行。
+- 已部署 rc.5：`~/Applications/AACC.app`（运行中），健康接口返回 1.3.0rc5。
+  DMG：`~/Desktop/AACC-1.3.0-rc.5.dmg`，
+  SHA-256 `4acade9e03b290fad4a1d562b79ac445c8fdecd81e981cd62acf8dfcb7d37bab`。
+- 送审副本：`~/Desktop/summit01`（rc.4 之后 HEAD `6369ba6` 的导出；如需
+  rc.5 要重新导出）。
 - 新工作直接在 main 上开新分支。
