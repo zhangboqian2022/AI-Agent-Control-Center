@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.3.0-rc.6 — 2026-07-21
+
+- [Feature] Added Kimi Desktop (Kimi.app) monitoring: conversations are discovered from the daimon runtime's local read-only catalog, agent conversations reuse the Kimi Code turn analysis for full running/waiting/completed status, chats show simplified generating/idle states, and cards focus Kimi.app the same way Codex cards focus Codex.app.
+- [UX] Added Kimi Desktop task selection, retention, and muting to the panel and settings, and merged discovery-health reporting across all three monitored brands.
+- [Stability] Read the Kimi Desktop catalog through the sqlite WAL so conversations created while the app is running are discovered immediately, and dropped an ambiguous process-name fallback in the Kimi.app liveness check.
+
 ## 1.3.0-rc.5 — 2026-07-21
 
 - [Stability] Fixed Kimi sessions dropping to idle during long in-turn silences (slow LLM responses, long tool calls, or context summarization): a turn still in progress now keeps the running status within a bounded active-turn window (default 30 minutes) instead of going idle after 90 seconds without file activity; sessions past the window still fall back to idle so crashed sessions cannot show running forever.
