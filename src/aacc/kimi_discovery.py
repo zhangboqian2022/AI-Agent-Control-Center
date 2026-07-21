@@ -44,6 +44,98 @@ class KimiSession:
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class KimiSessionStatus:
+    """Status evaluation for a single Kimi Code session directory."""
+
+    status: TaskStatus
+    message: str
+    confidence: float
+    activity_at: datetime | None
+
+
+def kimi_session_activity_at(
+    session_dir: Path, file_modified_at: FileModifiedAt
+) -> datetime | None:
+    """Latest mtime among known activity files; contents are never read."""
+    candidates = (
+        session_dir / "agents" / "main" / "wire.jsonl",
+        session_dir / "logs" / "kimi-code.log",
+        session_dir / "state.json",
+    )
+    latest: datetime | None = None
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            modified_at = file_modified_at(path)
+        except OSError:
+            continue
+        if latest is None or modified_at > latest:
+            latest = modified_at
+    return latest
+
+
+def kimi_session_turn_completed(session_dir: Path) -> bool | None:
+    """Detect a finished turn from the wire, reading event types only.
+
+    A completed turn ends with a `usage.record` event scoped to the turn;
+    any later turn-boundary event (prompt, loop activity, llm request)
+    means the session is working again. Returns True for completed,
+    False for active, and None when the scan budget is exhausted before
+    either signal — an undetermined scan must never fabricate completion.
+    """
+    wire_path = session_dir / "agents" / "main" / "wire.jsonl"
+    truncated = [False]
+    try:
+        with wire_path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            for line in _reverse_complete_lines(
+                handle, size, _WIRE_SCAN_BUDGET_BYTES, truncated
+            ):
+                event_type, usage_scope = _wire_event(line)
+                if event_type in _TURN_ACTIVE_TYPES:
+                    return False
+                if event_type == "usage.record" and usage_scope == "turn":
+                    return True
+    except OSError:
+        return None
+    return None if truncated[0] else False
+
+
+def evaluate_kimi_session_status(
+    session_dir: Path,
+    *,
+    now: datetime,
+    file_modified_at: FileModifiedAt,
+    process_alive: ProcessAlive,
+    activity_window_seconds: float,
+    active_turn_window_seconds: float,
+) -> KimiSessionStatus:
+    """Apply the Kimi Code status decision tree to one session directory."""
+    activity_at = kimi_session_activity_at(session_dir, file_modified_at)
+    turn_completed = kimi_session_turn_completed(session_dir)
+    if turn_completed is True:
+        return KimiSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.96, activity_at)
+    if (
+        activity_at is not None
+        and (now - activity_at).total_seconds() <= activity_window_seconds
+    ):
+        return KimiSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, activity_at)
+    if (
+        turn_completed is False
+        and activity_at is not None
+        and (now - activity_at).total_seconds() <= active_turn_window_seconds
+    ):
+        return KimiSessionStatus(TaskStatus.RUNNING, "正在运行", 0.8, activity_at)
+    if process_alive():
+        return KimiSessionStatus(TaskStatus.IDLE, "空闲", 0.7, activity_at)
+    return KimiSessionStatus(
+        TaskStatus.UNKNOWN, "未检测到运行进程", 0.55, activity_at
+    )
+
+
 def _reverse_complete_lines(
     handle: BinaryIO, size: int, budget: int, truncated: list[bool]
 ) -> Iterator[bytes]:
@@ -144,39 +236,31 @@ class KimiLocalDiscovery:
             sessions = [session for session in sessions if session["id"] in selected_ids]
         now = self.now()
         process_alive: bool | None = None
+
+        def is_agent_alive() -> bool:
+            nonlocal process_alive
+            if process_alive is None:
+                process_alive = self.agent_process_alive()
+            return process_alive
+
         discovered: list[DiscoveredTask] = []
         for session in sessions:
             session_id = session["id"]
-            activity_at = self._activity_at(session["session_dir"])
-            updated_at = activity_at if activity_at is not None else session["updated_at"]
-            turn_completed = self._turn_completed(session["session_dir"])
-            if turn_completed is True:
-                status = TaskStatus.COMPLETED
-                message = "回合已完成"
-                confidence = 0.96
-            elif activity_at is not None and self._is_recent(now, activity_at):
-                status = TaskStatus.RUNNING
-                message = "正在运行"
-                confidence = 0.9
-            elif (
-                turn_completed is False
-                and activity_at is not None
-                and self._is_within_active_turn_window(now, activity_at)
-            ):
-                status = TaskStatus.RUNNING
-                message = "正在运行"
-                confidence = 0.8
-            else:
-                if process_alive is None:
-                    process_alive = self.agent_process_alive()
-                if process_alive:
-                    status = TaskStatus.IDLE
-                    message = "空闲"
-                    confidence = 0.7
-                else:
-                    status = TaskStatus.UNKNOWN
-                    message = "未检测到运行进程"
-                    confidence = 0.55
+            evaluation = evaluate_kimi_session_status(
+                session["session_dir"],
+                now=now,
+                file_modified_at=self.file_modified_at,
+                process_alive=is_agent_alive,
+                activity_window_seconds=self.activity_window_seconds,
+                active_turn_window_seconds=self.active_turn_window_seconds,
+            )
+            activity_at = evaluation.activity_at
+            updated_at = (
+                activity_at if activity_at is not None else session["updated_at"]
+            )
+            status = evaluation.status
+            message = evaluation.message
+            confidence = evaluation.confidence
             task_id = f"kimi:{session_id}"
             discovered.append(
                 DiscoveredTask(
@@ -300,56 +384,10 @@ class KimiLocalDiscovery:
         return datetime.min.replace(tzinfo=UTC)
 
     def _activity_at(self, session_dir: Path) -> datetime | None:
-        """Latest mtime among known activity files; contents are never read."""
-        candidates = (
-            session_dir / "agents" / "main" / "wire.jsonl",
-            session_dir / "logs" / "kimi-code.log",
-            session_dir / "state.json",
-        )
-        latest: datetime | None = None
-        for path in candidates:
-            if not path.exists():
-                continue
-            try:
-                modified_at = self.file_modified_at(path)
-            except OSError:
-                continue
-            if latest is None or modified_at > latest:
-                latest = modified_at
-        return latest
-
-    def _is_recent(self, now: datetime, observed_at: datetime) -> bool:
-        return (now - observed_at).total_seconds() <= self.activity_window_seconds
-
-    def _is_within_active_turn_window(self, now: datetime, observed_at: datetime) -> bool:
-        return (now - observed_at).total_seconds() <= self.active_turn_window_seconds
+        return kimi_session_activity_at(session_dir, self.file_modified_at)
 
     def _turn_completed(self, session_dir: Path) -> bool | None:
-        """Detect a finished turn from the wire, reading event types only.
-
-        A completed turn ends with a `usage.record` event scoped to the turn;
-        any later turn-boundary event (prompt, loop activity, llm request)
-        means the session is working again. Returns True for completed,
-        False for active, and None when the scan budget is exhausted before
-        either signal — an undetermined scan must never fabricate completion.
-        """
-        wire_path = session_dir / "agents" / "main" / "wire.jsonl"
-        truncated = [False]
-        try:
-            with wire_path.open("rb") as handle:
-                handle.seek(0, 2)
-                size = handle.tell()
-                for line in _reverse_complete_lines(
-                    handle, size, _WIRE_SCAN_BUDGET_BYTES, truncated
-                ):
-                    event_type, usage_scope = _wire_event(line)
-                    if event_type in _TURN_ACTIVE_TYPES:
-                        return False
-                    if event_type == "usage.record" and usage_scope == "turn":
-                        return True
-        except OSError:
-            return None
-        return None if truncated[0] else False
+        return kimi_session_turn_completed(session_dir)
 
     @staticmethod
     def _file_modified_at(path: Path) -> datetime:
