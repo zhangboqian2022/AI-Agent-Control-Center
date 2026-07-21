@@ -1061,3 +1061,120 @@ def test_clear_retained_tasks_removes_terminal_kimi_cards(
     assert finished.id not in window.cards
     assert window.kimi_selected_ids == set()
     manager.close()
+
+
+
+def build_kimi_desktop_window(
+    tmp_path: Path, qtbot: object
+) -> tuple[MainWindow, TaskManager, list[tuple[set[str], set[str], set[str]]]]:
+    config = default_config()
+    store = StateStore(tmp_path / "gui-kd.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    settings = QSettings(str(tmp_path / "gui-kd-settings.ini"), QSettings.Format.IniFormat)
+    applied: list[tuple[set[str], set[str], set[str]]] = []
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        settings=settings,
+        kimi_desktop_sessions=lambda: [],
+        kimi_desktop_auto_active_ids=lambda: set(),
+        kimi_desktop_retained_ids=lambda: set(),
+        kimi_desktop_muted_ids=lambda: set(),
+        set_kimi_desktop_monitoring_preferences=lambda manual, retained, muted: applied.append(
+            (set(manual), set(retained), set(muted))
+        ),
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    return window, manager, applied
+
+
+def test_kimi_desktop_preferences_persist_and_apply(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager, applied = build_kimi_desktop_window(tmp_path, qtbot)
+    window.set_kimi_desktop_monitoring_preferences({"conv-1"}, {"conv-2"}, {"conv-3"})
+    assert applied[-1] == ({"conv-1"}, {"conv-2"}, {"conv-3"})
+    assert window.kimi_desktop_selected_ids == {"conv-1", "conv-2"}
+    # Note: QSettings may round-trip a single-element list as a plain string,
+    # so assert the parsed in-memory sets here; raw persistence is covered by
+    # the reload test below (whose loader tolerates both forms).
+    assert window.kimi_desktop_manual_ids == {"conv-1"}
+    assert window.kimi_desktop_retained_ids == {"conv-2"}
+    assert window.kimi_desktop_muted_ids == {"conv-3"}
+    manager.close()
+
+
+def test_kimi_desktop_preferences_reload_from_settings(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager, _ = build_kimi_desktop_window(tmp_path, qtbot)
+    window.set_kimi_desktop_monitoring_preferences({"conv-1"}, {"conv-2"}, set())
+    manager.close()
+    reloaded_settings = QSettings(
+        str(tmp_path / "gui-kd-settings.ini"), QSettings.Format.IniFormat
+    )
+    config = default_config()
+    store = StateStore(tmp_path / "gui-kd2.db")
+    store.initialize(config.tasks)
+    manager2 = TaskManager(config, store)
+    reloaded = MainWindow(
+        manager2,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        settings=reloaded_settings,
+    )
+    qtbot.addWidget(reloaded)  # type: ignore[attr-defined]
+    assert reloaded.kimi_desktop_manual_ids == {"conv-1"}
+    assert reloaded.kimi_desktop_retained_ids == {"conv-2"}
+    assert reloaded.kimi_desktop_selected_ids == {"conv-1", "conv-2"}
+    manager2.close()
+
+
+def test_remove_kimi_desktop_task_mutes_and_hides(tmp_path: Path, qtbot: object) -> None:
+    window, manager, applied = build_kimi_desktop_window(tmp_path, qtbot)
+    window.set_kimi_desktop_monitoring_preferences({"conv-1"}, set(), set())
+    manager.register(
+        TaskConfig(
+            id="kimi_desktop:conv-1",
+            slot=1,
+            name="桌面任务",
+            agent=AgentConfig(type="kimi_desktop", display_name="Kimi Desktop"),
+            terminal=TerminalConfig(type="mac_app", app_bundle_id="com.moonshot.kimichat"),
+        ),
+        TaskState.new("kimi_desktop:conv-1", "RUNNING"),
+    )
+    window.sync_cards()
+    assert "kimi_desktop:conv-1" in window.cards
+    window.remove_kimi_desktop_task("kimi_desktop:conv-1")
+    assert applied[-1] == (set(), set(), {"conv-1"})
+    assert "kimi_desktop:conv-1" not in window.cards
+    manager.close()
+
+
+def test_kimi_desktop_task_hidden_until_selected(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_kimi_desktop_window(tmp_path, qtbot)
+    manager.register(
+        TaskConfig(
+            id="kimi_desktop:conv-9",
+            slot=1,
+            name="未选任务",
+            agent=AgentConfig(type="kimi_desktop", display_name="Kimi Desktop"),
+            terminal=TerminalConfig(type="mac_app", app_bundle_id="com.moonshot.kimichat"),
+        ),
+        TaskState.new("kimi_desktop:conv-9", "RUNNING"),
+    )
+    window.sync_cards()
+    assert "kimi_desktop:conv-9" not in window.cards
+    window.set_kimi_desktop_monitoring_preferences({"conv-9"}, set(), set())
+    assert "kimi_desktop:conv-9" in window.cards
+    manager.close()
+
+
+def test_kimi_desktop_visible_by_default_in_fresh_window(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    assert "kimi_desktop" in window.visible_agent_types
+    manager.close()
