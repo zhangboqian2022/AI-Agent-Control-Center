@@ -8,3 +8,15 @@ Adapter 的职责是把第三方 Agent 的进程或输出转换为统一 `TaskSt
 
 新增 Adapter 必须为进程检测、每个显式状态模式、模糊文本不误报、ANSI 与超长行编写测试。核心 GUI 和 API 不应增加对具体 Agent 类型的分支。
 
+## Kimi Desktop（本地发现）
+
+AACC 同时监控 Kimi 桌面版（Kimi.app，`com.moonshot.kimichat`）的任务，
+数据源为 `~/Library/Application Support/kimi-desktop/daimon-share/daimon/`：
+
+- `agents/main/sessions/hosted-logical/conversations.sqlite` 提供会话目录
+  （只读打开，仅读取元数据列）。带 `kernel_session_dir` 的会话视为 Agent
+  任务，状态判定复用 Kimi Code 的 mtime + wire.jsonl 回合边界分析；
+  其余视为聊天会话，仅区分「正在生成回复 / 空闲」。
+- 任务 id 前缀 `kimi_desktop:`，卡片聚焦走 `mac_app` 机制（`open -b`），
+  与 Codex 卡片聚焦 Codex.app 相同。
+
