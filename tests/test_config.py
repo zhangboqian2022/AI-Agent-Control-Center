@@ -7,6 +7,7 @@ import yaml
 
 from aacc.config import (
     create_default_config,
+    default_config,
     is_valid_token,
     load_config,
     rotate_api_token,
@@ -137,3 +138,7 @@ def test_load_config_rejects_invalid_adapter_regex(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="regular expression"):
         load_config(path)
+
+
+def test_default_visible_agent_types_include_kimi_desktop() -> None:
+    assert "kimi_desktop" in default_config().app.visible_agent_types
