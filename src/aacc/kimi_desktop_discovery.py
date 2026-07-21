@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,7 +29,6 @@ _CONVERSATIONS_QUERY = """
 SELECT conversation_id, title, updated_at_ms, kernel_session_dir, workspace_path
 FROM conversations
 """
-_KIMI_DESKTOP_PROCESS_PATTERN = re.compile(r"^kimi$", re.IGNORECASE)
 _NAME_MAX_LENGTH = 20
 
 
@@ -267,12 +265,9 @@ class KimiDesktopLocalDiscovery:
     @staticmethod
     def _app_process_alive() -> bool:
         try:
-            for process in psutil.process_iter(["name", "exe"]):
+            for process in psutil.process_iter(["exe"]):
                 exe = process.info.get("exe")
                 if isinstance(exe, str) and "/Kimi.app/" in exe:
-                    return True
-                name = process.info.get("name")
-                if isinstance(name, str) and _KIMI_DESKTOP_PROCESS_PATTERN.search(name):
                     return True
         except (psutil.Error, OSError):
             return False
