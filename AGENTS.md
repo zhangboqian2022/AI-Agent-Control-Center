@@ -61,3 +61,8 @@ scripts/install.sh
 - 送审副本：`~/Desktop/summit01`（rc.4 之后 HEAD `6369ba6` 的导出；如需
   rc.5 要重新导出）。
 - 新工作直接在 main 上开新分支。
+- 2026-07-21：Kimi Desktop（Kimi.app）监控支持已合入 main（HEAD `ee20920`，
+  分支 feat/kimi-desktop-monitoring 已删）。新模块
+  `src/aacc/kimi_desktop_discovery.py` 读 daimon `conversations.sqlite`
+  （WAL 感知的只读打开）；GUI 第三品牌接线完整。注意：本机已部署的
+  AACC.app 仍是 rc.5，不含此功能；要实机验证需重新 build + install。
