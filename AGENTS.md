@@ -56,10 +56,14 @@ scripts/install.sh
   （WAL 感知只读）发现会话，Agent 会话复用 Kimi Code 回合判定，聊天会话
   简化状态，卡片聚焦走 `mac_app` + `com.moonshot.kimichat`；GUI 第三品牌
   接线；发现健康报告改品牌字典合并。
-- 已部署：`~/Applications/AACC.app` 已替换为 main 构建，但替换发生在升版
-  提交之前，关于对话框仍显示 rc.5；重新跑 `scripts/install.sh` 即可对齐 rc.6。
+- 已部署：`~/Applications/AACC.app` 已对齐 rc.6（2026-07-21 晚用
+  `SKIP_BUILD=1 scripts/install.sh` 重装；此前 17:18 的"rc.5"构建其实不含
+  Kimi Desktop 功能——该功能 20:33 才首次提交，勿再以构建时间推断内容）。
   DMG：`~/Desktop/AACC-1.3.0-rc.6.dmg`，
   SHA-256 `1adb44eec47bb11d526a4c318e8e00e4770ac963028bc53701726cf57a73deff`。
+- 已确认的数据源限制：Kimi Desktop 的 Chat 标签页是 kimi.com 网页套壳，
+  会话在云端，本地 daimon 无记录，AACC 无法监控；仅 Agent/Work 标签页
+  会话会写入 daimon `conversations.sqlite`。
 - 送审副本：`~/Desktop/summit01`（rc.4 之后 HEAD `6369ba6` 的导出；如需
   rc.6 要重新导出）。
 - 新工作直接在 main 上开新分支。
