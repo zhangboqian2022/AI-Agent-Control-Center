@@ -54,7 +54,7 @@ scripts/install.sh
   运行中，超时回落空闲以防崩溃会话永远显示运行。
 - 已部署 rc.5：`~/Applications/AACC.app`（运行中），健康接口返回 1.3.0rc5。
   DMG：`~/Desktop/AACC-1.3.0-rc.5.dmg`，
-  SHA-256 `4acade9e03b290fad4a1d562b79ac445c8fdecd81e981cd62acf8dfcb7d37bab`。
+  SHA-256 `6319903bbae77cf87f554c83c293f54273854586ccc50a4c3eb22b3455d04f5e`。
 - 送审副本：`~/Desktop/summit01`（rc.4 之后 HEAD `6369ba6` 的导出；如需
   rc.5 要重新导出）。
 - 新工作直接在 main 上开新分支。
