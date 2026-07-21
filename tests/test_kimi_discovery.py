@@ -306,6 +306,56 @@ def test_new_turn_activity_after_completion_is_running(tmp_path: Path) -> None:
     assert tasks[0].state.message == "正在运行"
 
 
+def test_active_turn_with_quiet_wire_is_still_running(tmp_path: Path) -> None:
+    # A turn in progress can leave the wire untouched for minutes (a slow LLM
+    # response or a long tool call); it must not fall back to idle.
+    home = tmp_path / ".kimi-code"
+    session_id = "session_quiet-0008"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="长工具调用", updated_at="2026-07-18T11:00:00Z")
+    _write_wire_events(
+        session_dir,
+        [
+            {"type": "usage.record", "usageScope": "turn"},
+            {"type": "turn.prompt"},
+            {"type": "llm.request"},
+        ],
+    )
+    quiet = datetime(2026, 7, 18, 11, 50, tzinfo=UTC)  # 10 min ago: past the 90s window
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": quiet, "state.json": quiet}),
+        agent_process_alive=lambda: True,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.RUNNING
+    assert tasks[0].state.message == "正在运行"
+
+
+def test_active_turn_window_is_bounded(tmp_path: Path) -> None:
+    # A crashed session can leave the wire mid-turn forever; once activity is
+    # older than the active-turn window it must fall back to idle.
+    home = tmp_path / ".kimi-code"
+    session_id = "session_crashed-0009"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="崩溃", updated_at="2026-07-18T09:00:00Z")
+    _write_wire_events(session_dir, [{"type": "turn.prompt"}, {"type": "llm.request"}])
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": STALE, "state.json": STALE}),
+        agent_process_alive=lambda: True,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.IDLE
+    assert tasks[0].state.message == "空闲"
+
+
 def test_completed_turn_detected_beyond_oversized_irrelevant_event(tmp_path: Path) -> None:
     home = tmp_path / ".kimi-code"
     session_id = "session_oversize-0001"

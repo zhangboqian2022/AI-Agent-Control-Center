@@ -119,6 +119,7 @@ class KimiLocalDiscovery:
         file_modified_at: FileModifiedAt | None = None,
         agent_process_alive: ProcessAlive | None = None,
         activity_window_seconds: float = 90.0,
+        active_turn_window_seconds: float = 1800.0,
         max_tasks: int = 20,
     ) -> None:
         home = kimi_home or Path.home() / ".kimi-code"
@@ -128,6 +129,13 @@ class KimiLocalDiscovery:
         self.file_modified_at = file_modified_at or self._file_modified_at
         self.agent_process_alive = agent_process_alive or self._agent_process_alive
         self.activity_window_seconds = max(10.0, activity_window_seconds)
+        # A turn in progress may leave the wire untouched for minutes (a slow
+        # LLM response or a long tool call), so a turn-active wire gets a much
+        # longer window before the session falls back to idle. The bound keeps
+        # a crashed session (wire stuck mid-turn) from showing running forever.
+        self.active_turn_window_seconds = max(
+            self.activity_window_seconds, active_turn_window_seconds
+        )
         self.max_tasks = max(1, min(max_tasks, 20))
 
     def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
@@ -141,7 +149,8 @@ class KimiLocalDiscovery:
             session_id = session["id"]
             activity_at = self._activity_at(session["session_dir"])
             updated_at = activity_at if activity_at is not None else session["updated_at"]
-            if self._turn_completed(session["session_dir"]):
+            turn_completed = self._turn_completed(session["session_dir"])
+            if turn_completed is True:
                 status = TaskStatus.COMPLETED
                 message = "回合已完成"
                 confidence = 0.96
@@ -149,6 +158,14 @@ class KimiLocalDiscovery:
                 status = TaskStatus.RUNNING
                 message = "正在运行"
                 confidence = 0.9
+            elif (
+                turn_completed is False
+                and activity_at is not None
+                and self._is_within_active_turn_window(now, activity_at)
+            ):
+                status = TaskStatus.RUNNING
+                message = "正在运行"
+                confidence = 0.8
             else:
                 if process_alive is None:
                     process_alive = self.agent_process_alive()
@@ -303,6 +320,9 @@ class KimiLocalDiscovery:
 
     def _is_recent(self, now: datetime, observed_at: datetime) -> bool:
         return (now - observed_at).total_seconds() <= self.activity_window_seconds
+
+    def _is_within_active_turn_window(self, now: datetime, observed_at: datetime) -> bool:
+        return (now - observed_at).total_seconds() <= self.active_turn_window_seconds
 
     def _turn_completed(self, session_dir: Path) -> bool | None:
         """Detect a finished turn from the wire, reading event types only.
