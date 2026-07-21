@@ -57,6 +57,26 @@ def test_window_starts_with_no_codex_cards_until_tasks_are_selected(
     manager.close()
 
 
+def test_about_button_shows_current_dmg_version(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    from aacc import public_version
+
+    window, manager = build_window(tmp_path, qtbot)
+    shown: dict[str, str] = {}
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "aacc.gui.QMessageBox.about",
+        lambda _parent, title, text: shown.update(title=title, text=text),
+    )
+
+    window.about_button.click()
+
+    assert "关于" in shown["title"]
+    assert public_version() in shown["text"]
+    assert f"AACC-{public_version()}.dmg" in shown["text"]
+    manager.close()
+
+
 def test_all_statuses_have_a_color() -> None:
     assert set(STATUS_COLORS) == set(TaskStatus)
 

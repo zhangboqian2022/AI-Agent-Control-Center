@@ -5,6 +5,7 @@
 ## 1.3.0-rc.5 — 2026-07-21
 
 - [Stability] Fixed Kimi sessions dropping to idle during long in-turn silences (slow LLM responses, long tool calls, or context summarization): a turn still in progress now keeps the running status within a bounded active-turn window (default 30 minutes) instead of going idle after 90 seconds without file activity; sessions past the window still fall back to idle so crashed sessions cannot show running forever.
+- [UX] Added an About dialog (ⓘ in the panel header) showing the running version and the matching DMG installer name.
 
 ## 1.3.0-rc.4 — 2026-07-20
 

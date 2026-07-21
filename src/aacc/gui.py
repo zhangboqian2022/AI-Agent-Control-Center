@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from aacc import public_version
 from aacc.automation import AutomationError
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
@@ -697,13 +698,16 @@ class MainWindow(QWidget):
         compact_button = QPushButton("↕")
         compact_button.setToolTip("紧凑 / 展开")
         compact_button.clicked.connect(lambda: self.set_compact(not self.compact_mode))
+        self.about_button = QPushButton("ⓘ")
+        self.about_button.setToolTip("关于 AACC")
+        self.about_button.clicked.connect(self.show_about)
         settings_button = QPushButton("⚙")
         settings_button.setToolTip("设置")
         settings_button.clicked.connect(self.open_settings)
         hide_button = QPushButton("—")
         hide_button.setToolTip("隐藏到菜单栏")
         hide_button.clicked.connect(self.hide)
-        for button in (compact_button, settings_button, hide_button):
+        for button in (compact_button, self.about_button, settings_button, hide_button):
             button.setObjectName("headerButton")
             button.setFixedSize(28, 28)
             header.addWidget(button)
@@ -1330,6 +1334,14 @@ class MainWindow(QWidget):
 
     def open_settings(self) -> None:
         SettingsDialog(self).exec()
+
+    def show_about(self) -> None:
+        version = public_version()
+        QMessageBox.about(
+            self,
+            "关于 AACC",
+            f"AI Agent Control Center\n版本 {version}\n安装包 AACC-{version}.dmg",
+        )
 
     def toggle_visible(self) -> None:
         if self.isVisible():
