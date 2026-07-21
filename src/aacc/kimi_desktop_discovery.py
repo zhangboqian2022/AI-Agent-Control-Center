@@ -46,7 +46,7 @@ class KimiDesktopSession:
 class KimiDesktopLocalDiscovery:
     """Reads only safe Kimi Desktop (daimon) conversation metadata.
 
-    The conversations sqlite is opened read-only/immutable and only metadata
+    The conversations sqlite is opened read-only and only metadata
     columns are selected — prompts, responses and other content columns are
     never read. Agent conversations reuse the Kimi Code session-status
     evaluation against their kernel session directory; chat conversations
@@ -221,7 +221,7 @@ class KimiDesktopLocalDiscovery:
             return []
         try:
             connection = sqlite3.connect(
-                f"file:{self.conversations_path}?mode=ro&immutable=1", uri=True
+                f"file:{self.conversations_path}?mode=ro", uri=True
             )
             try:
                 rows = connection.execute(_CONVERSATIONS_QUERY).fetchall()
