@@ -46,6 +46,7 @@ from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
+from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
@@ -217,7 +218,7 @@ class TaskCard(QFrame):
         self.updated_label.hide()
         root.addWidget(self.details, 1)
 
-        if task.id.startswith(("codex:", "kimi:")):
+        if task.id.startswith(("codex:", "kimi:", "kimi_desktop:")):
             remove_button = QPushButton("×")
             remove_button.setObjectName("removeTaskButton")
             remove_button.setAccessibleName("从面板移除")
@@ -308,7 +309,7 @@ class TaskCard(QFrame):
             )
         copy_action = menu.addAction("复制任务信息")
         copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
-        if self.task.id.startswith(("codex:", "kimi:")):
+        if self.task.id.startswith(("codex:", "kimi:", "kimi_desktop:")):
             rename_action = menu.addAction("重命名任务")
             rename_action.triggered.connect(
                 lambda: self.action_requested.emit("rename", self.task.id)
@@ -535,6 +536,12 @@ class MainWindow(QWidget):
         kimi_muted_ids: Callable[[], set[str]] | None = None,
         set_kimi_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
         | None = None,
+        kimi_desktop_sessions: Callable[[], list[KimiDesktopSession]] | None = None,
+        kimi_desktop_auto_active_ids: Callable[[], set[str]] | None = None,
+        kimi_desktop_retained_ids: Callable[[], set[str]] | None = None,
+        kimi_desktop_muted_ids: Callable[[], set[str]] | None = None,
+        set_kimi_desktop_monitoring_preferences: Callable[[set[str], set[str], set[str]], None]
+        | None = None,
         rotate_api_token_callback: Callable[[], str] | None = None,
         discovery_health: Callable[[], DiscoveryHealth] | None = None,
         subscribe_discovery_health: (
@@ -573,6 +580,14 @@ class MainWindow(QWidget):
         self._kimi_muted_ids = kimi_muted_ids or (lambda: set())
         self._set_kimi_monitoring_preferences = set_kimi_monitoring_preferences or (
             lambda _manual_ids, _retained_ids, _muted_ids: None
+        )
+        self._kimi_desktop_sessions = kimi_desktop_sessions or (lambda: [])
+        self._kimi_desktop_auto_active_ids = kimi_desktop_auto_active_ids or (lambda: set())
+        self._kimi_desktop_retained_ids = kimi_desktop_retained_ids or (lambda: set())
+        self._kimi_desktop_muted_ids = kimi_desktop_muted_ids or (lambda: set())
+        self._set_kimi_desktop_monitoring_preferences = (
+            set_kimi_desktop_monitoring_preferences
+            or (lambda _manual_ids, _retained_ids, _muted_ids: None)
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_health = (discovery_health or DiscoveryHealth)()
@@ -638,6 +653,30 @@ class MainWindow(QWidget):
         else:
             self.kimi_muted_ids = set()
         self._apply_kimi_monitoring_preferences()
+        saved_kimi_desktop_tasks = self._settings.value("kimi_desktop_manual_tasks")
+        if isinstance(saved_kimi_desktop_tasks, str):
+            self.kimi_desktop_manual_ids = {saved_kimi_desktop_tasks}
+        elif isinstance(saved_kimi_desktop_tasks, list):
+            self.kimi_desktop_manual_ids = {str(value) for value in saved_kimi_desktop_tasks}
+        else:
+            self.kimi_desktop_manual_ids = set()
+        saved_kimi_desktop_retained = self._settings.value("kimi_desktop_retained_tasks")
+        if isinstance(saved_kimi_desktop_retained, str):
+            self.kimi_desktop_retained_ids = {saved_kimi_desktop_retained}
+        elif isinstance(saved_kimi_desktop_retained, list):
+            self.kimi_desktop_retained_ids = {
+                str(value) for value in saved_kimi_desktop_retained
+            }
+        else:
+            self.kimi_desktop_retained_ids = set()
+        saved_kimi_desktop_muted = self._settings.value("kimi_desktop_muted_tasks")
+        if isinstance(saved_kimi_desktop_muted, str):
+            self.kimi_desktop_muted_ids = {saved_kimi_desktop_muted}
+        elif isinstance(saved_kimi_desktop_muted, list):
+            self.kimi_desktop_muted_ids = {str(value) for value in saved_kimi_desktop_muted}
+        else:
+            self.kimi_desktop_muted_ids = set()
+        self._apply_kimi_desktop_monitoring_preferences()
         saved_custom_names = self._settings.value("custom_task_names")
         try:
             parsed_names = json.loads(saved_custom_names) if saved_custom_names else {}
@@ -657,6 +696,7 @@ class MainWindow(QWidget):
             self.visible_agent_types = set(self.config.app.visible_agent_types)
         # New agent types default to visible even for existing stored settings.
         self.visible_agent_types.add("kimi_code")
+        self.visible_agent_types.add("kimi_desktop")
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
@@ -836,6 +876,8 @@ class MainWindow(QWidget):
         self._sync_codex_muted_ids()
         self._sync_kimi_retained_ids()
         self._sync_kimi_muted_ids()
+        self._sync_kimi_desktop_retained_ids()
+        self._sync_kimi_desktop_muted_ids()
         self.sync_cards()
         for state in self.manager.list():
             self._apply_state(state)
@@ -864,6 +906,16 @@ class MainWindow(QWidget):
                 and task.id.removeprefix("kimi:") in self.kimi_selected_ids
             )
         ]
+        tasks = [
+            task
+            for task in tasks
+            if task.agent.type != "kimi_desktop"
+            or (
+                task.id.startswith("kimi_desktop:")
+                and task.id.removeprefix("kimi_desktop:")
+                in self.kimi_desktop_selected_ids
+            )
+        ]
         return tasks
 
     @property
@@ -884,6 +936,17 @@ class MainWindow(QWidget):
     def kimi_auto_active_ids(self) -> set[str]:
         return set(self._kimi_auto_active_ids())
 
+    @property
+    def kimi_desktop_selected_ids(self) -> set[str]:
+        return (
+            self.kimi_desktop_manual_ids
+            | self.kimi_desktop_retained_ids
+            | self.kimi_desktop_auto_active_ids()
+        ) - self.kimi_desktop_muted_ids
+
+    def kimi_desktop_auto_active_ids(self) -> set[str]:
+        return set(self._kimi_desktop_auto_active_ids())
+
     def sync_cards(self) -> None:
         states = {state.task_id: state for state in self.manager.list()}
         visible = self._visible_tasks()
@@ -903,6 +966,7 @@ class MainWindow(QWidget):
                 new_card.action_requested.connect(self._perform_action)
                 new_card.remove_requested.connect(self.remove_codex_task)
                 new_card.remove_requested.connect(self.remove_kimi_task)
+                new_card.remove_requested.connect(self.remove_kimi_desktop_task)
                 new_card.set_compact(self.compact_mode)
                 self.cards[task.id] = new_card
             elif existing_card.display_name != display_name:
@@ -922,7 +986,7 @@ class MainWindow(QWidget):
         self.retained_header.setVisible(bool(terminal_tasks))
         self.retained_cards_widget.setVisible(bool(terminal_tasks))
         self.clear_retained_button.setVisible(
-            any(task.id.startswith(("codex:", "kimi:")) for task in terminal_tasks)
+            any(task.id.startswith(("codex:", "kimi:", "kimi_desktop:")) for task in terminal_tasks)
         )
         self._schedule_adaptive_resize()
 
@@ -1079,6 +1143,69 @@ class MainWindow(QWidget):
             self.kimi_muted_ids = set(muted_ids)
             self._settings.setValue("kimi_muted_tasks", sorted(self.kimi_muted_ids))
 
+    def set_kimi_desktop_selected_ids(self, selected_ids: set[str]) -> None:
+        self.set_kimi_desktop_monitoring_preferences(selected_ids, set(), set())
+
+    def set_kimi_desktop_monitoring_preferences(
+        self, manual_ids: set[str], retained_ids: set[str], muted_ids: set[str]
+    ) -> None:
+        self.kimi_desktop_manual_ids = set(manual_ids)
+        self.kimi_desktop_retained_ids = set(retained_ids) - self.kimi_desktop_manual_ids
+        self.kimi_desktop_muted_ids = set(muted_ids) - self.kimi_desktop_manual_ids
+        self._settings.setValue(
+            "kimi_desktop_manual_tasks", sorted(self.kimi_desktop_manual_ids)
+        )
+        self._settings.setValue(
+            "kimi_desktop_retained_tasks", sorted(self.kimi_desktop_retained_ids)
+        )
+        self._settings.setValue(
+            "kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids)
+        )
+        self._apply_kimi_desktop_monitoring_preferences()
+        self.sync_cards()
+
+    def _apply_kimi_desktop_monitoring_preferences(self) -> None:
+        self._set_kimi_desktop_monitoring_preferences(
+            self.kimi_desktop_manual_ids,
+            self.kimi_desktop_retained_ids,
+            self.kimi_desktop_muted_ids,
+        )
+
+    def _sync_kimi_desktop_retained_ids(self) -> None:
+        retained_ids = self._kimi_desktop_retained_ids()
+        if retained_ids != self.kimi_desktop_retained_ids:
+            self.kimi_desktop_retained_ids = set(retained_ids)
+            self._settings.setValue(
+                "kimi_desktop_retained_tasks", sorted(self.kimi_desktop_retained_ids)
+            )
+
+    def _sync_kimi_desktop_muted_ids(self) -> None:
+        muted_ids = self._kimi_desktop_muted_ids()
+        if muted_ids != self.kimi_desktop_muted_ids:
+            self.kimi_desktop_muted_ids = set(muted_ids)
+            self._settings.setValue(
+                "kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids)
+            )
+
+    def remove_kimi_desktop_task(self, task_id: str) -> None:
+        if not task_id.startswith("kimi_desktop:"):
+            return
+        session_id = task_id.removeprefix("kimi_desktop:")
+        self.kimi_desktop_manual_ids.discard(session_id)
+        self.kimi_desktop_retained_ids.discard(session_id)
+        self.kimi_desktop_muted_ids.add(session_id)
+        self._settings.setValue(
+            "kimi_desktop_manual_tasks", sorted(self.kimi_desktop_manual_ids)
+        )
+        self._settings.setValue(
+            "kimi_desktop_retained_tasks", sorted(self.kimi_desktop_retained_ids)
+        )
+        self._settings.setValue(
+            "kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids)
+        )
+        self._apply_kimi_desktop_monitoring_preferences()
+        self.sync_cards()
+
     def remove_kimi_task(self, task_id: str) -> None:
         if not task_id.startswith("kimi:"):
             return
@@ -1093,7 +1220,7 @@ class MainWindow(QWidget):
         self.sync_cards()
 
     def rename_task(self, task_id: str) -> None:
-        if not task_id.startswith(("codex:", "kimi:")):
+        if not task_id.startswith(("codex:", "kimi:", "kimi_desktop:")):
             return
         try:
             task = self.manager.task_config(task_id)
@@ -1131,7 +1258,7 @@ class MainWindow(QWidget):
         task_ids = [
             task_id
             for task_id in self._card_order_ids
-            if task_id.startswith(("codex:", "kimi:"))
+            if task_id.startswith(("codex:", "kimi:", "kimi_desktop:"))
             and self._is_terminal(self.manager.get(task_id))
         ]
         if not task_ids:
@@ -1148,6 +1275,8 @@ class MainWindow(QWidget):
         for task_id in task_ids:
             if task_id.startswith("codex:"):
                 self.remove_codex_task(task_id)
+            elif task_id.startswith("kimi_desktop:"):
+                self.remove_kimi_desktop_task(task_id)
             else:
                 self.remove_kimi_task(task_id)
 
