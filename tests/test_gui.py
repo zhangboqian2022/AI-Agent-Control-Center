@@ -21,11 +21,13 @@ from aacc.discovery_service import DiscoveryHealth
 from aacc.gui import (
     STATUS_COLORS,
     CodexTaskSelectionDialog,
+    KimiDesktopTaskSelectionDialog,
     KimiTaskSelectionDialog,
     MainWindow,
     TaskCard,
     _elapsed,
 )
+from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
@@ -53,7 +55,7 @@ def test_window_starts_with_no_codex_cards_until_tasks_are_selected(
 ) -> None:
     window, manager = build_window(tmp_path, qtbot)
     assert len(window.findChildren(TaskCard)) == 0
-    assert "未选择 Codex / Kimi Code 任务" in window.empty_tasks_label.text()
+    assert "未选择 Codex / Kimi Code / Kimi Desktop 任务" in window.empty_tasks_label.text()
     manager.close()
 
 
@@ -1177,4 +1179,47 @@ def test_kimi_desktop_visible_by_default_in_fresh_window(
 ) -> None:
     window, manager = build_window(tmp_path, qtbot)
     assert "kimi_desktop" in window.visible_agent_types
+    manager.close()
+
+
+def test_kimi_desktop_task_selection_dialog_applies_preferences(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager, applied = build_kimi_desktop_window(tmp_path, qtbot)
+    sessions = [
+        KimiDesktopSession(
+            session_id="conv-1",
+            title="桌面会话",
+            updated_at=datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+        )
+    ]
+    dialog = KimiDesktopTaskSelectionDialog(sessions, set(), set(), window)
+    assert dialog.tasks.count() == 1
+    dialog.tasks.item(0).setCheckState(Qt.CheckState.Checked)
+    selected = dialog.selected_ids()
+    assert selected == {"conv-1"}
+    manager.close()
+
+
+def test_kimi_desktop_health_warning_merges_all_brands(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window.show()
+    assert not window.discovery_warning.isVisible()
+    window.kimi_desktop_discovery_health_received.emit(
+        DiscoveryHealth(degraded=True, summary="index unreadable", brand="Kimi Desktop")
+    )
+    assert window.discovery_warning.isVisible()
+    assert "Kimi Desktop" in window.discovery_warning_label.text()
+    window.kimi_desktop_discovery_health_received.emit(
+        DiscoveryHealth(brand="Kimi Desktop")
+    )
+    assert not window.discovery_warning.isVisible()
+    manager.close()
+
+
+def test_empty_tasks_label_mentions_kimi_desktop(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    assert "Kimi Desktop" in window.empty_tasks_label.text()
     manager.close()
