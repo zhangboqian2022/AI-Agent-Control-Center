@@ -26,7 +26,10 @@ scripts/install.sh
 
 - `src/aacc/codex_discovery.py` / `kimi_discovery.py`：从 `~/.codex`、`~/.kimi-code`
   读取本地会话元数据，判定运行/等待/完成。
-- `src/aacc/discovery_service.py`：`LocalDiscoveryService` 后台轮询。
+- `src/aacc/kimi_desktop_discovery.py`：第三发现源，读取 Kimi 桌面版
+  daimon 的 sqlite 会话目录（只读），Agent 任务状态复用 kimi 的回合判定。
+- `src/aacc/discovery_service.py`：`LocalDiscoveryService` /
+  `KimiDesktopDiscoveryService` 后台轮询。
   核心语义：manual/retained/muted/auto-active 四个集合；**运行中的任务每次
   轮询自动解除 muted**（muted 只对不活跃任务生效）。
 - `src/aacc/gui.py`：`MainWindow` / `TaskCard`。QSettings 持久化：
