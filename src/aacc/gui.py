@@ -290,12 +290,6 @@ class TaskCard(QFrame):
         menu = QMenu(self)
         actions = [
             ("切换到任务", "focus"),
-            ("启动语音输入", "voice"),
-            ("发送 Enter", "key:ENTER"),
-            ("发送 1", "key:1"),
-            ("发送 2", "key:2"),
-            ("发送 ↑", "key:UP"),
-            ("发送 ↓", "key:DOWN"),
         ]
         for label, command in actions:
             action = menu.addAction(label)

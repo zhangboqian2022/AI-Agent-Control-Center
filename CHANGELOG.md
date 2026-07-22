@@ -2,6 +2,11 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- [UX] Switching to a task now restores its minimized windows (both terminal and macOS app targets), so the focused window actually appears on screen ready for typing.
+- [UX] Removed the voice-input and key-injection actions from the card context menu; the underlying automation remains available through global hotkeys.
+
 ## 1.3.0 — 2026-07-22
 
 - [UX] Kimi Code cards now show the session's working-directory name next to the status (full path in the tooltip), making it easy to tell concurrent projects apart.
