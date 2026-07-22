@@ -13,7 +13,10 @@ from pydantic import ValidationError
 from aacc.models import AgentConfig, AppConfig, TaskConfig, TerminalConfig
 
 CURRENT_CONFIG_VERSION = 1
-PLACEHOLDER_TOKENS = {"change-me", "replace-me", "your-token-here"}
+# Placeholder-shaped prefixes are never valid credentials: the shipped example
+# config once carried a long placeholder that passed every other check, which
+# would have let users run the API with a public constant as the token.
+_PLACEHOLDER_PREFIXES = ("change-me", "replace-", "your-token", "placeholder")
 Migration = Callable[[dict[str, Any]], dict[str, Any]]
 
 
@@ -82,7 +85,7 @@ def is_valid_token(value: str) -> bool:
         len(value) >= 32
         and value.isprintable()
         and not any(character.isspace() for character in value)
-        and value not in PLACEHOLDER_TOKENS
+        and not value.startswith(_PLACEHOLDER_PREFIXES)
     )
 
 
