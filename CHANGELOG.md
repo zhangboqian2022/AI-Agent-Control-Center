@@ -2,6 +2,14 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- [Security] `save_config` now rejects a symlinked configuration directory (defense in depth alongside the existing config-file symlink check).
+- [Stability] Card removal goes through a single dispatch funnel that logs an ERROR for task ids with an unknown brand prefix instead of silently ignoring them.
+- [Performance] Process-liveness probes (Kimi Code / Kimi Desktop discovery) cache the matching PID and only rescan the process tree after it dies or changes identity, instead of walking the whole tree every poll.
+- [Delivery] CI now runs a non-blocking `pip-audit` dependency vulnerability scan.
+- [Docs] Clarified that the Kimi Desktop catalog is opened `mode=ro` deliberately, not `immutable=1` (WAL freshness), updated the discovery-service count and the signing wording in the docs, and added a TCC contingency note for future daimon data-path changes.
+
 ## 1.3.2 — 2026-07-22
 
 - [Security] Placeholder-shaped API tokens are now rejected by prefix (`change-me`, `replace-`, `your-token`, `placeholder`), and the shipped example config leaves the token empty — loading it always rotates to a fresh random credential instead of running with a public constant.

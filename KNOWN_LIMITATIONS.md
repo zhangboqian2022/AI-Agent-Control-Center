@@ -1,6 +1,7 @@
 # AACC Known Limitations
 
-- This GitHub prerelease is ad-hoc signed and not Apple-notarized. Verify its SHA-256 before using **Open Anyway**. Stable `v1.3.0` is not released under this condition.
+- This release is signed with a local self-signed certificate and is not Apple-notarized. Verify its SHA-256 before using **Open Anyway**.
+- Kimi Desktop monitoring reads only the daimon catalog under `~/Library/Application Support/kimi-desktop` (WAL-aware `mode=ro`, deliberately not `immutable=1` so fresh WAL content stays visible). If a future Kimi Desktop version moves this data outside Application Support, disk-read (TCC) permission must be re-evaluated. The Chat tab is a kimi.com web shell whose conversations live in the cloud and cannot be monitored.
 - Desktop automation defaults to a five-second osascript timeout, configurable from 2 to 15 seconds. A slow first activation may need a higher value.
 - Accessibility permission is required for global hotkeys and keyboard/dictation injection. App focus without injection remains available.
 - API credential rotation is local-GUI-only. The old token is invalid immediately; there is no grace period or remote rotation endpoint.
