@@ -286,7 +286,14 @@ class KimiLocalDiscovery:
                         finished_at=updated_at if status is TaskStatus.COMPLETED else None,
                         pid=None,
                         session_id=session_id,
-                        metadata={"discovered": True},
+                        metadata={
+                            "discovered": True,
+                            **(
+                                {"work_dir": session["work_dir"]}
+                                if session["work_dir"]
+                                else {}
+                            ),
+                        },
                     ),
                 )
             )
@@ -344,6 +351,7 @@ class KimiLocalDiscovery:
             session_id = item.get("sessionId")
             if not isinstance(session_id, str) or not session_id:
                 continue
+            work_dir = item.get("workDir")
             session_dir = item.get("sessionDir")
             if isinstance(session_dir, str) and session_dir:
                 session_path = Path(session_dir)
@@ -357,6 +365,7 @@ class KimiLocalDiscovery:
                 "session_dir": session_path,
                 "title": title[:120],
                 "updated_at": updated_at,
+                "work_dir": work_dir if isinstance(work_dir, str) and work_dir else None,
             }
             previous = sessions_by_id.get(session_id)
             if previous is None or session["updated_at"] >= previous["updated_at"]:

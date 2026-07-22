@@ -5,6 +5,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import UTC, datetime
 from importlib import resources
+from pathlib import PurePath
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -188,8 +189,13 @@ class TaskCard(QFrame):
         meta_row.setSpacing(7)
         self.status_label = QLabel()
         self.status_label.setObjectName("statusLabel")
+        self.workdir_label = ElidedLabel("")
+        self.workdir_label.setObjectName("workdirLabel")
+        self.workdir_label.setMaximumWidth(140)
+        self.workdir_label.hide()
         meta_row.addWidget(self.agent_label)
         meta_row.addWidget(self.status_label)
+        meta_row.addWidget(self.workdir_label)
         meta_row.addStretch()
         details_layout.addLayout(meta_row)
 
@@ -249,6 +255,13 @@ class TaskCard(QFrame):
         self.dot.setStyleSheet(f"color: {color}; font-size: {STATUS_LIGHT_FONT_SIZE}px;")
         self.status_label.setText(STATUS_NAMES[state.status])
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
+        work_dir = state.metadata.get("work_dir")
+        if self.task.agent.type == "kimi_code" and isinstance(work_dir, str) and work_dir:
+            self.workdir_label.setText(f"· {PurePath(work_dir).name}")
+            self.workdir_label.setToolTip(work_dir)
+            self.workdir_label.show()
+        else:
+            self.workdir_label.hide()
         self.message_label.setText(state.message or "暂无状态说明")
         self.updated_label.setText(
             f"最后活动：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
