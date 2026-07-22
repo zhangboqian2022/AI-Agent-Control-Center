@@ -694,6 +694,50 @@ def test_only_selected_kimi_tasks_are_visible(tmp_path: Path, qtbot: object) -> 
     manager.close()
 
 
+def test_kimi_card_shows_work_dir_basename_next_to_status(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="kimi:workdir",
+        slot=1,
+        name="带目录的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(
+        task,
+        TaskState.new(
+            task.id,
+            "running",
+            source="kimi_local",
+            metadata={"work_dir": "/Users/test/Desktop/codelight"},
+        ),
+    )
+    window.set_kimi_selected_ids({"workdir"})
+    card = window.cards[task.id]
+
+    assert card.workdir_label.text() == "· codelight"
+    assert not card.workdir_label.isHidden()
+    assert card.workdir_label.toolTip() == "/Users/test/Desktop/codelight"
+    manager.close()
+
+
+def test_codex_card_hides_work_dir_label(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:no-dir",
+        slot=1,
+        name="Codex 任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.set_codex_selected_ids({"no-dir"})
+    card = window.cards[task.id]
+
+    assert card.workdir_label.isHidden()
+    manager.close()
+
+
 def test_kimi_card_exposes_remove_button_and_context_menu_action(
     tmp_path: Path, qtbot: object
 ) -> None:

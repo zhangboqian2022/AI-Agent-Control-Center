@@ -78,6 +78,45 @@ def test_existing_unreadable_session_index_raises_discovery_error(tmp_path: Path
         discovery.catalog()
 
 
+def test_discover_carries_work_dir_in_metadata(tmp_path: Path) -> None:
+    home = tmp_path / ".kimi-code"
+    session_id = "session_workdir-1"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="任务", updated_at="2026-07-18T11:00:00Z")
+
+    discovery = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({}),
+        agent_process_alive=lambda: False,
+    )
+    (task,) = discovery.discover()
+
+    assert task.state.metadata["work_dir"] == "/path/to/project"
+
+
+def test_discover_tolerates_missing_work_dir(tmp_path: Path) -> None:
+    home = tmp_path / ".kimi-code"
+    session_id = "session_noworkdir-1"
+    line = json.dumps(
+        {"sessionId": session_id, "sessionDir": str(_session_dir(home, "proj", session_id))}
+    )
+    _write_index(home, [line])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="任务", updated_at="2026-07-18T11:00:00Z")
+
+    discovery = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({}),
+        agent_process_alive=lambda: False,
+    )
+    (task,) = discovery.discover()
+
+    assert "work_dir" not in task.state.metadata
+
+
 def test_discover_returns_kimi_task_shape(tmp_path: Path) -> None:
     home = tmp_path / ".kimi-code"
     active_id = "session_active-1234"
@@ -110,7 +149,10 @@ def test_discover_returns_kimi_task_shape(tmp_path: Path) -> None:
     assert tasks[0].config.agent.display_name == "Kimi Code"
     assert tasks[0].config.terminal.app_bundle_id == "com.apple.Terminal"
     assert tasks[0].state.source == "kimi_local"
-    assert tasks[0].state.metadata == {"discovered": True}
+    assert tasks[0].state.metadata == {
+        "discovered": True,
+        "work_dir": "/path/to/project",
+    }
     assert tasks[0].state.session_id == active_id
     assert tasks[0].state.pid is None
     assert tasks[0].state.finished_at is None
