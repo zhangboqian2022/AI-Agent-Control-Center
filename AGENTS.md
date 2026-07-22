@@ -16,7 +16,9 @@ Python 3.12+ / PySide6，src 布局，包名 `aacc`。
 # lint 与类型检查（改动后必须都过）
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/aacc
-# 构建 app（PyInstaller + ad-hoc 签名，版本号取 pyproject.toml）
+# 构建 app（PyInstaller；钥匙串里存在 "AACC Local Development" 自签名证书时
+# 自动用它签名——稳定身份让辅助功能授权跨构建保持；否则回退 ad-hoc，
+# 也可用 AACC_CODESIGN_IDENTITY 显式指定。版本号取 pyproject.toml）
 scripts/build_app.sh
 # 安装到 ~/Applications 并启动（SKIP_BUILD=1 复用已有 dist 只重装 runtime）
 scripts/install.sh

@@ -6,6 +6,12 @@ source "$project_root/scripts/release_env.sh"
 validate_release_credentials
 AACC_VERSION="${AACC_VERSION:-1.3.0-rc.6}"
 codesign_identity="${AACC_CODESIGN_IDENTITY:-}"
+if [[ -z "$codesign_identity" ]] && \
+  security find-identity -p codesigning 2>/dev/null | grep -q "AACC Local Development"; then
+  # Stable self-signed identity: keeps TCC (accessibility) grants valid
+  # across rebuilds, unlike ad-hoc signing whose cdhash changes every build.
+  codesign_identity="AACC Local Development"
+fi
 cd "$project_root"
 
 command -v uv >/dev/null 2>&1 || { echo "错误：需要先安装 uv" >&2; exit 1; }
@@ -31,8 +37,15 @@ uv run pyinstaller \
 
 if command -v codesign >/dev/null 2>&1; then
   if [[ -n "$codesign_identity" ]]; then
-    codesign --force --deep --options runtime --timestamp \
-      --sign "$codesign_identity" "$project_root/dist/AACC.app"
+    sign_args=(--force --deep)
+    if [[ "$codesign_identity" == Developer\ ID* ]]; then
+      # Hardened runtime exists for notarization. Self-signed identities have
+      # no Team ID, so its library validation rejects every bundled dylib
+      # ("different Team IDs") and the app cannot launch — only enable it for
+      # real Developer ID certificates.
+      sign_args+=(--options runtime --timestamp)
+    fi
+    codesign "${sign_args[@]}" --sign "$codesign_identity" "$project_root/dist/AACC.app"
   else
     codesign --force --deep --sign - "$project_root/dist/AACC.app"
     echo "提示：使用 ad-hoc 签名；此构建仅用于 RC 预发布。"
