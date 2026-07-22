@@ -51,21 +51,25 @@ scripts/install.sh
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-21）
+## 当前进度（2026-07-22）
 
-- `main`：1.3.0-rc.6 已发布（tag `v1.3.0-rc.6` + GitHub Prerelease 附 DMG）。
-  内容：新增 Kimi Desktop（Kimi.app）监控——从 daimon `conversations.sqlite`
-  （WAL 感知只读）发现会话，Agent 会话复用 Kimi Code 回合判定，聊天会话
-  简化状态，卡片聚焦走 `mac_app` + `com.moonshot.kimichat`；GUI 第三品牌
-  接线；发现健康报告改品牌字典合并。
-- 已部署：`~/Applications/AACC.app` 已对齐 rc.6（2026-07-21 晚用
-  `SKIP_BUILD=1 scripts/install.sh` 重装；此前 17:18 的"rc.5"构建其实不含
-  Kimi Desktop 功能——该功能 20:33 才首次提交，勿再以构建时间推断内容）。
-  DMG：`~/Desktop/AACC-1.3.0-rc.6.dmg`，
-  SHA-256 `1adb44eec47bb11d526a4c318e8e00e4770ac963028bc53701726cf57a73deff`。
+- `main`：**1.3.0 正式版已发布**（tag `v1.3.0` + GitHub Release 附 DMG，
+  非 prerelease）。在 rc.6 基础上新增：Kimi Code 卡片显示工作目录名；
+  面板最小化/隐藏后经托盘、Dock 图标或 Cmd-Tab 都能恢复；辅助功能授权
+  5 秒内生效、热键免重启启停、引导弹窗可加"不再提示"；构建自动使用
+  钥匙串里的稳定自签名 "AACC Local Development" 身份（TCC 授权跨构建
+  保持；hardened runtime 仅限 Developer ID，自签名开了会启动即崩）。
+- 已部署：`~/Applications/AACC.app` 为 1.3.0。
+  DMG：`~/Desktop/AACC-1.3.0.dmg`，
+  SHA-256 `cf99d20c2ee34b0a4d317e580796f5a61963d37e6650c3f7512ae222dd65d709`。
+- 签名背景：辅助功能授权按签名身份匹配，ad-hoc 每次构建哈希都变导致
+  授权失效；稳定自签名解决本机与分发拷贝的重复授权，但 Gatekeeper
+  "不明开发者"警告仍需付费 Developer ID + 公证才能消除（用户已知购买
+  流程，暂未购买）。
 - 已确认的数据源限制：Kimi Desktop 的 Chat 标签页是 kimi.com 网页套壳，
   会话在云端，本地 daimon 无记录，AACC 无法监控；仅 Agent/Work 标签页
-  会话会写入 daimon `conversations.sqlite`。
+  会话会写入 daimon `conversations.sqlite`。2026-07-22 已用数据级仿真
+  端到端验证 Agent 会话"进行中→完成"显示链路正常。
 - 送审副本：`~/Desktop/summit01`（rc.4 之后 HEAD `6369ba6` 的导出；如需
-  rc.6 要重新导出）。
+  1.3.0 要重新导出）。
 - 新工作直接在 main 上开新分支。
