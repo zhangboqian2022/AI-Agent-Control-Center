@@ -6,6 +6,8 @@
 
 AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative focus/input automation.
 
+![AACC panel with tasks in different states](docs/images/panel-overview.png)
+
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-black) ![License](https://img.shields.io/badge/license-MIT-blue) ![Local first](https://img.shields.io/badge/privacy-local--first-18a999)
 
 ## Highlights
