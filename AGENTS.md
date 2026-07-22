@@ -53,7 +53,10 @@ scripts/install.sh
 
 ## 当前进度（2026-07-22）
 
-- `main`：评审整改已合入未发版（HEAD `3637bb0` 之后）。第三方评审
+- `main`：**1.3.2 安全 hotfix 已发布**（tag `v1.3.2` + GitHub Release 附
+  DMG 与 `.sha256` 资产，SHA-256 `bb3d49d5aea5c3e92c4f8e3ed806a035065202c8932a75ab953a388662928967`）。
+  内容即评审接受项（见下）。本机 `~/Applications/AACC.app` 已对齐 1.3.2。
+- 评审整改（1.3.2）：第三方评审
   （P0×1/P1×5/P2×8）逐条对照代码验证后：**接受 9 条已修**——示例配置
   公开占位 token 前缀拒识+置空（P0-1）；Agent 品牌隐藏持久化一次性
   迁移键（P1-1）；doctor 与 app 共用 `resolve_database_path`（P1-4）；
@@ -62,8 +65,7 @@ scripts/install.sh
   （P2-1/2/3/5/8）；补 1.3.1 双语测试报告（P1-2 部分）。
   **驳回 4 条**：CI 已存在（P1-3）；`release_env.sh` 已入库（P2-7）；
   规格无 immutable 声称（P2-9）；版本一致性测试已存在（P1-2 另一半）。
-  P2-10 以手动上传 `AACC-1.3.1.dmg.sha256` 资产了结。
-  评审建议 P0-1 单独 hotfix 发版——**1.3.2 尚未发布，待发**。
+  P2-10 以手动上传 `.dmg.sha256` 资产了结（1.3.1/1.3.2 均已附）。
 - `main`：**1.3.1 已发布**（tag `v1.3.1` + GitHub Release 附 DMG）。
   在 1.3.0 基础上：切换到任务时恢复目标应用已最小化的窗口（终端走
   AppleScript `set miniaturized of windows to false`，mac_app 焦点也从
@@ -73,8 +75,7 @@ scripts/install.sh
   5 秒内生效、热键免重启启停、引导弹窗可加"不再提示"；构建自动使用
   钥匙串里的稳定自签名 "AACC Local Development" 身份（TCC 授权跨构建
   保持；hardened runtime 仅限 Developer ID，自签名开了会启动即崩）。
-- 已部署：`~/Applications/AACC.app` 为 1.3.1。
-  DMG：`~/Desktop/AACC-1.3.1.dmg`，
+- 1.3.1 DMG：`~/Desktop/AACC-1.3.1.dmg`，
   SHA-256 `c748a726441334ba24d3537050ce6a7c4b32fa176808910db9f516da8a231df9`。
 - 签名背景：辅助功能授权按签名身份匹配，ad-hoc 每次构建哈希都变导致
   授权失效；稳定自签名解决本机与分发拷贝的重复授权，但 Gatekeeper
