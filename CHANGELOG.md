@@ -2,6 +2,13 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.3.0 — 2026-07-22
+
+- [UX] Kimi Code cards now show the session's working-directory name next to the status (full path in the tooltip), making it easy to tell concurrent projects apart.
+- [UX] Fixed the panel failing to reopen after being minimized: clicking the tray icon now restores the minimized window instead of hiding it, and clicking the Dock icon (or Cmd-Tabbing back to the app) brings back a hidden panel like other Mac apps.
+- [UX] Accessibility permission changes take effect within seconds while the app is running — global hotkeys start as soon as permission is granted (no restart needed) and stop when it is revoked — and the permission guidance dialog now offers a "do not show again" checkbox.
+- [Delivery] The build signs with the stable self-signed "AACC Local Development" identity when present in the keychain, so macOS accessibility grants survive rebuilds and upgrades; it falls back to ad-hoc signing otherwise.
+
 ## 1.3.0-rc.6 — 2026-07-21
 
 - [Feature] Added Kimi Desktop (Kimi.app) monitoring: conversations are discovered from the daimon runtime's local read-only catalog, agent conversations reuse the Kimi Code turn analysis for full running/waiting/completed status, chats show simplified generating/idle states, and cards focus Kimi.app the same way Codex cards focus Codex.app.
