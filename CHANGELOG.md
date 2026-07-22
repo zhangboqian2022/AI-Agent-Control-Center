@@ -2,7 +2,7 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
-## Unreleased
+## 1.3.3-rc.1 — 2026-07-22
 
 - [Security] `save_config` now rejects a symlinked configuration directory (defense in depth alongside the existing config-file symlink check).
 - [Stability] Card removal goes through a single dispatch funnel that logs an ERROR for task ids with an unknown brand prefix instead of silently ignoring them.

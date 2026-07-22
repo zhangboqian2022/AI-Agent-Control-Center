@@ -18,7 +18,7 @@ If Codex metadata polling repeatedly fails, a yellow banner appears without disc
 
 ## DMG installation
 
-Run `./scripts/build_dmg.sh` to create `AACC-1.3.2.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This build is signed with a local self-signed certificate and is not notarized; verify the published SHA-256 before using **Open Anyway**.
+Run `./scripts/build_dmg.sh` to create `AACC-1.3.3-rc.1.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This build is signed with a local self-signed certificate and is not notarized; verify the published SHA-256 before using **Open Anyway**.
 
 ## Terminal and iTerm2 binding
 
