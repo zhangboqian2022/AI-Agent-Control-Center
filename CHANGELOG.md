@@ -2,7 +2,7 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
-## Unreleased
+## 1.3.2 — 2026-07-22
 
 - [Security] Placeholder-shaped API tokens are now rejected by prefix (`change-me`, `replace-`, `your-token`, `placeholder`), and the shipped example config leaves the token empty — loading it always rotates to a fresh random credential instead of running with a public constant.
 - [UX] Hiding an agent brand now persists across restarts: the new-brand visibility seeding runs once via a migration key instead of force re-adding Kimi brands on every launch.
