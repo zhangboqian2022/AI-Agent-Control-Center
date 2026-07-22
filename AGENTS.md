@@ -39,7 +39,7 @@ scripts/install.sh
   JSON，按 task id 存储）。GUI 每次 refresh 从服务同步 retained 和 muted。
 - `src/aacc/task_manager.py` + `persistence.py` + `state_machine.py`：任务状态机
   与 SQLite 持久化。
-- `src/aacc/app.py`：组装 Runtime（两个 discovery 服务 + GUI + 可选 API server）。
+- `src/aacc/app.py`：组装 Runtime（三个 discovery 服务 + GUI + 可选 API server）。
 
 ## 约定
 
@@ -53,6 +53,17 @@ scripts/install.sh
 
 ## 当前进度（2026-07-22）
 
+- `main`：第二轮评审（DeepSeek+Gemini，对 1.3.2）整改已合入未发版。
+  **接受 7 条**：remove 卡片改单一分发入口+未知前缀记 ERROR（P1-8 防御
+  部分，按实际代码结构修正——本无中央 dispatch）；`save_config` 拒绝
+  符号链接父目录（P2-7）；进程存活探测改 PID 缓存 `CachedProcessAlive`
+  （N-P2-5，新模块 `src/aacc/processes.py`）；CI 加 pip-audit allow-failure
+  （N-P2-2）；AGENTS.md 发现服务数量更正（N-P2-1）；连接处注释+KNOWN_
+  LIMITATIONS 澄清 `mode=ro` 刻意非 `immutable=1`（N-P2-4/6，**评审驳回
+  存档中"源码已含 immutable=1"系事实错误，特此纠正**）；KNOWN_LIMITATIONS
+  补 daimon 路径 TCC 预案（N-P2-7）。
+  **排期不动**：BrandHandler 重构（1.4.0 立项决策）、gui.py 拆包（P2-11）、
+  docs 归档（P2-12）、全局日志冷却（P2-13，按指纹冷却已限频）。
 - `main`：**1.3.2 安全 hotfix 已发布**（tag `v1.3.2` + GitHub Release 附
   DMG 与 `.sha256` 资产，SHA-256 `bb3d49d5aea5c3e92c4f8e3ed806a035065202c8932a75ab953a388662928967`）。
   内容即评审接受项（见下）。本机 `~/Applications/AACC.app` 已对齐 1.3.2。
