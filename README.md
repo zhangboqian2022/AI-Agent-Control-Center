@@ -43,7 +43,7 @@ cd AI-Agent-Control-Center
 ./scripts/install.sh
 ```
 
-The installer runs tests, builds `AACC.app`, installs it under `~/Applications/AACC.app`, creates a production-only CLI runtime under `~/Library/Application Support/AACC/runtime`, and adds `aacc` and `aacc-run` to `~/.local/bin`.
+The installer skips tests by default (set `AACC_RUN_TESTS=1` to run them first), builds `AACC.app`, installs it under `~/Applications/AACC.app`, creates a production-only CLI runtime under `~/Library/Application Support/AACC/runtime`, and adds `aacc` and `aacc-run` to `~/.local/bin`.
 
 To create a distributable image:
 

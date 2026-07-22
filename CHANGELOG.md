@@ -2,6 +2,17 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- [Security] Placeholder-shaped API tokens are now rejected by prefix (`change-me`, `replace-`, `your-token`, `placeholder`), and the shipped example config leaves the token empty — loading it always rotates to a fresh random credential instead of running with a public constant.
+- [UX] Hiding an agent brand now persists across restarts: the new-brand visibility seeding runs once via a migration key instead of force re-adding Kimi brands on every launch.
+- [API] `/api/v1/reload-config` now returns 501 Not Implemented instead of a misleading 200.
+- [Stability] `aacc doctor` and the app resolve the runtime database path through one shared helper, so diagnostics check the file the app actually mounts.
+- [UX] Rotating the API token no longer writes the clipboard automatically; the new token is shown in a dialog and copied only when the user clicks Copy.
+- [Performance] Expired state-history cleanup is throttled to once per hour with an index on `created_at`, and the panel skips its per-second card-layout rebuild when grouping and order are unchanged.
+- [Stability] Task-state subscriber failures are logged instead of silently swallowed.
+- [Docs] Fixed the README claim that the installer runs tests (they are opt-in via `AACC_RUN_TESTS=1`) and added the 1.3.1 test report.
+
 ## 1.3.1 — 2026-07-22
 
 - [UX] Switching to a task now restores its minimized windows (both terminal and macOS app targets), so the focused window actually appears on screen ready for typing.
