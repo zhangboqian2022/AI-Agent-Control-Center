@@ -2,6 +2,7 @@ from concurrent.futures import Future
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
@@ -854,6 +855,36 @@ def test_codex_card_hides_work_dir_label(tmp_path: Path, qtbot: object) -> None:
     card = window.cards[task.id]
 
     assert card.workdir_label.isHidden()
+    manager.close()
+
+
+def test_remove_request_with_unknown_brand_prefix_logs_error(
+    tmp_path: Path, qtbot: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    with caplog.at_level("ERROR", logger="aacc.gui"):
+        window._remove_task_requested("futurebrand:abc")
+    assert "futurebrand:abc" in caplog.text
+    manager.close()
+
+
+def test_remove_request_dispatches_to_known_brand(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="kimi:dispatch",
+        slot=1,
+        name="可移除的 Kimi 任务",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="kimi_local"))
+    window.set_kimi_selected_ids({"dispatch"})
+
+    window._remove_task_requested("kimi:dispatch")
+
+    assert "kimi:dispatch" not in window.cards
+    assert "dispatch" in window.kimi_muted_ids
     manager.close()
 
 
