@@ -53,6 +53,17 @@ scripts/install.sh
 
 ## 当前进度（2026-07-22）
 
+- `main`：评审整改已合入未发版（HEAD `3637bb0` 之后）。第三方评审
+  （P0×1/P1×5/P2×8）逐条对照代码验证后：**接受 9 条已修**——示例配置
+  公开占位 token 前缀拒识+置空（P0-1）；Agent 品牌隐藏持久化一次性
+  迁移键（P1-1）；doctor 与 app 共用 `resolve_database_path`（P1-4）；
+  reload-config 返回 501（P1-5）；历史清理节流+索引、卡片布局按需重建、
+  订阅者异常记日志、token 轮换不自动写剪贴板、README 安装器措辞
+  （P2-1/2/3/5/8）；补 1.3.1 双语测试报告（P1-2 部分）。
+  **驳回 4 条**：CI 已存在（P1-3）；`release_env.sh` 已入库（P2-7）；
+  规格无 immutable 声称（P2-9）；版本一致性测试已存在（P1-2 另一半）。
+  P2-10 以手动上传 `AACC-1.3.1.dmg.sha256` 资产了结。
+  评审建议 P0-1 单独 hotfix 发版——**1.3.2 尚未发布，待发**。
 - `main`：**1.3.1 已发布**（tag `v1.3.1` + GitHub Release 附 DMG）。
   在 1.3.0 基础上：切换到任务时恢复目标应用已最小化的窗口（终端走
   AppleScript `set miniaturized of windows to false`，mac_app 焦点也从
