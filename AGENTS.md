@@ -53,7 +53,11 @@ scripts/install.sh
 
 ## 当前进度（2026-07-22）
 
-- `main`：第二轮评审（DeepSeek+Gemini，对 1.3.2）整改已合入未发版。
+- `main`：**1.3.3-rc.1 已发布**（tag `v1.3.3-rc.1` + GitHub Prerelease 附
+  DMG 与 `.sha256`，SHA-256 `64e2f5d8288fe5d40a37cbc8cbf639a25b2468a208f067abfcb8cec9c5d4a43f`）。
+  内容即第二轮评审接受项（下条）。本机 `~/Applications/AACC.app` 已对齐；
+  送审副本 `~/Desktop/summit01` 已同步本版。
+- 第二轮评审整改（1.3.3-rc.1）：
   **接受 7 条**：remove 卡片改单一分发入口+未知前缀记 ERROR（P1-8 防御
   部分，按实际代码结构修正——本无中央 dispatch）；`save_config` 拒绝
   符号链接父目录（P2-7）；进程存活探测改 PID 缓存 `CachedProcessAlive`
