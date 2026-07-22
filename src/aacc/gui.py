@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import UTC, datetime
@@ -51,6 +52,8 @@ from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
+
+_logger = logging.getLogger("aacc.gui")
 
 STATUS_COLORS = {
     TaskStatus.UNCONFIGURED: "#778195",
@@ -1038,9 +1041,7 @@ class MainWindow(QWidget):
                     task, states[task.id], self.config.app.blink_attention, display_name
                 )
                 new_card.action_requested.connect(self._perform_action)
-                new_card.remove_requested.connect(self.remove_codex_task)
-                new_card.remove_requested.connect(self.remove_kimi_task)
-                new_card.remove_requested.connect(self.remove_kimi_desktop_task)
+                new_card.remove_requested.connect(self._remove_task_requested)
                 new_card.set_compact(self.compact_mode)
                 self.cards[task.id] = new_card
             elif existing_card.display_name != display_name:
@@ -1268,6 +1269,19 @@ class MainWindow(QWidget):
             self._settings.setValue(
                 "kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids)
             )
+
+    def _remove_task_requested(self, task_id: str) -> None:
+        # Single funnel for card removal: a card whose task id matches no
+        # known brand would otherwise be ignored silently by every
+        # brand-specific guard (e.g. a future brand wired incompletely).
+        if task_id.startswith("codex:"):
+            self.remove_codex_task(task_id)
+        elif task_id.startswith("kimi:"):
+            self.remove_kimi_task(task_id)
+        elif task_id.startswith("kimi_desktop:"):
+            self.remove_kimi_desktop_task(task_id)
+        else:
+            _logger.error("Unknown brand dispatch: %s", task_id)
 
     def remove_kimi_desktop_task(self, task_id: str) -> None:
         if not task_id.startswith("kimi_desktop:"):

@@ -9,10 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO
 
-import psutil
-
 from aacc.codex_discovery import DiscoveredTask
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
+from aacc.processes import CachedProcessAlive
 
 Clock = Callable[[], datetime]
 FileModifiedAt = Callable[[Path], datetime]
@@ -219,7 +218,9 @@ class KimiLocalDiscovery:
         self.sessions_root = sessions_root or home / "sessions"
         self.now = now
         self.file_modified_at = file_modified_at or self._file_modified_at
-        self.agent_process_alive = agent_process_alive or self._agent_process_alive
+        self.agent_process_alive = agent_process_alive or CachedProcessAlive(
+            "name", lambda value: bool(_KIMI_PROCESS_PATTERN.search(value))
+        )
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         # A turn in progress may leave the wire untouched for minutes (a slow
         # LLM response or a long tool call), so a turn-active wire gets a much
@@ -401,17 +402,6 @@ class KimiLocalDiscovery:
     @staticmethod
     def _file_modified_at(path: Path) -> datetime:
         return datetime.fromtimestamp(path.stat().st_mtime, UTC)
-
-    @staticmethod
-    def _agent_process_alive() -> bool:
-        try:
-            for process in psutil.process_iter(["name"]):
-                name = process.info.get("name")
-                if isinstance(name, str) and _KIMI_PROCESS_PATTERN.search(name):
-                    return True
-        except (psutil.Error, OSError):
-            return False
-        return False
 
     def _parse_time(self, raw: object) -> datetime | None:
         if not isinstance(raw, str):

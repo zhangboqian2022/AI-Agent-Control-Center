@@ -73,6 +73,16 @@ def test_loading_shipped_example_config_rotates_the_public_token(tmp_path: Path)
     assert persisted["app"]["api"]["token"] == config.app.api.token
 
 
+def test_save_config_rejects_symlink_parent(tmp_path: Path) -> None:
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link_dir = tmp_path / "link"
+    link_dir.symlink_to(real_dir, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        save_config(link_dir / "config.yaml", default_config())
+
+
 def test_load_repairs_empty_token_and_permissions(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("app:\n  api:\n    token: ''\n", encoding="utf-8")

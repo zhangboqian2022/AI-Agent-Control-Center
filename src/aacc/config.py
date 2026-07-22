@@ -97,6 +97,8 @@ def _reject_unsafe_path(path: Path) -> None:
 
 
 def _prepare_parent(path: Path) -> None:
+    if path.parent.is_symlink():
+        raise ValueError("AACC configuration directory must not be a symbolic link")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path.parent, 0o700)
 

@@ -6,8 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import psutil
-
 from aacc.codex_discovery import DiscoveredTask
 from aacc.kimi_discovery import (
     Clock,
@@ -16,6 +14,7 @@ from aacc.kimi_discovery import (
     evaluate_kimi_session_status,
 )
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
+from aacc.processes import CachedProcessAlive
 
 _DAIMON_ROOT = (
     Path.home()
@@ -75,7 +74,9 @@ class KimiDesktopLocalDiscovery:
         )
         self.now = now
         self.file_modified_at = file_modified_at or self._file_modified_at
-        self.app_process_alive = app_process_alive or self._app_process_alive
+        self.app_process_alive = app_process_alive or CachedProcessAlive(
+            "exe", lambda value: "/Kimi.app/" in value
+        )
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         self.active_turn_window_seconds = max(
             self.activity_window_seconds, active_turn_window_seconds
@@ -220,6 +221,11 @@ class KimiDesktopLocalDiscovery:
         if not self.conversations_path.exists():
             return []
         try:
+            # Open read-only but deliberately NOT immutable=1: daimon writes
+            # through the WAL, and an immutable reader would see a stale
+            # snapshot (immutable skips WAL replay). mode=ro keeps the catalog
+            # fresh while never writing. The connection is short-lived so the
+            # WAL is never pinned by a lingering reader.
             connection = sqlite3.connect(
                 f"file:{self.conversations_path}?mode=ro", uri=True
             )
@@ -261,14 +267,3 @@ class KimiDesktopLocalDiscovery:
     @staticmethod
     def _file_modified_at(path: Path) -> datetime:
         return datetime.fromtimestamp(path.stat().st_mtime, UTC)
-
-    @staticmethod
-    def _app_process_alive() -> bool:
-        try:
-            for process in psutil.process_iter(["exe"]):
-                exe = process.info.get("exe")
-                if isinstance(exe, str) and "/Kimi.app/" in exe:
-                    return True
-        except (psutil.Error, OSError):
-            return False
-        return False

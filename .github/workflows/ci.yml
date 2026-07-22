@@ -17,3 +17,6 @@ jobs:
         run: uv run mypy src/aacc
       - name: Test
         run: QT_QPA_PLATFORM=offscreen uv run pytest -q
+      - name: Dependency vulnerability scan
+        continue-on-error: true
+        run: uv run --with pip-audit pip-audit --skip-editable
