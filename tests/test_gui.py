@@ -364,7 +364,11 @@ def test_card_context_menu_exposes_safe_controls(tmp_path: Path, qtbot: object) 
     window.set_codex_selected_ids({"context-menu"})
     menu = window.cards[task.id].create_context_menu()
     labels = {action.text() for action in menu.actions()}
-    assert {"切换到任务", "发送 Enter", "发送 1", "发送 2", "启动语音输入"} <= labels
+    assert "切换到任务" in labels
+    assert "手动标记状态" in labels
+    assert labels.isdisjoint(
+        {"启动语音输入", "发送 Enter", "发送 1", "发送 2", "发送 ↑", "发送 ↓"}
+    )
     manager.close()
 
 
@@ -689,12 +693,14 @@ def test_missing_accessibility_guidance_can_open_system_settings(
     monkeypatch.setattr(  # type: ignore[attr-defined]
         QMessageBox, "exec", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
     )
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
     window = MainWindow(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
         accessibility_trusted=False,
         open_accessibility_settings_callback=lambda: opened.append(True),
+        settings=settings,
     )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
 

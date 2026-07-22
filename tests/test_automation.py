@@ -90,6 +90,15 @@ def test_failed_focus_stops_before_key_injection() -> None:
         automation.send_key(config.tasks[0], "ENTER")
 
 
+def test_focus_restores_minimized_terminal_window() -> None:
+    config = default_config()
+    recorder = Recorder()
+    MacAutomation(config, runner=recorder).focus(config.tasks[0])
+    script = recorder.calls[0][2]
+    assert "activate" in script
+    assert "set miniaturized of windows to false" in script
+
+
 def test_focus_supports_iterm_title_and_plain_app_bundle() -> None:
     config = default_config()
     recorder = Recorder()
@@ -105,7 +114,11 @@ def test_focus_supports_iterm_title_and_plain_app_bundle() -> None:
     app.terminal.type = "mac_app"
     app.terminal.app_bundle_id = "com.openai.codex"
     automation.focus(app)
-    assert recorder.calls[-1] == ["/usr/bin/open", "-b", "com.openai.codex"]
+    script = recorder.calls[-1][2]
+    assert recorder.calls[-1][0:2] == ["/usr/bin/osascript", "-e"]
+    assert "com.openai.codex" in script
+    assert "activate" in script
+    assert "set miniaturized of windows to false" in script
 
 
 def test_voice_focuses_and_triggers_double_fn() -> None:

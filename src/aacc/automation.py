@@ -89,16 +89,36 @@ class MacAutomation:
             return "\n".join(lines)
         bundle_id = terminal.app_bundle_id or "com.apple.Terminal"
         lines = [f"tell application id {applescript_quote(bundle_id)}", "activate"]
+        lines.extend(
+            [
+                "try",
+                "set miniaturized of windows to false",
+                "end try",
+            ]
+        )
         if title:
             lines.extend(
                 [
                     "set targetWindow to first window whose name contains "
                     + applescript_quote(title),
+                    "set miniaturized of targetWindow to false",
                     "set index of targetWindow to 1",
                 ]
             )
         lines.append("end tell")
         return "\n".join(lines)
+
+    def _mac_app_script(self, bundle_id: str) -> str:
+        return "\n".join(
+            [
+                f"tell application id {applescript_quote(bundle_id)}",
+                "activate",
+                "try",
+                "set miniaturized of windows to false",
+                "end try",
+                "end tell",
+            ]
+        )
 
     def _focus_unlocked(self, task: TaskConfig) -> str:
         terminal = task.terminal
@@ -108,7 +128,7 @@ class MacAutomation:
             bundle_id = terminal.app_bundle_id
             if not bundle_id:
                 raise AutomationError("No app bundle identifier is configured")
-            self._run(["/usr/bin/open", "-b", bundle_id])
+            self._run(["/usr/bin/osascript", "-e", self._mac_app_script(bundle_id)])
         return f"已聚焦 {task.name}"
 
     @staticmethod
