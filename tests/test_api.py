@@ -25,7 +25,7 @@ def auth(token: str) -> dict[str, str]:
 
 def test_health_is_available_without_token(tmp_path: Path) -> None:
     client, _, manager = api_client(tmp_path)
-    assert client.get("/api/v1/health").json() == {"status": "ok", "version": "1.3.2"}
+    assert client.get("/api/v1/health").json() == {"status": "ok", "version": "1.3.3rc1"}
     manager.close()
 
 
