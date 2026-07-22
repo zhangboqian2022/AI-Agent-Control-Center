@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from aacc.config import load_config
-from aacc.constants import DEFAULT_CONFIG_PATH, DEFAULT_DATABASE_PATH
+from aacc.constants import DEFAULT_CONFIG_PATH, resolve_database_path
 
 KEYS = ("enter", "esc", "up", "down", "left", "right", "ctrl_c", "1", "2")
 
@@ -62,11 +62,7 @@ def _doctor(config_path: Path) -> int:
     except ValueError as error:
         checks.append(("配置文件", False, str(error)))
         config = None
-    db_path = (
-        DEFAULT_DATABASE_PATH
-        if config_path == DEFAULT_CONFIG_PATH
-        else config_path.with_name("aacc.db")
-    )
+    db_path = resolve_database_path()
     try:
         connection = sqlite3.connect(db_path)
         connection.execute("PRAGMA quick_check").fetchone()

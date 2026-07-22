@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import logging
 import threading
 from collections.abc import Callable
 
@@ -9,6 +10,16 @@ from aacc.persistence import StateStore
 from aacc.state_machine import StateMachine
 
 Subscriber = Callable[[TaskState], None]
+
+_logger = logging.getLogger("aacc.tasks")
+
+
+def _notify(subscribers: tuple[Subscriber, ...], state: TaskState) -> None:
+    for callback in subscribers:
+        try:
+            callback(state)
+        except Exception as error:
+            _logger.warning("Task state subscriber failed: %s", error)
 
 
 class TaskManager:
@@ -56,11 +67,7 @@ class TaskManager:
                 return current
             saved = self.store.update(transitioned)
             subscribers = tuple(self._subscribers)
-        for callback in subscribers:
-            try:
-                callback(saved)
-            except Exception:
-                continue
+        _notify(subscribers, saved)
         return saved
 
     def register(self, task: TaskConfig, state: TaskState | None = None) -> TaskState:
@@ -78,11 +85,7 @@ class TaskManager:
                     raise ValueError("Initial task state was rejected")
                 saved = self.store.update(transitioned)
                 subscribers = tuple(self._subscribers)
-            for callback in subscribers:
-                try:
-                    callback(saved)
-                except Exception:
-                    continue
+            _notify(subscribers, saved)
             return saved
         return self.update(state)
 

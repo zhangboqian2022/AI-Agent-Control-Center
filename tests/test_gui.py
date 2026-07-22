@@ -352,6 +352,32 @@ def test_only_selected_codex_tasks_are_visible_and_window_is_not_a_tool(
     manager.close()
 
 
+def test_sync_cards_skips_layout_rebuild_when_order_unchanged(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:stable",
+        slot=1,
+        name="稳定任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.set_codex_selected_ids({"stable"})
+    rebuilds: list[bool] = []
+    original = window._rebuild_card_layout
+
+    def counting(layout: object, tasks: object) -> None:
+        rebuilds.append(True)
+        original(layout, tasks)  # type: ignore[arg-type]
+
+    window._rebuild_card_layout = counting  # type: ignore[method-assign]
+    window.sync_cards()
+
+    assert rebuilds == []
+    manager.close()
+
+
 def test_card_context_menu_exposes_safe_controls(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     task = TaskConfig(
@@ -403,6 +429,7 @@ def test_window_declares_persisted_setting_keys(tmp_path: Path, qtbot: object) -
         "always_on_top",
         "opacity",
         "visible_agents",
+        "agent_visibility_migrated_v2",
     }
     assert QApplication.instance() is not None
     manager.close()
@@ -595,7 +622,7 @@ def test_automation_failure_marks_warning_on_qt_thread(tmp_path: Path, qtbot: ob
     manager.close()
 
 
-def test_rotate_credentials_updates_live_config_and_clipboard(
+def test_rotate_credentials_shows_token_and_copies_only_on_request(
     tmp_path: Path, qtbot: object, monkeypatch: object
 ) -> None:
     config_path = tmp_path / "config.yaml"
@@ -607,8 +634,9 @@ def test_rotate_credentials_updates_live_config_and_clipboard(
     monkeypatch.setattr(  # type: ignore[attr-defined]
         QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
     )
+    shown: list[QMessageBox] = []
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        QMessageBox, "information", lambda *_args, **_kwargs: QMessageBox.StandardButton.Ok
+        QMessageBox, "exec", lambda box: shown.append(box) or 0
     )
     window = MainWindow(
         manager,
@@ -617,10 +645,22 @@ def test_rotate_credentials_updates_live_config_and_clipboard(
         rotate_api_token_callback=lambda: rotate_api_token(config_path, config),
     )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
+    QGuiApplication.clipboard().setText("unrelated clipboard content")
 
     window.rotate_credentials()
 
     assert config.app.api.token != old
+    assert shown and shown[0].informativeText() == config.app.api.token
+    # Token is never pushed to the clipboard without an explicit user action.
+    assert QGuiApplication.clipboard().text() == "unrelated clipboard content"
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox,
+        "clickedButton",
+        lambda box: next(button for button in box.buttons() if button.text() == "复制"),
+    )
+    window.rotate_credentials()
+
     assert QGuiApplication.clipboard().text() == config.app.api.token
     manager.close()
 
@@ -734,6 +774,25 @@ def test_accessibility_guidance_skipped_after_do_not_show_again(
     window.show_accessibility_guidance()
     assert exec_calls == [True]
     manager.close()
+
+
+def test_new_agent_types_seeded_once_then_user_choice_respected(
+    tmp_path: Path, qtbot: object
+) -> None:
+    seed = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    seed.setValue("visible_agents", ["codex_cli"])
+    seed.sync()
+
+    window, manager = build_window(tmp_path, qtbot)
+    assert {"codex_cli", "kimi_code", "kimi_desktop"} <= window.visible_agent_types
+    manager.close()
+
+    # The user then hides the new brands; a fresh window must not re-add them.
+    seed.setValue("visible_agents", ["codex_cli"])
+    seed.sync()
+    window2, manager2 = build_window(tmp_path, qtbot)
+    assert window2.visible_agent_types == {"codex_cli"}
+    manager2.close()
 
 
 def test_only_selected_kimi_tasks_are_visible(tmp_path: Path, qtbot: object) -> None:

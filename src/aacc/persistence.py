@@ -16,6 +16,9 @@ T = TypeVar("T")
 RETRY_DELAYS = (0.05, 0.1, 0.2)
 MAX_HISTORY_PER_TASK = 1_000
 HISTORY_DAYS = 30
+# Expired-history cleanup scans the whole table; once per hour is plenty for
+# a retention window measured in days.
+HISTORY_CLEANUP_INTERVAL_SECONDS = 3_600.0
 
 
 class StateStore:
@@ -27,6 +30,7 @@ class StateStore:
         self._connection = sqlite3.connect(path, check_same_thread=False, timeout=3.0)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA busy_timeout=3000")
+        self._last_history_cleanup = 0.0
         self._secure_database_files()
 
     def _secure_database_files(self) -> None:
@@ -62,7 +66,12 @@ class StateStore:
                     "CREATE INDEX IF NOT EXISTS idx_state_history_task_id_id "
                     "ON state_history(task_id, id DESC)"
                 )
+                self._connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_state_history_created_at "
+                    "ON state_history(created_at)"
+                )
                 self._delete_expired_history()
+                self._last_history_cleanup = time.monotonic()
                 for task in tasks:
                     initial = TaskState.new(
                         task.id,
@@ -124,7 +133,12 @@ class StateStore:
                         "INSERT INTO state_history(task_id, payload, created_at) VALUES (?, ?, ?)",
                         (state.task_id, payload, state.updated_at.isoformat()),
                     )
-                    self._delete_expired_history()
+                    if (
+                        time.monotonic() - self._last_history_cleanup
+                        >= HISTORY_CLEANUP_INTERVAL_SECONDS
+                    ):
+                        self._delete_expired_history()
+                        self._last_history_cleanup = time.monotonic()
                     self._bound_task_history(state.task_id)
 
         with self._lock:

@@ -1,10 +1,31 @@
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from aacc.config import default_config
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
+
+
+def test_failing_subscriber_is_logged_and_does_not_break_others(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    service = manager(tmp_path)
+    seen: list[str] = []
+
+    def bad(_state: TaskState) -> None:
+        raise RuntimeError("boom")
+
+    service.subscribe(bad)
+    service.subscribe(lambda state: seen.append(state.task_id))
+    with caplog.at_level("WARNING", logger="aacc.tasks"):
+        service.update(TaskState.new("task-1", "running", source="api"))
+
+    assert seen == ["task-1"]
+    assert "boom" in caplog.text
+    service.close()
 
 
 def manager(tmp_path: Path) -> TaskManager:
