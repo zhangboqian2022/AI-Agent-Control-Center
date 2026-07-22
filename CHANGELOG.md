@@ -2,7 +2,7 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
-## Unreleased
+## 1.3.1 — 2026-07-22
 
 - [UX] Switching to a task now restores its minimized windows (both terminal and macOS app targets), so the focused window actually appears on screen ready for typing.
 - [UX] Removed the voice-input and key-injection actions from the card context menu; the underlying automation remains available through global hotkeys.
