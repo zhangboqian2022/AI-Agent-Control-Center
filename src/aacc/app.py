@@ -23,7 +23,7 @@ from aacc.discovery_service import (
     KimiDiscoveryService,
 )
 from aacc.gui import MainWindow
-from aacc.hotkeys import GlobalHotkeys
+from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
@@ -168,8 +168,18 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         api_server.start()
 
     hotkeys = GlobalHotkeys(runtime.config.hotkeys, _hotkey_actions(window))  # type: ignore[arg-type]
-    if trusted:
-        hotkeys.start()
+    hotkey_sync = AccessibilityHotkeySync(hotkeys)
+    hotkey_sync.sync(trusted)
+
+    def refresh_accessibility() -> None:
+        trusted_now = is_accessibility_trusted()
+        window.accessibility_trusted = trusted_now
+        hotkey_sync.sync(trusted_now)
+
+    accessibility_timer = QTimer(qt_app)
+    accessibility_timer.setInterval(5000)
+    accessibility_timer.timeout.connect(refresh_accessibility)
+    accessibility_timer.start()
 
     cleaned = False
 

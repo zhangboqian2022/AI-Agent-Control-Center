@@ -45,13 +45,21 @@ class GlobalHotkeys:
 
     def start(self) -> bool:
         if self._thread is not None:
-            return self.error is None
+            if self._thread.is_alive():
+                return self.error is None
+            # Previous attempt died (e.g. missing accessibility permission);
+            # clear the stale failure so a retry can succeed after the user
+            # grants permission.
+            self._thread = None
+            self.error = None
+        self._ready.clear()
         self._thread = threading.Thread(target=self._run, name="aacc-hotkeys", daemon=True)
         self._thread.start()
         self._ready.wait(timeout=2)
         return self.error is None
 
     def _run(self) -> None:
+        self.error = None
         try:
             import Quartz  # type: ignore[import-untyped]
 
@@ -112,3 +120,26 @@ class GlobalHotkeys:
         self._run_loop = None
         self._tap = None
         self._quartz = None
+
+
+class AccessibilityHotkeySync:
+    """Keeps global hotkeys running exactly while accessibility is trusted.
+
+    Polled periodically: starts the hotkey listener when permission appears
+    (no app restart needed) and stops it when permission is revoked.
+    """
+
+    def __init__(self, hotkeys: GlobalHotkeys) -> None:
+        self._hotkeys = hotkeys
+        self._running = False
+
+    @property
+    def running(self) -> bool:
+        return self._running
+
+    def sync(self, trusted: bool) -> None:
+        if trusted and not self._running:
+            self._running = self._hotkeys.start()
+        elif not trusted and self._running:
+            self._hotkeys.stop()
+            self._running = False

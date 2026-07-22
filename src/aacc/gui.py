@@ -898,6 +898,12 @@ class MainWindow(QWidget):
         self.tray: QSystemTrayIcon | None = None
         if enable_tray and QSystemTrayIcon.isSystemTrayAvailable():
             self._create_tray()
+        # macOS: clicking the Dock icon (or Cmd-Tabbing back) activates the
+        # app but does not unhide a hidden panel; restore it like other Mac
+        # apps do.
+        app = QGuiApplication.instance()
+        if isinstance(app, QGuiApplication):
+            app.applicationStateChanged.connect(self.handle_app_state_change)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
         self._timer.start(1000)
@@ -1528,13 +1534,21 @@ class MainWindow(QWidget):
     def show_accessibility_guidance(self) -> None:
         if self.accessibility_trusted:
             return
-        answer = QMessageBox.question(
-            self,
-            "需要辅助功能权限",
-            "AACC 需要辅助功能权限才能使用全局热键和键盘输入。是否打开系统设置？",
-            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
-            QMessageBox.StandardButton.Yes,
+        if self._settings.value("accessibility_guidance_dismissed", False, type=bool):
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("需要辅助功能权限")
+        box.setText("AACC 需要辅助功能权限才能使用全局热键和键盘输入。是否打开系统设置？")
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes
         )
+        box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        box.setCheckBox(QCheckBox("不再提示", box))
+        answer = box.exec()
+        checkbox = box.checkBox()
+        if checkbox is not None and checkbox.isChecked():
+            self._settings.setValue("accessibility_guidance_dismissed", True)
         if answer == QMessageBox.StandardButton.Yes:
             self.open_accessibility_settings()
 
@@ -1550,12 +1564,19 @@ class MainWindow(QWidget):
         )
 
     def toggle_visible(self) -> None:
-        if self.isVisible():
+        if self.isVisible() and not self.isMinimized():
             self.hide()
         else:
+            self.setWindowState(
+                self.windowState() & ~Qt.WindowState.WindowMinimized
+            )
             self.show()
             self.raise_()
             self.activateWindow()
+
+    def handle_app_state_change(self, state: Qt.ApplicationState) -> None:
+        if state is Qt.ApplicationState.ApplicationActive and not self.isVisible():
+            self.toggle_visible()
 
     def quit_application(self) -> None:
         self._quitting = True

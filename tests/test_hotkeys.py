@@ -1,6 +1,6 @@
 import pytest
 
-from aacc.hotkeys import GlobalHotkeys, hotkey_keycode
+from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys, hotkey_keycode
 
 
 @pytest.mark.parametrize(
@@ -75,3 +75,77 @@ def test_callback_without_quartz_returns_event_and_stop_clears_state() -> None:
     hotkeys.stop()
     assert hotkeys._tap is None
     assert hotkeys._quartz is None
+
+
+def test_start_retries_after_a_failed_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    hotkeys = GlobalHotkeys({}, {})
+    dead = threading.Thread(target=lambda: None)
+    dead.start()
+    dead.join()
+    hotkeys._thread = dead
+    hotkeys.error = "Accessibility permission is required for global hotkeys"
+
+    reran: list[bool] = []
+
+    def fake_run() -> None:
+        reran.append(True)
+        hotkeys._ready.set()
+
+    monkeypatch.setattr(hotkeys, "_run", fake_run)
+
+    assert hotkeys.start() is True
+    assert reran == [True]
+    assert hotkeys.error is None
+    hotkeys.stop()
+
+
+class FakeHotkeys:
+    def __init__(self, start_result: bool = True) -> None:
+        self.start_result = start_result
+        self.starts = 0
+        self.stops = 0
+
+    def start(self) -> bool:
+        self.starts += 1
+        return self.start_result
+
+    def stop(self) -> None:
+        self.stops += 1
+
+
+def test_sync_starts_hotkeys_once_when_trust_appears() -> None:
+    hotkeys = FakeHotkeys()
+    sync = AccessibilityHotkeySync(hotkeys)  # type: ignore[arg-type]
+
+    sync.sync(False)
+    assert hotkeys.starts == 0
+    sync.sync(True)
+    sync.sync(True)
+    assert hotkeys.starts == 1
+    assert sync.running
+
+
+def test_sync_stops_hotkeys_when_trust_is_removed() -> None:
+    hotkeys = FakeHotkeys()
+    sync = AccessibilityHotkeySync(hotkeys)  # type: ignore[arg-type]
+
+    sync.sync(True)
+    sync.sync(False)
+    assert hotkeys.stops == 1
+    assert not sync.running
+    sync.sync(False)
+    assert hotkeys.stops == 1
+
+
+def test_sync_retries_when_start_fails() -> None:
+    hotkeys = FakeHotkeys(start_result=False)
+    sync = AccessibilityHotkeySync(hotkeys)  # type: ignore[arg-type]
+
+    sync.sync(True)
+    assert not sync.running
+    hotkeys.start_result = True
+    sync.sync(True)
+    assert hotkeys.starts == 2
+    assert sync.running

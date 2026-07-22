@@ -50,6 +50,35 @@ def build_window(tmp_path: Path, qtbot: object) -> tuple[MainWindow, TaskManager
     return window, manager
 
 
+def test_app_reactivation_shows_hidden_window(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window.show()
+    window.hide()
+    assert not window.isVisible()
+    window.handle_app_state_change(Qt.ApplicationState.ApplicationActive)
+    assert window.isVisible()
+    assert not window.isMinimized()
+    window.hide()
+    window.handle_app_state_change(Qt.ApplicationState.ApplicationInactive)
+    assert not window.isVisible()
+    manager.close()
+
+
+def test_toggle_visible_restores_minimized_window_instead_of_hiding_it(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window.show()
+    window.showMinimized()
+    assert window.isMinimized()
+    window.toggle_visible()
+    assert window.isVisible()
+    assert not window.isMinimized()
+    window.toggle_visible()
+    assert not window.isVisible()
+    manager.close()
+
+
 def test_window_starts_with_no_codex_cards_until_tasks_are_selected(
     tmp_path: Path, qtbot: object
 ) -> None:
@@ -658,7 +687,7 @@ def test_missing_accessibility_guidance_can_open_system_settings(
     manager = TaskManager(config, store)
     opened: list[bool] = []
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
+        QMessageBox, "exec", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
     )
     window = MainWindow(
         manager,
@@ -673,6 +702,31 @@ def test_missing_accessibility_guidance_can_open_system_settings(
 
     assert opened == [True]
     assert "辅助功能" in window.accessibility_status_text()
+    manager.close()
+
+
+def test_accessibility_guidance_skipped_after_do_not_show_again(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window.accessibility_trusted = False
+    exec_calls: list[bool] = []
+
+    def fake_exec(box: QMessageBox) -> QMessageBox.StandardButton:
+        exec_calls.append(True)
+        checkbox = box.checkBox()
+        assert checkbox is not None
+        checkbox.setChecked(True)
+        return QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)  # type: ignore[attr-defined]
+
+    window.show_accessibility_guidance()
+    assert exec_calls == [True]
+    assert window._settings.value("accessibility_guidance_dismissed", False, type=bool)
+
+    window.show_accessibility_guidance()
+    assert exec_calls == [True]
     manager.close()
 
 
