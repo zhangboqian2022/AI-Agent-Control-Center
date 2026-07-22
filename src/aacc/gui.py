@@ -552,7 +552,14 @@ class MainWindow(QWidget):
     discovery_health_received = Signal(object)
     kimi_discovery_health_received = Signal(object)
     kimi_desktop_discovery_health_received = Signal(object)
-    settings_keys = {"geometry", "compact_mode", "always_on_top", "opacity", "visible_agents"}
+    settings_keys = {
+        "geometry",
+        "compact_mode",
+        "always_on_top",
+        "opacity",
+        "visible_agents",
+        "agent_visibility_migrated_v2",
+    }
 
     def __init__(
         self,
@@ -747,9 +754,13 @@ class MainWindow(QWidget):
             self.visible_agent_types = {str(value) for value in saved_agents}
         else:
             self.visible_agent_types = set(self.config.app.visible_agent_types)
-        # New agent types default to visible even for existing stored settings.
-        self.visible_agent_types.add("kimi_code")
-        self.visible_agent_types.add("kimi_desktop")
+        # One-time upgrade seeding: agent types introduced after earlier
+        # releases default to visible, then the stored value is authoritative.
+        if not self._settings.value("agent_visibility_migrated_v2", False, type=bool):
+            self.visible_agent_types.add("kimi_code")
+            self.visible_agent_types.add("kimi_desktop")
+            self._settings.setValue("agent_visibility_migrated_v2", True)
+            self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
@@ -824,6 +835,7 @@ class MainWindow(QWidget):
 
         self.cards: dict[str, TaskCard] = {}
         self._card_order_ids: list[str] = []
+        self._layout_group_ids: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
         self.cards_container = QWidget()
         self.cards_layout = QVBoxLayout()
         self.cards_layout.setSpacing(9)
@@ -1034,8 +1046,16 @@ class MainWindow(QWidget):
             elif existing_card.display_name != display_name:
                 existing_card.set_display_name(display_name)
         running_tasks, terminal_tasks = self._grouped_tasks(visible, states)
-        self._rebuild_card_layout(self.running_cards_layout, running_tasks)
-        self._rebuild_card_layout(self.retained_cards_layout, terminal_tasks)
+        # Layout only changes when group membership or order does; rebuilding
+        # the same layout every second is wasted work.
+        group_ids = (
+            tuple(task.id for task in running_tasks),
+            tuple(task.id for task in terminal_tasks),
+        )
+        if group_ids != self._layout_group_ids:
+            self._rebuild_card_layout(self.running_cards_layout, running_tasks)
+            self._rebuild_card_layout(self.retained_cards_layout, terminal_tasks)
+            self._layout_group_ids = group_ids
         self._card_order_ids = [task.id for task in running_tasks + terminal_tasks]
         self.task_summary_label.setText(
             f"运行中：{len(running_tasks)} · 已完成：{len(terminal_tasks)} · "
@@ -1489,8 +1509,17 @@ class MainWindow(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         token = self._rotate_api_token()
-        QGuiApplication.clipboard().setText(token)
-        QMessageBox.information(self, "凭证已重置", "新凭证已复制；旧凭证已失效。")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("凭证已重置")
+        box.setText("旧凭证已失效。新凭证如下（不会自动写入剪贴板）：")
+        box.setInformativeText(token)
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        box.setStandardButtons(QMessageBox.StandardButton.Close)
+        copy_button = box.addButton("复制", QMessageBox.ButtonRole.ActionRole)
+        box.exec()
+        if box.clickedButton() is copy_button:
+            QGuiApplication.clipboard().setText(token)
 
     def _apply_discovery_health(self, value: object) -> None:
         if not isinstance(value, DiscoveryHealth):

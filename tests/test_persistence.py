@@ -31,6 +31,35 @@ def test_initialize_creates_idle_state_for_each_configured_task(tmp_path: Path) 
     store.close()
 
 
+def test_expired_history_cleanup_is_throttled_between_updates(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "aacc.db")
+    store.initialize(default_config().tasks)
+    cleanups: list[bool] = []
+    store._delete_expired_history = lambda: cleanups.append(True)  # type: ignore[method-assign]
+
+    store.update(TaskState.new("task-1", "running", source="api"))
+    store.update(TaskState.new("task-1", "running", message="again", source="api"))
+    assert cleanups == []
+
+    store._last_history_cleanup = 0.0
+    store.update(TaskState.new("task-1", "completed", source="api"))
+    assert cleanups == [True]
+    store.close()
+
+
+def test_state_history_created_at_is_indexed(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "aacc.db")
+    store.initialize(default_config().tasks)
+    indexes = {
+        row[1]
+        for row in store._connection.execute(
+            "PRAGMA index_list('state_history')"
+        ).fetchall()
+    }
+    assert "idx_state_history_created_at" in indexes
+    store.close()
+
+
 def test_history_returns_recent_rows_oldest_to_newest(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "aacc.db")
     store.initialize(default_config().tasks)

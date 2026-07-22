@@ -16,7 +16,11 @@ from aacc.api import create_api
 from aacc.automation import MacAutomation
 from aacc.automation_executor import AutomationExecutor
 from aacc.config import load_config, rotate_api_token
-from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH, DEFAULT_DATABASE_PATH
+from aacc.constants import (
+    APP_SUPPORT_DIR,
+    DEFAULT_CONFIG_PATH,
+    resolve_database_path,
+)
 from aacc.discovery_service import (
     CodexDiscoveryService,
     KimiDesktopDiscoveryService,
@@ -202,7 +206,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
 
 def main() -> int:
     config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
-    database_path = Path(os.environ.get("AACC_DATABASE_PATH", DEFAULT_DATABASE_PATH))
+    database_path = resolve_database_path()
     data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
     guard = InstanceGuard(data_dir / "aacc.lock")
     if not guard.acquire():

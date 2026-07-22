@@ -148,6 +148,9 @@ def create_api(
 
     @app.post("/api/v1/reload-config", dependencies=[authorized])
     def reload_config() -> dict[str, str]:
-        return {"result": "Restart AACC to load configuration changes"}
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Config reload is not implemented; restart AACC to load configuration changes",
+        )
 
     return app

@@ -39,6 +39,14 @@ def test_tasks_require_valid_bearer_token(tmp_path: Path) -> None:
     manager.close()
 
 
+def test_reload_config_reports_not_implemented(tmp_path: Path) -> None:
+    client, token, manager = api_client(tmp_path)
+    response = client.post("/api/v1/reload-config", headers=auth(token))
+    assert response.status_code == 501
+    assert "not implemented" in response.json()["detail"].lower()
+    manager.close()
+
+
 def test_status_update_round_trip(tmp_path: Path) -> None:
     client, token, manager = api_client(tmp_path)
     response = client.post(
