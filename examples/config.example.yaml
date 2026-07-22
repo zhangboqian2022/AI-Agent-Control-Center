@@ -11,7 +11,8 @@ app:
     enabled: true
     host: 127.0.0.1
     port: 17650
-    token: replace-with-a-random-token-generated-on-first-launch
+    # 留空：首次启动时自动生成随机 token / left empty, generated on first launch
+    token: ""
 voice:
   hotkey: FN_FN
   focus_delay_ms: 250

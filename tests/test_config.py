@@ -44,10 +44,33 @@ def test_default_config_has_four_agents_and_random_token(tmp_path: Path) -> None
         "x" * 31,
         "x" * 16 + " " + "y" * 16,
         "x" * 16 + "\t" + "y" * 16,
+        # Placeholder-shaped values must be rejected even when long enough;
+        # the shipped example token is a public constant, not a credential.
+        "replace-with-a-random-token-generated-on-first-launch",
+        "replace-" + "a" * 40,
+        "change-me" + "b" * 40,
+        "your-token-" + "c" * 40,
+        "placeholder-" + "d" * 40,
     ],
 )
 def test_invalid_tokens_are_rejected(value: str) -> None:
     assert not is_valid_token(value)
+
+
+def test_legit_high_entropy_tokens_with_placeholder_substrings_are_accepted() -> None:
+    assert is_valid_token("kJ9" + "x" * 29 + "replace" + "Qm2" + "y" * 20)
+
+
+def test_loading_shipped_example_config_rotates_the_public_token(tmp_path: Path) -> None:
+    example = Path(__file__).resolve().parent.parent / "examples" / "config.example.yaml"
+    path = tmp_path / "config.yaml"
+    path.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+
+    config = load_config(path)
+
+    assert is_valid_token(config.app.api.token)
+    persisted = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert persisted["app"]["api"]["token"] == config.app.api.token
 
 
 def test_load_repairs_empty_token_and_permissions(tmp_path: Path) -> None:
