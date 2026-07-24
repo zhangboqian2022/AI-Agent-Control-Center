@@ -53,6 +53,13 @@ scripts/install.sh
 
 ## 当前进度（2026-07-24）
 
+- `main`：**1.4.0 正式版已发布**（tag `v1.4.0` + GitHub Release（Latest，非
+  Prerelease）附 DMG 与 `.sha256`，SHA-256
+  `0974f394fbc1272100b51c0352e473c0a747d7b40ec2e9f09508e5f4d544c909`）。
+  内容即三合一整合（M1 额度监控 + M2 会话指标 + rc.2 的 5h 窗口解析修复）。
+  本机 `~/Applications/AACC.app` 已对齐 1.4.0。送审副本为仓库内 `code/`
+  子目录（`git archive HEAD` 导出，剔除 `docs/superpowers/` 与
+  `tests/fixtures/`，1.1MB；该目录已入 .gitignore）。
 - `main`：**1.4.0-rc.2 已发布**（tag `v1.4.0-rc.2` + GitHub Prerelease 附 DMG 与
   `.sha256`，SHA-256 `3d8c5847404fbfb218fb91d4c3eda1cd1d4a10ae8b58a29573579d872ff595ed`）。
   rc.1 发布后因真机反馈发现 5h 额度解析 bug（API 窗口单位拼写
