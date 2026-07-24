@@ -411,6 +411,52 @@ def test_logout_wins_over_late_oauth(qapp, tmp_path):
     assert load_credentials(tmp_path) is None
 
 
+def test_external_credential_change_during_oauth_exits_pending(qapp, tmp_path):
+    token_started = threading.Event()
+    release_token = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/device_authorization":
+            return httpx.Response(
+                200,
+                json={
+                    "user_code": "CODE",
+                    "device_code": "device",
+                    "verification_uri_complete": "https://example.com",
+                    "interval": 1,
+                    "expires_in": 900,
+                },
+            )
+        token_started.set()
+        assert release_token.wait(5)
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "late-oauth",
+                "refresh_token": "late-refresh",
+                "expires_in": 3600,
+            },
+        )
+
+    service = make_service(tmp_path, handler)
+    finished: list[tuple[bool, str]] = []
+    service.oauth_finished.connect(lambda success, message: finished.append((success, message)))
+
+    service.begin_oauth()
+    assert token_started.wait(5)
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "external-key"})
+    release_token.set()
+
+    assert wait_for(lambda: service.state() != STATE_PENDING)
+    assert service.state() == STATE_AUTHORIZED
+    assert load_credentials(tmp_path) == {
+        "auth_method": "api_key",
+        "api_key": "external-key",
+    }
+    assert wait_for(lambda: len(finished) == 1)
+    assert finished[0][0] is False
+
+
 def test_two_threads_can_start_only_one_oauth_flow(tmp_path):
     service = make_service(tmp_path, quota_handler([]))
     pending_barrier = threading.Barrier(2)

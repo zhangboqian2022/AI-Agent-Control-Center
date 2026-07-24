@@ -367,6 +367,7 @@ class QuotaService(QObject):
                 )
             if cancel_event.is_set():
                 raise KimiOAuthCancelledError("OAuth flow cancelled")
+            credential_conflict = False
             with self._state_lock:
                 if self._active_flow_id != flow_id:
                     return
@@ -375,11 +376,15 @@ class QuotaService(QObject):
                     {"auth_method": "oauth", "token": token.to_dict()},
                 )
                 if committed is None:
-                    return
-                self._active_flow_id = None
-                self._oauth_cancel_event = None
-                self._last_fetch_monotonic = 0.0
-                changed = self._set_state_locked(STATE_AUTHORIZED)
+                    credential_conflict = True
+                else:
+                    self._active_flow_id = None
+                    self._oauth_cancel_event = None
+                    self._last_fetch_monotonic = 0.0
+                    changed = self._set_state_locked(STATE_AUTHORIZED)
+            if credential_conflict:
+                self._finish_oauth_failure(flow_id, "凭据已被更新，已忽略过期授权结果")
+                return
             if changed:
                 self.auth_state_changed.emit(STATE_AUTHORIZED)
             self.oauth_finished.emit(True, "")
