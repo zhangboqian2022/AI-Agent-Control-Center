@@ -124,3 +124,39 @@ def test_speed_uses_duration_alias_fields(tmp_path):
     usage = tracker.poll(session)
     assert usage is not None
     assert usage.speed.median == 100  # 200 tokens / 2s
+
+
+def test_discovery_attaches_usage_metadata(tmp_path):
+    from aacc.kimi_discovery import KimiLocalDiscovery
+
+    home = tmp_path / "home"
+    session_dir = home / "sessions" / "wd_x" / "s1"
+    path = wire_path(session_dir)
+    write_lines(path, [usage_record()])
+    (session_dir / "state.json").write_text(
+        json.dumps({"title": "demo", "updatedAt": "2026-07-24T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    index = home / "session_index.jsonl"
+    index.parent.mkdir(parents=True, exist_ok=True)
+    index.write_text(
+        json.dumps(
+            {
+                "sessionId": "s1",
+                "sessionDir": str(session_dir),
+                "workDir": "/tmp/work",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    discovery = KimiLocalDiscovery(
+        kimi_home=home,
+        agent_process_alive=lambda: False,
+    )
+    tasks = discovery.discover({"s1"})
+    assert len(tasks) == 1
+    usage = tasks[0].state.metadata.get("usage")
+    assert usage is not None
+    assert usage["output_tokens"] == 200
+    assert usage["total_input_tokens"] == 400
