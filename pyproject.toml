@@ -23,9 +23,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "diff-cover>=9.7,<11",
   "mypy>=1.17,<2",
+  "pip-audit>=2.9,<3",
   "pyinstaller>=6.14,<7",
-  "pytest>=8.4,<9",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=6.2,<8",
   "pytest-qt>=4.5,<5",
   "ruff>=0.12,<1",

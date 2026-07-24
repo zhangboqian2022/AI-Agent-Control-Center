@@ -103,7 +103,7 @@ def test_installer_links_runtime_not_repository_virtualenv() -> None:
     script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
     assert "Application Support/AACC/runtime" in script
     assert '"$project_root/.venv/bin/aacc"' not in script
-    assert "uv sync --extra dev" in script
+    assert "uv sync --locked --extra dev" in script
     assert "uv export --locked --no-dev --no-emit-project" in script
     assert '"${wheels[0]}" --no-deps' in script
     assert "SKIP_BUILD" in script
@@ -172,3 +172,27 @@ def test_documentation_download_links_match_package_version() -> None:
         content = path.read_text(encoding="utf-8")
         for referenced in re.findall(r"AACC-\d+\.\d+\.\d+(?:-rc\.\d+)?\.dmg", content):
             assert referenced == dmg_name, path.name
+
+
+def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "fetch-depth: 0" in workflow
+    assert "uv sync --locked --extra dev" in workflow
+    assert "continue-on-error: true" not in workflow
+    assert "ruff format --check src tests" in workflow
+    assert "--cov=src/aacc --cov-report=xml" in workflow
+    assert "diff-cover coverage.xml" in workflow
+    assert "--fail-under=90" in workflow
+    assert "uv export --locked --extra dev --no-emit-project" in workflow
+    assert "--requirement pip-audit-requirements.txt" in workflow
+    assert "--no-deps --disable-pip" in workflow
+    assert "--format=json --output=pip-audit.json" in workflow
+    assert "if: always()" in workflow
+    assert "pip-audit-report" in workflow
+
+
+def test_build_uses_locked_development_environment() -> None:
+    script = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
+    assert "uv sync --locked --extra dev" in script
