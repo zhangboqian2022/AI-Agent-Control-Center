@@ -111,9 +111,10 @@ httpx REST 快照（`(as_of_seq, epoch)` 游标）→ websockets 订阅
 
 - [ ] 状态映射（对齐 `src/aacc/models.py` `TaskStatus`，findings §7 Q3）：
   - `turn.started` / `event.session.work_changed{busy:true}` → `RUNNING`
-  - `agent.status.updated.payload.pending_interaction != "none"` →
-    `WAITING_INPUT`（relay 独有增量；`event.session.work_changed` 同名
-    字段作佐证）
+  - `event.session.work_changed.payload.pending_interaction != "none"` →
+    `WAITING_INPUT`（relay 独有增量；该字段未在 `agent.status.updated`
+    观察到，见 findings §7 Q3；`work_changed` 为持久帧、断线重放补发，
+    作 primary 来源更可靠）
   - `turn.ended{reason:"completed"}` / `prompt.completed` → `COMPLETED`
     （两帧相邻到达，映射须幂等：先到定状态，后到有重复抑制）
   - `turn.ended{reason:"cancelled"|"error"}` → `CANCELLED` / `ERROR`
@@ -137,6 +138,9 @@ httpx REST 快照（`(as_of_seq, epoch)` 游标）→ websockets 订阅
   握手三帧、phase A 单回合全事件序列、phase B seq=0 重放（验证 volatile
   帧缺席）、phase C bogus epoch → `resync_required`。
 - [ ] 状态映射表逐行断言（样例 L7/L23/L24/L26 → RUNNING/COMPLETED）。
+- [ ] `event.session.work_changed.payload.pending_interaction` →
+  `WAITING_INPUT` 映射专项断言（relay 相对磁盘轮询的独有增量，
+  样例 L6/L24/L33/L39）。
 - [ ] 用量提取断言：L21 的逐步 usage 数值与延迟字段。
 - [ ] 游标推进与 resync 恢复路径（模拟 epoch 失配）。
 - [ ] token 零泄漏：测试中 token 用假值，提交前 grep fixtures/测试目录
