@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizeGrip,
@@ -50,6 +51,7 @@ from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
+from aacc.kimi_quota import KimiQuota, format_balance, format_reset_countdown
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
 
@@ -143,6 +145,97 @@ class ElidedLabel(QLabel):
                 available_width,
             ),
         )
+
+
+class QuotaBar(QFrame):
+    """Kimi account quota strip shown above the task list."""
+
+    clicked = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("quotaBar")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(7)
+        self.dot = QLabel("●")
+        self.dot.setObjectName("quotaDot")
+        layout.addWidget(self.dot)
+        self.summary_label = QLabel("Kimi 额度")
+        self.summary_label.setObjectName("quotaSummary")
+        layout.addWidget(self.summary_label)
+        layout.addSpacing(4)
+        self.weekly_label = QLabel("周 --")
+        self.weekly_label.setObjectName("quotaText")
+        layout.addWidget(self.weekly_label)
+        self.weekly_bar = QProgressBar()
+        self.weekly_bar.setObjectName("quotaProgress")
+        self.weekly_bar.setRange(0, 100)
+        self.weekly_bar.setTextVisible(False)
+        self.weekly_bar.setFixedSize(56, 5)
+        layout.addWidget(self.weekly_bar)
+        self.five_hour_label = QLabel("5h --")
+        self.five_hour_label.setObjectName("quotaText")
+        layout.addWidget(self.five_hour_label)
+        self.five_hour_bar = QProgressBar()
+        self.five_hour_bar.setObjectName("quotaProgress")
+        self.five_hour_bar.setRange(0, 100)
+        self.five_hour_bar.setTextVisible(False)
+        self.five_hour_bar.setFixedSize(56, 5)
+        layout.addWidget(self.five_hour_bar)
+        layout.addStretch()
+        self.balance_label = QLabel("")
+        self.balance_label.setObjectName("quotaBalance")
+        layout.addWidget(self.balance_label)
+        self.show_unauthorized()
+
+    def show_unauthorized(self) -> None:
+        self.dot.setStyleSheet("color: #e06c75;")
+        self.summary_label.setText("Kimi 额度 · 点击授权")
+        self.weekly_label.setText("周 --")
+        self.five_hour_label.setText("5h --")
+        self.weekly_bar.setValue(0)
+        self.five_hour_bar.setValue(0)
+        self.balance_label.setText("")
+        self.setToolTip("点击通过 Kimi 官方设备授权登录，查询账户额度")
+
+    def show_pending(self) -> None:
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText("Kimi 额度 · 授权中…")
+
+    def show_quota(self, quota: KimiQuota) -> None:
+        self.dot.setStyleSheet("color: #98c379;")
+        self.summary_label.setText("Kimi 额度")
+        self.weekly_label.setText(f"周 {quota.weekly.percentage}%")
+        self.five_hour_label.setText(f"5h {quota.five_hour.percentage}%")
+        self.weekly_bar.setValue(quota.weekly.percentage)
+        self.five_hour_bar.setValue(quota.five_hour.percentage)
+        balance = (
+            format_balance(quota.booster.balance_yuan) if quota.booster is not None else ""
+        )
+        self.balance_label.setText(balance)
+        tooltip_lines = [
+            f"每周额度：{quota.weekly.percentage}%"
+            f"（{format_reset_countdown(quota.weekly.reset_at)}）",
+            f"5 小时额度：{quota.five_hour.percentage}%"
+            f"（{format_reset_countdown(quota.five_hour.reset_at)}）",
+        ]
+        if quota.membership_level:
+            tooltip_lines.append(f"会员等级：{quota.membership_level}")
+        if balance:
+            tooltip_lines.append(f"加油包余额：{balance}")
+        tooltip_lines.append("点击刷新")
+        self.setToolTip("\n".join(tooltip_lines))
+
+    def show_error(self, message: str) -> None:
+        self.dot.setStyleSheet("color: #8997aa;")
+        self.setToolTip(f"额度刷新失败：{message}\n点击重试")
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 
 class TaskCard(QFrame):
