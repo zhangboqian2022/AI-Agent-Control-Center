@@ -53,6 +53,20 @@ scripts/install.sh
 
 ## 当前进度（2026-07-24）
 
+- **已修复：CI 全红但本地全绿的"幽灵"失败**（`67b83be`）。
+  `test_expired_history_cleanup_is_throttled_between_updates` 把
+  `_last_history_cleanup` 置 `0.0` 来伪造"距上次清理已过 1 小时"，而
+  `time.monotonic()` 是**开机秒数**——开机不足 1 小时的机器上
+  `monotonic() - 0.0 < 3600`，节流不触发、测试必败。CI 运行器每次都是
+  全新 VM（开机几分钟）所以 GitHub 上全红并触发失败通知邮件；本机开机
+  超过 1 小时就通过，表现为间歇性。修复：测试改为
+  `time.monotonic() - HISTORY_CLEANUP_INTERVAL_SECONDS - 1`（相对当前
+  时间回拨），与机器 uptime 无关。
+  **教训（后续开发遵守）**：凡涉及 `time.monotonic()`/`time.time()` 的
+  测试，时间造假必须相对"当前时刻"偏移，不能写绝对值（0、固定时间点）；
+  依赖开机时长、系统时钟、时区的断言都是 CI 地雷。GitHub Actions 失败
+  邮件是推送给 commit 作者的默认通知（Settings → Notifications → Actions
+  可调）。
 - `main`：**1.4.0 正式版已发布**（tag `v1.4.0` + GitHub Release（Latest，非
   Prerelease）附 DMG 与 `.sha256`，SHA-256
   `0974f394fbc1272100b51c0352e473c0a747d7b40ec2e9f09508e5f4d544c909`）。
