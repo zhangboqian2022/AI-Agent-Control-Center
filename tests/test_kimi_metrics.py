@@ -59,6 +59,11 @@ def test_decode_speed_thresholds():
     assert decode_speed(200, None) is None
 
 
+def test_decode_speed_non_finite_duration():
+    assert decode_speed(200, float("nan")) is None
+    assert decode_speed(200, float("inf")) is None
+
+
 def test_speed_tracker_median_and_window():
     tracker = SpeedTracker()
     assert tracker.median == 0
