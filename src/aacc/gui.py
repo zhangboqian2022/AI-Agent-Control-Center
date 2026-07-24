@@ -62,6 +62,7 @@ from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
+from aacc.kimi_metrics import format_usage_line
 from aacc.kimi_quota import KimiQuota, format_balance, format_reset_countdown
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
@@ -359,6 +360,11 @@ class TaskCard(QFrame):
         activity_row.addWidget(self.message_label, 1)
         details_layout.addLayout(activity_row)
 
+        self.usage_label = QLabel()
+        self.usage_label.setObjectName("usageLabel")
+        self.usage_label.hide()
+        details_layout.addWidget(self.usage_label)
+
         self.updated_label = QLabel()
         self.updated_label.setObjectName("updatedLabel")
         self.updated_label.hide()
@@ -402,6 +408,12 @@ class TaskCard(QFrame):
             self.workdir_label.show()
         else:
             self.workdir_label.hide()
+        usage = state.metadata.get("usage")
+        if self.task.agent.type == "kimi_code" and isinstance(usage, dict):
+            self.usage_label.setText(format_usage_line(usage))
+            self.usage_label.show()
+        else:
+            self.usage_label.hide()
         self.message_label.setText(state.message or "暂无状态说明")
         self.updated_label.setText(
             f"最后活动：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
