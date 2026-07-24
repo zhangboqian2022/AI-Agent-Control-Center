@@ -51,7 +51,7 @@ def test_external_disk_change_invalidates_snapshot(tmp_path):
 
 - [ ] **Step 2: Verify the tests fail**
 
-Run: `.venv/bin/python -m pytest tests/test_credential_store.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_credential_store.py -q`
 Expected: FAIL because `aacc.credential_store` does not exist.
 
 - [ ] **Step 3: Implement the store**
@@ -114,7 +114,7 @@ sentinel must hash differently from `{}`.
 
 - [ ] **Step 4: Run store tests**
 
-Run: `.venv/bin/python -m pytest tests/test_credential_store.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_credential_store.py -q`
 Expected: all tests PASS.
 
 - [ ] **Step 5: Commit**
@@ -162,7 +162,7 @@ def test_two_threads_begin_only_one_oauth_flow(qapp, tmp_path, monkeypatch):
 
 - [ ] **Step 2: Verify each race test fails against v1.4.0**
 
-Run: `.venv/bin/python -m pytest tests/test_quota_service.py -k "delayed or two_threads" -q`  
+Run: `.venv/bin/python -m pytest tests/test_quota_service.py -k "delayed or two_threads" -q`
 Expected: at least one stale write/clear assertion fails and double begin can start twice.
 
 - [ ] **Step 3: Integrate generation and flow IDs**
@@ -202,7 +202,7 @@ def test_logout_wins_over_late_oauth(qapp, tmp_path):
 
 - [ ] **Step 5: Run the service race suite**
 
-Run: `.venv/bin/python -m pytest tests/test_quota_service.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_quota_service.py -q`
 Expected: all tests PASS.
 
 - [ ] **Step 6: Commit**
@@ -249,7 +249,7 @@ def test_every_created_client_is_closed(qapp, tmp_path):
 
 - [ ] **Step 2: Verify tests fail**
 
-Run: `.venv/bin/python -m pytest tests/test_kimi_oauth.py tests/test_quota_service.py -k "deadline or closed or oserror" -q`  
+Run: `.venv/bin/python -m pytest tests/test_kimi_oauth.py tests/test_quota_service.py -k "deadline or closed or oserror" -q`
 Expected: fixed 15-minute deadline, zero close calls, or pending state causes failures.
 
 - [ ] **Step 3: Implement lifecycle guarantees**
@@ -277,7 +277,7 @@ def test_no_fd_growth_over_poll_cycles(tmp_path):
 
 - [ ] **Step 5: Run focused and full Kimi tests**
 
-Run: `.venv/bin/python -m pytest tests/test_kimi_oauth.py tests/test_quota_service.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_kimi_oauth.py tests/test_quota_service.py -q`
 Expected: all tests PASS.
 
 - [ ] **Step 6: Commit**
@@ -323,7 +323,7 @@ def test_one_valid_window_is_partial():
 
 - [ ] **Step 2: Verify tests fail**
 
-Run: `.venv/bin/python -m pytest tests/test_kimi_quota.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_kimi_quota.py -q`
 Expected: current parser returns all-zero `QuotaDetail` values.
 
 - [ ] **Step 3: Implement optional windows and status**
@@ -359,7 +359,7 @@ into STALE in the parser—STALE is a service/UI observation.
 
 - [ ] **Step 6: Run Kimi parser and GUI tests**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_kimi_quota.py tests/test_quota_bar.py tests/test_gui_quota_wiring.py -q`  
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_kimi_quota.py tests/test_quota_bar.py tests/test_gui_quota_wiring.py -q`
 Expected: all tests PASS.
 
 - [ ] **Step 7: Commit**
@@ -401,7 +401,7 @@ def test_oauth_dialog_success_close_does_not_cancel(qtbot):
 
 - [ ] **Step 2: Verify tests fail**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_gui_quota_wiring.py -k "dialog" -q`  
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_gui_quota_wiring.py -k "dialog" -q`
 Expected: X emits nothing and `finish_and_close` is absent.
 
 - [ ] **Step 3: Implement idempotent cancellation**
@@ -423,7 +423,7 @@ in `tests/test_quota_bar.py`.
 
 - [ ] **Step 5: Run GUI tests and commit**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_quota_bar.py tests/test_gui_quota_wiring.py -q`  
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_quota_bar.py tests/test_gui_quota_wiring.py -q`
 Expected: all tests PASS without the QMouseEvent constructor warning.
 
 ```bash
