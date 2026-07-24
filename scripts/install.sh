@@ -15,7 +15,7 @@ fi
 
 command -v uv >/dev/null 2>&1 || { echo "错误：未找到 uv，请先运行 brew install uv" >&2; exit 1; }
 cd "$project_root"
-uv sync --extra dev
+uv sync --locked --extra dev
 if [[ "${AACC_RUN_TESTS:-0}" == "1" ]]; then
   echo "运行测试（AACC_RUN_TESTS=1）…"
   QT_QPA_PLATFORM=offscreen uv run pytest -q

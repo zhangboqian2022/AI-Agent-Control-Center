@@ -15,7 +15,7 @@ fi
 cd "$project_root"
 
 command -v uv >/dev/null 2>&1 || { echo "错误：需要先安装 uv" >&2; exit 1; }
-uv sync --extra dev
+uv sync --locked --extra dev
 uv run pyinstaller \
   --noconfirm \
   --clean \
