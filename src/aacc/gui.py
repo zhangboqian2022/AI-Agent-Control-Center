@@ -256,6 +256,8 @@ class KimiOAuthDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._cancel_emitted = False
+        self._finishing = False
         self.setWindowTitle("Kimi 授权")
         self.setMinimumWidth(320)
         layout = QVBoxLayout(self)
@@ -279,8 +281,28 @@ class KimiOAuthDialog(QDialog):
         self.code_label.setText(user_code)
 
     def _on_cancel(self) -> None:
+        self.cancel_once()
+        self.reject()
+
+    def cancel_once(self) -> None:
+        if self._cancel_emitted:
+            return
+        self._cancel_emitted = True
         self.cancelled.emit()
+
+    def finish_and_close(self) -> None:
+        self._finishing = True
         self.close()
+
+    def reject(self) -> None:
+        if not self._finishing:
+            self.cancel_once()
+        super().reject()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._finishing:
+            self.cancel_once()
+        super().closeEvent(event)
 
 
 class TaskCard(QFrame):
@@ -1364,7 +1386,7 @@ class MainWindow(QWidget):
 
     def _on_oauth_finished(self, success: bool, message: str) -> None:
         if self._oauth_dialog is not None:
-            self._oauth_dialog.close()
+            self._oauth_dialog.finish_and_close()
             self._oauth_dialog.deleteLater()
             self._oauth_dialog = None
         if not success and message:
