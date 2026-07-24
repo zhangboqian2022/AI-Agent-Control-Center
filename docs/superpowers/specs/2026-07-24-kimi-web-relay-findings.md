@@ -136,14 +136,17 @@ ack 回显生效游标，可用于校验（L4）。
 **Q3 WS 事件能否无歧义映射到 AACC 现有 `TaskStatus`？**
 可以。映射表（对齐 `src/aacc/models.py` 的 `TaskStatus`）：
 - `turn.started` / `event.session.work_changed{busy:true}` → `RUNNING`
-- `agent.status.updated.payload.pending_interaction != "none"`（Task 2 实测
-  该字段存在于 agent.status.updated；`event.session.work_changed` 亦携带
-  同名字段，样例 L6/L24 值为 `"none"`）→ `WAITING_INPUT`——这是 relay
-  相对磁盘轮询的**独有增量**：真正的"等待输入"检测。
+- `event.session.work_changed.payload.pending_interaction != "none"`（Task 2
+  样例中 `pending_interaction` 出现于 `event.session.work_changed`
+  （L6/L24/L33/L39）、`session` 对象（L30）与 REST session schema；
+  `agent.status.updated` 未观察到该字段）→ `WAITING_INPUT`——这是 relay
+  相对磁盘轮询的**独有增量**：真正的"等待输入"检测。且 `work_changed`
+  是持久帧、断线重放时补发（phase B 重放 L33/L39），比重放缺席的
+  volatile 帧更适合作为来源。
 - `turn.ended{reason:"completed"}` / `prompt.completed` → `COMPLETED`
 - `turn.ended{reason:"cancelled"|"error"}` → `CANCELLED` / `ERROR`
-唯一需要注意的歧义：`turn.ended` 与 `prompt.completed` 先后到达（L23→L26，
-同 seq 相邻），映射层应幂等，先到者定状态、后到者不重复触发。
+唯一需要注意的歧义：`turn.ended` 与 `prompt.completed` 相邻到达（L23→L26，
+同一毫秒；seq 分别为 9 与 11），映射层应幂等，先到者定状态、后到者不重复触发。
 
 **Q4 重连时 seq 续传是否足够，还是需要重新快照？**
 两者都要，分工明确：同 epoch 下 seq 续传足够——phase B 以 seq=0 重连
