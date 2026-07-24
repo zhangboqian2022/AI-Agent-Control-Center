@@ -19,7 +19,7 @@ dependencies = [
   "pyyaml>=6,<7",
   "regex>=2025,<2027",
   "uvicorn>=0.35,<1",
-  "websockets>=16.1.1",
+  "websockets>=16,<17",
 ]
 
 [project.optional-dependencies]
