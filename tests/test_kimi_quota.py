@@ -152,3 +152,12 @@ def test_format_balance():
     assert format_balance(None) == ""
     assert format_balance(3.152507) == "¥3.15"
     assert format_balance(0.0) == "¥0.00"
+
+
+def test_to_int_non_finite_is_safe():
+    quota = parse_quota({"usage": {"limit": float("inf"), "used": float("nan")}})
+    assert quota.weekly.limit == 0
+    assert quota.weekly.used == 0
+    quota = parse_quota({"usage": {"limit": "inf", "used": "nan"}})
+    assert quota.weekly.limit == 0
+    assert quota.weekly.used == 0
