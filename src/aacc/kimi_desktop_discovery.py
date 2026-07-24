@@ -202,7 +202,11 @@ class KimiDesktopLocalDiscovery:
             # snapshot (immutable skips WAL replay). mode=ro keeps the catalog
             # fresh while never writing. The connection is short-lived so the
             # WAL is never pinned by a lingering reader.
-            connection = sqlite3.connect(f"file:{self.conversations_path}?mode=ro", uri=True)
+            connection = sqlite3.connect(
+                f"file:{self.conversations_path}?mode=ro",
+                uri=True,
+                timeout=5.0,
+            )
             try:
                 rows = connection.execute(_CONVERSATIONS_QUERY).fetchall()
             finally:
