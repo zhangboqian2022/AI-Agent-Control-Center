@@ -122,9 +122,9 @@ def test_poll_401_clears_credentials(qapp, tmp_path):
     states: list[str] = []
     service.auth_state_changed.connect(states.append)
     service.refresh_now()
-    assert wait_for(lambda: service.state() == STATE_UNAUTHORIZED)
+    assert wait_for(lambda: STATE_UNAUTHORIZED in states)
+    assert service.state() == STATE_UNAUTHORIZED
     assert load_credentials(tmp_path) is None
-    assert STATE_UNAUTHORIZED in states
 
 
 def test_poll_refreshes_expired_oauth_token(qapp, tmp_path):
