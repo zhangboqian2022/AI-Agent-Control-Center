@@ -8,7 +8,7 @@ import httpx
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from aacc.kimi_oauth import load_credentials, save_credentials
+from aacc.kimi_oauth import clear_credentials, load_credentials, save_credentials
 from aacc.quota_service import (
     STATE_AUTHORIZED,
     STATE_PENDING,
@@ -301,6 +301,37 @@ def test_delayed_refresh_cannot_overwrite_new_api_key(qapp, tmp_path):
         "auth_method": "api_key",
         "api_key": "sk-new",
     }
+
+
+def test_external_credential_removal_during_refresh_reconciles_state(qapp, tmp_path):
+    save_credentials(tmp_path, {"auth_method": "oauth", "token": EXPIRED_TOKEN})
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/token":
+            refresh_started.set()
+            assert release_refresh.wait(5)
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "late-refresh",
+                    "refresh_token": "late-refresh-token",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx.Response(200, json=QUOTA_PAYLOAD)
+
+    service = make_service(tmp_path, handler)
+    service.refresh_now()
+    assert refresh_started.wait(5)
+
+    clear_credentials(tmp_path)
+    release_refresh.set()
+
+    assert wait_for(lambda: not service._poll_lock.locked())
+    assert wait_for(lambda: service.state() == STATE_UNAUTHORIZED)
+    assert load_credentials(tmp_path) is None
 
 
 def test_delayed_401_cannot_clear_new_api_key(qapp, tmp_path):
