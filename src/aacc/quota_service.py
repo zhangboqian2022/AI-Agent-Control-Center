@@ -237,7 +237,8 @@ class QuotaService(QObject):
             self._reconcile_state_from_credentials()
             return
         except KimiOAuthUnauthorizedError:
-            self._clear_credentials_if_current(snapshot)
+            if not self._clear_credentials_if_current(snapshot):
+                self._reconcile_state_from_credentials()
             return
         except KimiOAuthError as error:
             self.error_occurred.emit(self._safe_error(error))
@@ -248,12 +249,14 @@ class QuotaService(QObject):
         try:
             quota = fetch_quota(client, grant.token)
         except KimiQuotaUnauthorizedError:
-            self._clear_credentials_if_current(grant.snapshot)
+            if not self._clear_credentials_if_current(grant.snapshot):
+                self._reconcile_state_from_credentials()
             return
         except (KimiQuotaError, httpx.HTTPError) as error:
             self.error_occurred.emit(self._safe_error(error))
             return
         if not self._set_state_if_current(grant.snapshot, STATE_AUTHORIZED):
+            self._reconcile_state_from_credentials()
             return
         with self._state_lock:
             if self._state == STATE_PENDING or not self._credentials.is_current(grant.snapshot):
