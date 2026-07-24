@@ -243,7 +243,10 @@ def poll_device_token(
     now: Callable[[], float] = time.time,
     is_cancelled: Callable[[], bool] = lambda: False,
 ) -> KimiOAuthToken:
-    deadline = now() + POLL_TIMEOUT_SECONDS
+    deadline = now() + min(
+        float(authorization.expires_in_seconds),
+        POLL_TIMEOUT_SECONDS,
+    )
     interval = max(1.0, authorization.interval_seconds)
     while now() < deadline:
         if is_cancelled():

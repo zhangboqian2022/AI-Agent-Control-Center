@@ -47,6 +47,16 @@ def make_service(tmp_path, handler, **kwargs) -> QuotaService:
     )
 
 
+class TrackingClient(httpx.Client):
+    def __init__(self, handler) -> None:
+        super().__init__(transport=httpx.MockTransport(handler))
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        super().close()
+
+
 def wait_for(predicate, timeout: float = 5.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -412,3 +422,103 @@ def test_two_threads_can_start_only_one_oauth_flow(tmp_path):
 
     assert flow_started == 1
     assert service.state() == STATE_PENDING
+
+
+def test_poll_closes_created_http_client(tmp_path):
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-key"})
+    clients: list[TrackingClient] = []
+
+    def factory() -> httpx.Client:
+        client = TrackingClient(quota_handler([]))
+        clients.append(client)
+        return client
+
+    service = QuotaService(tmp_path, version="test", client_factory=factory)
+
+    service._poll_once()
+
+    assert len(clients) == 1
+    assert clients[0].close_calls == 1
+
+
+def test_oauth_closes_created_http_client(qapp, tmp_path):
+    clients: list[TrackingClient] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/device_authorization":
+            return httpx.Response(
+                200,
+                json={
+                    "user_code": "CODE",
+                    "device_code": "device",
+                    "verification_uri_complete": "https://example.com",
+                    "interval": 1,
+                    "expires_in": 900,
+                },
+            )
+        if request.url.path == "/api/oauth/token":
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "oauth-access",
+                    "refresh_token": "oauth-refresh",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx.Response(200, json=QUOTA_PAYLOAD)
+
+    def factory() -> httpx.Client:
+        client = TrackingClient(handler)
+        clients.append(client)
+        return client
+
+    service = QuotaService(tmp_path, version="test", client_factory=factory)
+    finished: list[bool] = []
+    service.oauth_finished.connect(lambda success, _message: finished.append(success))
+
+    service.begin_oauth()
+
+    assert wait_for(lambda: finished == [True])
+    assert wait_for(lambda: bool(clients) and clients[0].close_calls == 1)
+
+
+def test_oauth_save_oserror_exits_pending_and_finishes_once(
+    qapp, tmp_path, monkeypatch
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/device_authorization":
+            return httpx.Response(
+                200,
+                json={
+                    "user_code": "CODE",
+                    "device_code": "device",
+                    "verification_uri_complete": "https://example.com",
+                    "interval": 1,
+                    "expires_in": 900,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "oauth-access",
+                "refresh_token": "oauth-refresh",
+                "expires_in": 3600,
+            },
+        )
+
+    service = make_service(tmp_path, handler)
+    finished: list[tuple[bool, str]] = []
+    service.oauth_finished.connect(
+        lambda success, message: finished.append((success, message))
+    )
+
+    def fail_save(_config_dir, _data) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr("aacc.credential_store.save_credentials", fail_save)
+    service.begin_oauth()
+
+    assert wait_for(lambda: len(finished) == 1, timeout=2)
+    assert finished[0][0] is False
+    assert "disk unavailable" in finished[0][1]
+    assert service.state() == STATE_UNAUTHORIZED

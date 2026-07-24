@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from aacc.kimi_quota import (
     KimiQuotaUnauthorizedError,
     fetch_quota,
 )
+from aacc.security import redact
 
 STATE_UNAUTHORIZED = "unauthorized"
 STATE_PENDING = "pending"
@@ -223,42 +225,47 @@ class QuotaService(QObject):
                 if self._state == STATE_PENDING:
                     return
                 snapshot = self._credentials.snapshot()
-            client = self._client_factory()
-            try:
-                grant = self._access_token(client, snapshot)
-            except _StaleCredentialOperation:
-                return
-            except KimiOAuthUnauthorizedError:
-                self._clear_credentials_if_current(snapshot)
-                return
-            except KimiOAuthError as error:
-                self.error_occurred.emit(str(error))
-                return
-            if grant is None:
-                self._set_state_if_current(snapshot, STATE_UNAUTHORIZED)
-                return
-            try:
-                quota = fetch_quota(client, grant.token)
-            except KimiQuotaUnauthorizedError:
-                self._clear_credentials_if_current(grant.snapshot)
-                return
-            except (KimiQuotaError, httpx.HTTPError) as error:
-                self.error_occurred.emit(str(error))
-                return
-            if not self._set_state_if_current(
-                grant.snapshot, STATE_AUTHORIZED
-            ):
-                return
-            with self._state_lock:
-                if (
-                    self._state == STATE_PENDING
-                    or not self._credentials.is_current(grant.snapshot)
-                ):
-                    return
-                self._last_fetch_monotonic = time.monotonic()
-            self.quota_updated.emit(quota)
+            with closing(self._client_factory()) as client:
+                self._poll_with_client(client, snapshot)
         finally:
             self._poll_lock.release()
+
+    def _poll_with_client(
+        self,
+        client: httpx.Client,
+        snapshot: CredentialSnapshot,
+    ) -> None:
+        try:
+            grant = self._access_token(client, snapshot)
+        except _StaleCredentialOperation:
+            return
+        except KimiOAuthUnauthorizedError:
+            self._clear_credentials_if_current(snapshot)
+            return
+        except KimiOAuthError as error:
+            self.error_occurred.emit(str(error))
+            return
+        if grant is None:
+            self._set_state_if_current(snapshot, STATE_UNAUTHORIZED)
+            return
+        try:
+            quota = fetch_quota(client, grant.token)
+        except KimiQuotaUnauthorizedError:
+            self._clear_credentials_if_current(grant.snapshot)
+            return
+        except (KimiQuotaError, httpx.HTTPError) as error:
+            self.error_occurred.emit(str(error))
+            return
+        if not self._set_state_if_current(grant.snapshot, STATE_AUTHORIZED):
+            return
+        with self._state_lock:
+            if (
+                self._state == STATE_PENDING
+                or not self._credentials.is_current(grant.snapshot)
+            ):
+                return
+            self._last_fetch_monotonic = time.monotonic()
+        self.quota_updated.emit(quota)
 
     def _access_token(
         self,
@@ -359,23 +366,24 @@ class QuotaService(QObject):
         try:
             if cancel_event.is_set():
                 raise KimiOAuthCancelledError("OAuth flow cancelled")
-            client = self._client_factory()
-            authorization = request_device_authorization(
-                client, version=self._version, device_id=self._device_id
-            )
-            self.oauth_code_ready.emit(
-                authorization.user_code, authorization.verification_uri_complete
-            )
-            token = poll_device_token(
-                client,
-                authorization,
-                version=self._version,
-                device_id=self._device_id,
-                sleep=lambda seconds: self._interruptible_sleep(
-                    seconds, cancel_event
-                ),
-                is_cancelled=cancel_event.is_set,
-            )
+            with closing(self._client_factory()) as client:
+                authorization = request_device_authorization(
+                    client, version=self._version, device_id=self._device_id
+                )
+                self.oauth_code_ready.emit(
+                    authorization.user_code,
+                    authorization.verification_uri_complete,
+                )
+                token = poll_device_token(
+                    client,
+                    authorization,
+                    version=self._version,
+                    device_id=self._device_id,
+                    sleep=lambda seconds: self._interruptible_sleep(
+                        seconds, cancel_event
+                    ),
+                    is_cancelled=cancel_event.is_set,
+                )
             if cancel_event.is_set():
                 raise KimiOAuthCancelledError("OAuth flow cancelled")
             with self._state_lock:
@@ -399,6 +407,10 @@ class QuotaService(QObject):
             self._finish_oauth_failure(flow_id, "授权已取消")
         except (KimiOAuthError, httpx.HTTPError) as error:
             self._finish_oauth_failure(flow_id, str(error))
+        except Exception as error:
+            self._logger.exception("Unexpected Kimi OAuth failure")
+            message = redact(str(error) or type(error).__name__)[:160]
+            self._finish_oauth_failure(flow_id, message)
 
     def _finish_oauth_failure(self, flow_id: str, message: str) -> None:
         with self._state_lock:
