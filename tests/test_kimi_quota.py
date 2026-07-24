@@ -8,6 +8,7 @@ import pytest
 from aacc.kimi_quota import (
     KimiQuotaError,
     KimiQuotaUnauthorizedError,
+    QuotaStatus,
     fetch_quota,
     format_balance,
     format_reset_countdown,
@@ -64,15 +65,32 @@ def test_parse_booster_disabled_shows_zero_balance():
     assert quota.booster.balance_yuan == 0.0
 
 
-def test_parse_missing_sections_yield_zero_details():
+def test_parse_missing_sections_yield_unknown_windows():
     quota = parse_quota({})
+    assert quota.status is QuotaStatus.UNKNOWN
+    assert quota.weekly is None
+    assert quota.five_hour is None
+    assert quota.total_quota is None
+    assert quota.membership_level is None
+    assert quota.booster is None
+
+
+def test_parse_explicit_zero_is_not_unknown():
+    quota = parse_quota(
+        {"usage": {"limit": 0, "used": 0, "remaining": 0}}
+    )
+    assert quota.status is QuotaStatus.PARTIAL
+    assert quota.weekly is not None
     assert quota.weekly.used == 0
     assert quota.weekly.limit == 0
     assert quota.weekly.percentage == 0
-    assert quota.weekly.reset_at is None
-    assert quota.five_hour.limit == 0
-    assert quota.membership_level is None
-    assert quota.booster is None
+
+
+def test_parse_one_valid_window_is_partial():
+    quota = parse_quota({"usage": {"limit": 100, "used": 10}})
+    assert quota.status is QuotaStatus.PARTIAL
+    assert quota.weekly is not None
+    assert quota.five_hour is None
 
 
 def test_parse_used_derived_from_remaining():
@@ -89,10 +107,11 @@ def test_parse_numeric_fields_not_strings():
 
 def test_parse_garbage_is_safe():
     quota = parse_quota("garbage")
-    assert quota.weekly.limit == 0
+    assert quota.status is QuotaStatus.UNKNOWN
+    assert quota.weekly is None
     quota = parse_quota({"usage": {"limit": "abc", "used": [1]}})
-    assert quota.weekly.limit == 0
-    assert quota.weekly.used == 0
+    assert quota.status is QuotaStatus.UNKNOWN
+    assert quota.weekly is None
 
 
 def make_client(handler) -> httpx.Client:
@@ -156,11 +175,9 @@ def test_format_balance():
 
 def test_to_int_non_finite_is_safe():
     quota = parse_quota({"usage": {"limit": float("inf"), "used": float("nan")}})
-    assert quota.weekly.limit == 0
-    assert quota.weekly.used == 0
+    assert quota.weekly is None
     quota = parse_quota({"usage": {"limit": "inf", "used": "nan"}})
-    assert quota.weekly.limit == 0
-    assert quota.weekly.used == 0
+    assert quota.weekly is None
 
 
 def test_parse_real_payload_time_unit_minute_window():
@@ -209,4 +226,4 @@ def test_five_hour_window_rejects_non_minute_units():
                 }
             ]
         }
-        assert parse_quota(payload).five_hour.limit == 0, unit
+        assert parse_quota(payload).five_hour is None, unit

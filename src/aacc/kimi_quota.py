@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -30,6 +31,13 @@ class KimiQuotaError(RuntimeError):
 
 class KimiQuotaUnauthorizedError(KimiQuotaError):
     """The access token was rejected; re-authorization is required."""
+
+
+class QuotaStatus(StrEnum):
+    OK = "ok"
+    PARTIAL = "partial"
+    UNKNOWN = "unknown"
+    STALE = "stale"
 
 
 @dataclass(frozen=True)
@@ -50,11 +58,13 @@ class BoosterWallet:
 
 @dataclass(frozen=True)
 class KimiQuota:
-    weekly: QuotaDetail
-    five_hour: QuotaDetail
-    total_quota: QuotaDetail
+    weekly: QuotaDetail | None
+    five_hour: QuotaDetail | None
+    total_quota: QuotaDetail | None
     membership_level: str | None
     booster: BoosterWallet | None
+    status: QuotaStatus = QuotaStatus.OK
+    fetched_at: datetime | None = None
 
 
 def usages_url() -> str:
@@ -89,15 +99,24 @@ def _parse_reset(raw: object) -> datetime | None:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
-def _make_detail(raw: object) -> QuotaDetail:
-    section: dict[str, Any] = raw if isinstance(raw, dict) else {}
-    limit = _to_int(section.get("limit")) or 0
+def _make_detail(raw: object) -> QuotaDetail | None:
+    if not isinstance(raw, dict):
+        return None
+    section: dict[str, Any] = raw
+    limit = _to_int(section.get("limit"))
     used = _to_int(section.get("used"))
     remaining = _to_int(section.get("remaining"))
+    if limit is None or limit < 0 or (used is None and remaining is None):
+        return None
+    if used is not None and (used < 0 or used > limit):
+        return None
+    if remaining is not None and (remaining < 0 or remaining > limit):
+        return None
     if used is None:
-        used = max(0, limit - remaining) if remaining is not None else 0
+        assert remaining is not None
+        used = limit - remaining
     if remaining is None:
-        remaining = max(0, limit - used)
+        remaining = limit - used
     percentage = round(used / limit * 100) if limit > 0 else 0
     reset_at = _parse_reset(
         section.get("resetTime") or section.get("reset_at") or section.get("resetAt")
@@ -139,7 +158,7 @@ def _parse_booster(raw: object) -> BoosterWallet | None:
 def parse_quota(data: object) -> KimiQuota:
     root: dict[str, Any] = data if isinstance(data, dict) else {}
     weekly = _make_detail(root.get("usage"))
-    five_hour = QuotaDetail(used=0, limit=0, remaining=0, reset_at=None, percentage=0)
+    five_hour: QuotaDetail | None = None
     limits = root.get("limits")
     if isinstance(limits, list):
         for item in limits:
@@ -147,6 +166,14 @@ def parse_quota(data: object) -> KimiQuota:
                 five_hour = _make_detail(item.get("detail"))
                 break
     total_quota = _make_detail(root.get("totalQuota"))
+    valid_windows = sum(detail is not None for detail in (weekly, five_hour))
+    status = (
+        QuotaStatus.OK
+        if valid_windows == 2
+        else QuotaStatus.PARTIAL
+        if valid_windows == 1
+        else QuotaStatus.UNKNOWN
+    )
     membership_level: str | None = None
     user = root.get("user")
     if isinstance(user, dict):
@@ -161,6 +188,7 @@ def parse_quota(data: object) -> KimiQuota:
         total_quota=total_quota,
         membership_level=membership_level,
         booster=_parse_booster(root.get("boosterWallet")),
+        status=status,
     )
 
 
@@ -203,7 +231,7 @@ def fetch_quota(client: httpx.Client, access_token: str) -> KimiQuota:
         payload: object = response.json()
     except ValueError:
         raise KimiQuotaError("Quota response is not valid JSON") from None
-    return parse_quota(payload)
+    return replace(parse_quota(payload), fetched_at=datetime.now(UTC))
 
 
 def format_reset_countdown(reset_at: datetime | None, *, now: datetime | None = None) -> str:

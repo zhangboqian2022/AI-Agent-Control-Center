@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from aacc.gui import QuotaBar
-from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail
+from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail, QuotaStatus
 
 
 def make_quota() -> KimiQuota:
@@ -65,6 +65,53 @@ def test_show_quota_without_booster_hides_balance(qapp):
         )
     )
     assert bar.balance_label.text() == ""
+
+
+def test_show_partial_quota_uses_dashes_for_missing_window(qapp):
+    quota = make_quota()
+    bar = QuotaBar()
+    bar.show_quota(
+        KimiQuota(
+            weekly=quota.weekly,
+            five_hour=None,
+            total_quota=None,
+            membership_level=None,
+            booster=None,
+            status=QuotaStatus.PARTIAL,
+        )
+    )
+    assert bar.weekly_label.text() == "周 42%"
+    assert bar.five_hour_label.text() == "5h --"
+
+
+def test_show_unknown_quota_does_not_display_zero_percent(qapp):
+    bar = QuotaBar()
+    bar.show_quota(
+        KimiQuota(
+            weekly=None,
+            five_hour=None,
+            total_quota=None,
+            membership_level=None,
+            booster=None,
+            status=QuotaStatus.UNKNOWN,
+        )
+    )
+    assert "数据不可用" in bar.summary_label.text()
+    assert bar.weekly_label.text() == "周 --"
+    assert bar.five_hour_label.text() == "5h --"
+    assert "0%" not in bar.toolTip()
+
+
+def test_refresh_error_preserves_values_and_marks_them_stale(qapp):
+    bar = QuotaBar()
+    bar.show_quota(make_quota())
+
+    bar.show_error("network unavailable")
+
+    assert "数据过期" in bar.summary_label.text()
+    assert bar.weekly_label.text() == "周 42%"
+    assert bar.five_hour_label.text() == "5h 10%"
+    assert "network unavailable" in bar.toolTip()
 
 
 def test_clicked_signal(qapp):
