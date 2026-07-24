@@ -7,6 +7,8 @@ app:
   start_at_login: false
   blink_attention: true
   keyboard_injection: true
+  # Kimi 账户额度条（面板顶部）/ Kimi quota bar at the top of the panel
+  kimi_quota_enabled: true
   api:
     enabled: true
     host: 127.0.0.1

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from aacc.codex_discovery import DiscoveredTask
+from aacc.kimi_wire_usage import WireUsageTracker
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.processes import CachedProcessAlive
 
@@ -212,6 +213,7 @@ class KimiLocalDiscovery:
         activity_window_seconds: float = 90.0,
         active_turn_window_seconds: float = 1800.0,
         max_tasks: int = 20,
+        usage_tracker: WireUsageTracker | None = None,
     ) -> None:
         home = kimi_home or Path.home() / ".kimi-code"
         self.session_index_path = session_index_path or home / "session_index.jsonl"
@@ -230,6 +232,7 @@ class KimiLocalDiscovery:
             self.activity_window_seconds, active_turn_window_seconds
         )
         self.max_tasks = max(1, min(max_tasks, 20))
+        self.usage_tracker = usage_tracker or WireUsageTracker()
 
     def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
         sessions = self._sessions()
@@ -247,6 +250,7 @@ class KimiLocalDiscovery:
         discovered: list[DiscoveredTask] = []
         for session in sessions:
             session_id = session["id"]
+            usage = self.usage_tracker.poll(session["session_dir"])
             evaluation = evaluate_kimi_session_status(
                 session["session_dir"],
                 now=now,
@@ -292,6 +296,12 @@ class KimiLocalDiscovery:
                             **(
                                 {"work_dir": session["work_dir"]}
                                 if session["work_dir"]
+                                else {}
+                            ),
+                            **(
+                                {"usage": usage.to_metadata()}
+                                if usage is not None
+                                and (usage.total_input_tokens or usage.output_tokens)
                                 else {}
                             ),
                         },

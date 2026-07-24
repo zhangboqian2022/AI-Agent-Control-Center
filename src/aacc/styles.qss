@@ -25,6 +25,14 @@
 #timerLabel { color: #d9e2ef; font-family: Menlo; font-size: 12px; font-weight: 700; }
 #taskName { color: #f3f6fb; font-size: 16px; font-weight: 800; }
 #messageLabel { color: #8997aa; font-size: 10px; }
+#usageLabel { color: #6b7c93; font-family: Menlo; font-size: 10px; }
+#quotaBar { background: rgba(255, 255, 255, 0.04); border-radius: 8px; }
+#quotaSummary { color: #d9e2ef; font-size: 11px; font-weight: 700; }
+#quotaText { color: #8997aa; font-size: 10px; }
+#quotaBalance { color: #e5c07b; font-size: 10px; font-weight: 700; }
+#quotaProgress { background: rgba(255, 255, 255, 0.08); border: none; border-radius: 2px; }
+#quotaProgress::chunk { background: #4d9fff; border-radius: 2px; }
+#oauthCode { color: #d9e2ef; font-family: Menlo; font-size: 20px; font-weight: 700; padding: 8px; }
 #updatedLabel { color: #687890; font-size: 10px; }
 #taskSummary { color: #94a3b8; font-size: 11px; font-weight: 700; }
 #taskGroupLabel { color: #8fa1bb; font-size: 10px; font-weight: 800; letter-spacing: 1px; }

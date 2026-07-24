@@ -89,3 +89,59 @@ def test_primary_launch_runs_application_and_closes_guard(
     assert app_module.main() == 7
     assert received == [(config_path, database_path, tmp_path)]
     assert closed == [True]
+
+
+def test_build_runtime_creates_quota_service_when_enabled(tmp_path: Path) -> None:
+    import httpx
+
+    from aacc.quota_service import QuotaService
+
+    config_path = tmp_path / "config.yaml"
+    database_path = tmp_path / "aacc.db"
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    runtime = build_runtime(
+        config_path,
+        database_path,
+        quota_service_factory=lambda config_dir: QuotaService(
+            config_dir,
+            version="test",
+            client_factory=lambda: httpx.Client(transport=transport),
+        ),
+    )
+    try:
+        assert runtime.quota_service is not None
+    finally:
+        runtime.close()
+
+
+def test_build_runtime_skips_quota_service_when_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    database_path = tmp_path / "aacc.db"
+    runtime = build_runtime(config_path, database_path, quota_service_factory=lambda _dir: None)
+    try:
+        assert runtime.quota_service is None
+    finally:
+        runtime.close()
+
+
+def test_build_runtime_default_factory_honors_kimi_quota_enabled(tmp_path: Path) -> None:
+    from aacc.quota_service import QuotaService
+
+    config_path = tmp_path / "config.yaml"
+    database_path = tmp_path / "aacc.db"
+
+    # Default config has kimi_quota_enabled=True, so the service is created.
+    runtime = build_runtime(config_path, database_path)
+    try:
+        assert isinstance(runtime.quota_service, QuotaService)
+    finally:
+        runtime.close()
+
+    import yaml
+
+    config_path.write_text(yaml.safe_dump({"app": {"kimi_quota_enabled": False}}))
+    runtime = build_runtime(config_path, tmp_path / "aacc-disabled.db")
+    try:
+        assert runtime.quota_service is None
+    finally:
+        runtime.close()
