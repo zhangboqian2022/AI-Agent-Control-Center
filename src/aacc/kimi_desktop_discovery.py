@@ -17,12 +17,7 @@ from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, Terminal
 from aacc.processes import CachedProcessAlive
 
 _DAIMON_ROOT = (
-    Path.home()
-    / "Library"
-    / "Application Support"
-    / "kimi-desktop"
-    / "daimon-share"
-    / "daimon"
+    Path.home() / "Library" / "Application Support" / "kimi-desktop" / "daimon-share" / "daimon"
 )
 _CONVERSATIONS_QUERY = """
 SELECT conversation_id, title, updated_at_ms, kernel_session_dir, workspace_path
@@ -87,9 +82,7 @@ class KimiDesktopLocalDiscovery:
         conversations = self._conversations()
         if selected_ids is not None:
             conversations = [
-                conversation
-                for conversation in conversations
-                if conversation["id"] in selected_ids
+                conversation for conversation in conversations if conversation["id"] in selected_ids
             ]
         now = self.now()
         process_alive: bool | None = None
@@ -130,11 +123,7 @@ class KimiDesktopLocalDiscovery:
                     status = TaskStatus.UNKNOWN
                     message = "未检测到运行进程"
                     confidence = 0.55
-            updated_at = (
-                activity_at
-                if activity_at is not None
-                else conversation["updated_at"]
-            )
+            updated_at = activity_at if activity_at is not None else conversation["updated_at"]
             task_id = f"kimi_desktop:{conversation['id']}"
             discovered.append(
                 DiscoveredTask(
@@ -142,12 +131,9 @@ class KimiDesktopLocalDiscovery:
                         id=task_id,
                         slot=1,
                         name=(
-                            conversation["title"]
-                            or f"Kimi Desktop 任务 {conversation['id'][:8]}"
+                            conversation["title"] or f"Kimi Desktop 任务 {conversation['id'][:8]}"
                         )[:_NAME_MAX_LENGTH],
-                        agent=AgentConfig(
-                            type="kimi_desktop", display_name="Kimi Desktop"
-                        ),
+                        agent=AgentConfig(type="kimi_desktop", display_name="Kimi Desktop"),
                         terminal=TerminalConfig(
                             type="mac_app",
                             app_bundle_id="com.moonshot.kimichat",
@@ -159,13 +145,9 @@ class KimiDesktopLocalDiscovery:
                         message=message,
                         source="kimi_desktop_local",
                         confidence=confidence,
-                        started_at=(
-                            activity_at if status is TaskStatus.RUNNING else None
-                        ),
+                        started_at=(activity_at if status is TaskStatus.RUNNING else None),
                         updated_at=updated_at,
-                        finished_at=(
-                            updated_at if status is TaskStatus.COMPLETED else None
-                        ),
+                        finished_at=(updated_at if status is TaskStatus.COMPLETED else None),
                         pid=None,
                         session_id=conversation["id"],
                         metadata={"discovered": True},
@@ -191,10 +173,7 @@ class KimiDesktopLocalDiscovery:
         return [
             KimiDesktopSession(
                 session_id=conversation["id"],
-                title=(
-                    conversation["title"]
-                    or f"Kimi Desktop 任务 {conversation['id'][:8]}"
-                ),
+                title=(conversation["title"] or f"Kimi Desktop 任务 {conversation['id'][:8]}"),
                 updated_at=conversation["updated_at"],
             )
             for conversation in sorted(
@@ -208,10 +187,7 @@ class KimiDesktopLocalDiscovery:
         """Return a small set of recently verified active conversations."""
         active: set[str] = set()
         for task in self.discover():
-            if (
-                task.state.status is TaskStatus.RUNNING
-                and task.state.session_id is not None
-            ):
+            if task.state.status is TaskStatus.RUNNING and task.state.session_id is not None:
                 active.add(task.state.session_id)
                 if len(active) >= max(1, limit):
                     break
@@ -226,9 +202,7 @@ class KimiDesktopLocalDiscovery:
             # snapshot (immutable skips WAL replay). mode=ro keeps the catalog
             # fresh while never writing. The connection is short-lived so the
             # WAL is never pinned by a lingering reader.
-            connection = sqlite3.connect(
-                f"file:{self.conversations_path}?mode=ro", uri=True
-            )
+            connection = sqlite3.connect(f"file:{self.conversations_path}?mode=ro", uri=True)
             try:
                 rows = connection.execute(_CONVERSATIONS_QUERY).fetchall()
             finally:

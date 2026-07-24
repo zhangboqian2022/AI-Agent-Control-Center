@@ -8,6 +8,7 @@ only meaningful while the wallet status is ACTIVE/ENABLED — otherwise the
 API returns a monthly-cap-derived number that must be shown as 0.
 See NOTICE.
 """
+
 from __future__ import annotations
 
 import math
@@ -218,9 +219,7 @@ def fetch_quota(client: httpx.Client, access_token: str) -> KimiQuota:
     except httpx.HTTPError as error:
         raise KimiQuotaError(f"Quota request failed: {error}") from error
     if response.status_code in (401, 403):
-        raise KimiQuotaUnauthorizedError(
-            f"Quota request rejected (HTTP {response.status_code})"
-        )
+        raise KimiQuotaUnauthorizedError(f"Quota request rejected (HTTP {response.status_code})")
     if response.status_code != 200:
         try:
             detail = _error_detail(response.json())

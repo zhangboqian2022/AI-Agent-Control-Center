@@ -9,6 +9,7 @@ Privacy boundary matches kimi_discovery: only `usage.record` event usage
 fields and durations are read; prompt/response content is never touched,
 and lines over 64 KiB are skipped unparsed.
 """
+
 from __future__ import annotations
 
 import json

@@ -96,9 +96,9 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
     assert __version__ == "1.4.1"
     assert 'version = "1.4.1"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'AACC_VERSION="${AACC_VERSION:-1.4.1}"' in (
-        ROOT / "scripts" / "build_app.sh"
-    ).read_text(encoding="utf-8")
+    assert 'AACC_VERSION="${AACC_VERSION:-1.4.1}"' in (ROOT / "scripts" / "build_app.sh").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_installer_quits_running_copy_before_replacement() -> None:
@@ -156,11 +156,7 @@ def test_partial_release_credentials_fail_before_build() -> None:
 def test_documentation_download_links_match_package_version() -> None:
     match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:rc(\d+))?", __version__)
     assert match, __version__
-    public_version = (
-        f"{match.group(1)}-rc.{match.group(2)}"
-        if match.group(2)
-        else match.group(1)
-    )
+    public_version = f"{match.group(1)}-rc.{match.group(2)}" if match.group(2) else match.group(1)
     release_tag = f"v{public_version}"
     dmg_name = f"AACC-{public_version}.dmg"
 
@@ -182,9 +178,7 @@ def test_documentation_download_links_match_package_version() -> None:
 
 
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "fetch-depth: 0" in workflow
     assert "uv sync --locked --extra dev" in workflow
     assert "continue-on-error: true" not in workflow

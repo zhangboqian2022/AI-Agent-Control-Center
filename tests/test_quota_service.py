@@ -275,9 +275,7 @@ def test_delayed_refresh_cannot_overwrite_new_api_key(qapp, tmp_path):
     service.set_api_key("sk-new")
     release_refresh.set()
 
-    assert wait_for(
-        lambda: (load_credentials(tmp_path) or {}).get("api_key") == "sk-new"
-    )
+    assert wait_for(lambda: (load_credentials(tmp_path) or {}).get("api_key") == "sk-new")
     time.sleep(0.1)
     assert load_credentials(tmp_path) == {
         "auth_method": "api_key",
@@ -482,9 +480,7 @@ def test_oauth_closes_created_http_client(qapp, tmp_path):
     assert wait_for(lambda: bool(clients) and clients[0].close_calls == 1)
 
 
-def test_oauth_save_oserror_exits_pending_and_finishes_once(
-    qapp, tmp_path, monkeypatch
-):
+def test_oauth_save_oserror_exits_pending_and_finishes_once(qapp, tmp_path, monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/oauth/device_authorization":
             return httpx.Response(
@@ -508,9 +504,7 @@ def test_oauth_save_oserror_exits_pending_and_finishes_once(
 
     service = make_service(tmp_path, handler)
     finished: list[tuple[bool, str]] = []
-    service.oauth_finished.connect(
-        lambda success, message: finished.append((success, message))
-    )
+    service.oauth_finished.connect(lambda success, message: finished.append((success, message)))
 
     def fail_save(_config_dir, _data) -> None:
         raise OSError("disk unavailable")

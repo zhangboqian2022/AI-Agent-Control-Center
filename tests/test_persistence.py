@@ -55,10 +55,7 @@ def test_state_history_created_at_is_indexed(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "aacc.db")
     store.initialize(default_config().tasks)
     indexes = {
-        row[1]
-        for row in store._connection.execute(
-            "PRAGMA index_list('state_history')"
-        ).fetchall()
+        row[1] for row in store._connection.execute("PRAGMA index_list('state_history')").fetchall()
     }
     assert "idx_state_history_created_at" in indexes
     store.close()

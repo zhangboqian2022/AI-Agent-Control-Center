@@ -5,6 +5,7 @@ Copyright (c) 2026 十叶) — usage field normalization across the CLI's
 wire naming and API naming, cache-hit percentage, and a robust median
 generation speed over a sliding sample window. See NOTICE.
 """
+
 from __future__ import annotations
 
 import math

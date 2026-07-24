@@ -91,9 +91,7 @@ def kimi_session_turn_completed(session_dir: Path) -> bool | None:
         with wire_path.open("rb") as handle:
             handle.seek(0, 2)
             size = handle.tell()
-            for line in _reverse_complete_lines(
-                handle, size, _WIRE_SCAN_BUDGET_BYTES, truncated
-            ):
+            for line in _reverse_complete_lines(handle, size, _WIRE_SCAN_BUDGET_BYTES, truncated):
                 event_type, usage_scope = _wire_event(line)
                 if event_type in _TURN_ACTIVE_TYPES:
                     return False
@@ -118,10 +116,7 @@ def evaluate_kimi_session_status(
     turn_completed = kimi_session_turn_completed(session_dir)
     if turn_completed is True:
         return KimiSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.96, activity_at)
-    if (
-        activity_at is not None
-        and (now - activity_at).total_seconds() <= activity_window_seconds
-    ):
+    if activity_at is not None and (now - activity_at).total_seconds() <= activity_window_seconds:
         return KimiSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, activity_at)
     if (
         turn_completed is False
@@ -131,9 +126,7 @@ def evaluate_kimi_session_status(
         return KimiSessionStatus(TaskStatus.RUNNING, "正在运行", 0.8, activity_at)
     if process_alive():
         return KimiSessionStatus(TaskStatus.IDLE, "空闲", 0.7, activity_at)
-    return KimiSessionStatus(
-        TaskStatus.UNKNOWN, "未检测到运行进程", 0.55, activity_at
-    )
+    return KimiSessionStatus(TaskStatus.UNKNOWN, "未检测到运行进程", 0.55, activity_at)
 
 
 def _reverse_complete_lines(
@@ -260,9 +253,7 @@ class KimiLocalDiscovery:
                 active_turn_window_seconds=self.active_turn_window_seconds,
             )
             activity_at = evaluation.activity_at
-            updated_at = (
-                activity_at if activity_at is not None else session["updated_at"]
-            )
+            updated_at = activity_at if activity_at is not None else session["updated_at"]
             status = evaluation.status
             message = evaluation.message
             confidence = evaluation.confidence
@@ -272,9 +263,7 @@ class KimiLocalDiscovery:
                     config=TaskConfig(
                         id=task_id,
                         slot=1,
-                        name=(session["title"] or f"Kimi 任务 {session_id[:8]}")[
-                            :_NAME_MAX_LENGTH
-                        ],
+                        name=(session["title"] or f"Kimi 任务 {session_id[:8]}")[:_NAME_MAX_LENGTH],
                         agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
                         terminal=TerminalConfig(
                             type="terminal_app", app_bundle_id="com.apple.Terminal"
@@ -293,11 +282,7 @@ class KimiLocalDiscovery:
                         session_id=session_id,
                         metadata={
                             "discovered": True,
-                            **(
-                                {"work_dir": session["work_dir"]}
-                                if session["work_dir"]
-                                else {}
-                            ),
+                            **({"work_dir": session["work_dir"]} if session["work_dir"] else {}),
                             **(
                                 {"usage": usage.to_metadata()}
                                 if usage is not None

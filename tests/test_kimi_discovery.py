@@ -286,9 +286,7 @@ def test_long_titles_are_truncated_for_the_panel(tmp_path: Path) -> None:
 def _write_wire_events(session_dir: Path, events: list[dict[str, object]]) -> Path:
     wire = session_dir / "agents" / "main" / "wire.jsonl"
     wire.parent.mkdir(parents=True, exist_ok=True)
-    wire.write_text(
-        "\n".join(json.dumps(event) for event in events), encoding="utf-8"
-    )
+    wire.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
     return wire
 
 

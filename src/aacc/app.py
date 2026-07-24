@@ -85,8 +85,7 @@ def build_runtime(
     *,
     accessibility_trusted: Callable[[], bool] = lambda: True,
     quota_service_factory: Callable[[Path], QuotaService | None] | None = None,
-    codex_quota_service_factory: Callable[[], CodexQuotaService | None]
-    | None = None,
+    codex_quota_service_factory: Callable[[], CodexQuotaService | None] | None = None,
 ) -> Runtime:
     config = load_config(config_path)
     store = StateStore(database_path)

@@ -48,9 +48,7 @@ class StubKimiDiscovery(StubDiscovery):
         self.selected_ids = selected_ids
         if selected_ids is None:
             return self.tasks
-        return [
-            task for task in self.tasks if task.config.id.removeprefix("kimi:") in selected_ids
-        ]
+        return [task for task in self.tasks if task.config.id.removeprefix("kimi:") in selected_ids]
 
 
 class StubKimiDesktopDiscovery(StubDiscovery):
@@ -262,9 +260,7 @@ def test_kimi_desktop_service_poll_registers_task(tmp_path: Path) -> None:
         name="Kimi Desktop 任务",
         agent=AgentConfig(type="kimi_desktop", display_name="Kimi Desktop"),
     )
-    discovery = StubKimiDesktopDiscovery(
-        [DiscoveredTask(task, TaskState.new(task.id, "running"))]
-    )
+    discovery = StubKimiDesktopDiscovery([DiscoveredTask(task, TaskState.new(task.id, "running"))])
     service = KimiDesktopDiscoveryService(
         manager,
         discovery=discovery,  # type: ignore[arg-type]

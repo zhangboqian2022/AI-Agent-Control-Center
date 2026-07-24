@@ -5,6 +5,7 @@ signals (queued to the GUI thread automatically). Mirrors the discovery
 services' discipline: polling never kills the thread, errors are logged
 and surfaced as signals, and token refresh is single-flight.
 """
+
 from __future__ import annotations
 
 import logging
@@ -78,9 +79,7 @@ class QuotaService(QObject):
         self._client_factory = client_factory
         self._state_lock = threading.RLock()
         self._credentials = CredentialStore(config_dir)
-        self._state = self._state_for_credentials(
-            self._credentials.snapshot().credentials
-        )
+        self._state = self._state_for_credentials(self._credentials.snapshot().credentials)
         self._active_flow_id: str | None = None
         self._oauth_cancel_event: threading.Event | None = None
         self._stop = threading.Event()
@@ -89,9 +88,7 @@ class QuotaService(QObject):
         self._poll_lock = threading.Lock()
         self._last_fetch_monotonic = 0.0
         self._logger = logging.getLogger("aacc.quota")
-        self._thread = threading.Thread(
-            target=self._run, name="aacc-kimi-quota", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name="aacc-kimi-quota", daemon=True)
 
     # ---------- public API (any thread) ----------
 
@@ -152,9 +149,7 @@ class QuotaService(QObject):
         with self._state_lock:
             cancelled_flow = self._invalidate_active_flow_locked()
             self._credentials.invalidate()
-            self._credentials.replace(
-                {"auth_method": "api_key", "api_key": trimmed}
-            )
+            self._credentials.replace({"auth_method": "api_key", "api_key": trimmed})
             self._last_fetch_monotonic = 0.0
             changed = self._set_state_locked(STATE_AUTHORIZED)
         if changed:
@@ -259,10 +254,7 @@ class QuotaService(QObject):
         if not self._set_state_if_current(grant.snapshot, STATE_AUTHORIZED):
             return
         with self._state_lock:
-            if (
-                self._state == STATE_PENDING
-                or not self._credentials.is_current(grant.snapshot)
-            ):
+            if self._state == STATE_PENDING or not self._credentials.is_current(grant.snapshot):
                 return
             self._last_fetch_monotonic = time.monotonic()
         self.quota_updated.emit(quota)
@@ -277,11 +269,7 @@ class QuotaService(QObject):
             return None
         if credentials.get("auth_method") == "api_key":
             key = credentials.get("api_key")
-            return (
-                AccessGrant(key, snapshot)
-                if isinstance(key, str) and key
-                else None
-            )
+            return AccessGrant(key, snapshot) if isinstance(key, str) and key else None
         token = KimiOAuthToken.from_dict(credentials.get("token"))
         if token is None or not token.is_valid():
             return None
@@ -289,10 +277,7 @@ class QuotaService(QObject):
             return AccessGrant(token.access_token, snapshot)
         with self._refresh_lock:
             with self._state_lock:
-                if (
-                    self._state == STATE_PENDING
-                    or not self._credentials.is_current(snapshot)
-                ):
+                if self._state == STATE_PENDING or not self._credentials.is_current(snapshot):
                     raise _StaleCredentialOperation
                 current = self._credentials.snapshot()
             credentials = current.credentials or {}
@@ -321,10 +306,7 @@ class QuotaService(QObject):
         state: str,
     ) -> bool:
         with self._state_lock:
-            if (
-                self._state == STATE_PENDING
-                or not self._credentials.is_current(snapshot)
-            ):
+            if self._state == STATE_PENDING or not self._credentials.is_current(snapshot):
                 return False
             changed = self._set_state_locked(state)
         if changed:
@@ -379,9 +361,7 @@ class QuotaService(QObject):
                     authorization,
                     version=self._version,
                     device_id=self._device_id,
-                    sleep=lambda seconds: self._interruptible_sleep(
-                        seconds, cancel_event
-                    ),
+                    sleep=lambda seconds: self._interruptible_sleep(seconds, cancel_event),
                     is_cancelled=cancel_event.is_set,
                 )
             if cancel_event.is_set():
@@ -418,9 +398,7 @@ class QuotaService(QObject):
                 return
             self._active_flow_id = None
             self._oauth_cancel_event = None
-            state = self._state_for_credentials(
-                self._credentials.snapshot().credentials
-            )
+            state = self._state_for_credentials(self._credentials.snapshot().credentials)
             changed = self._set_state_locked(state)
         if changed:
             self.auth_state_changed.emit(state)

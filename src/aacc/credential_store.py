@@ -84,10 +84,7 @@ class CredentialStore:
 
     def _matches(self, expected: CredentialSnapshot) -> bool:
         self._sync_from_disk()
-        return (
-            expected.generation == self._generation
-            and expected.fingerprint == self._fingerprint
-        )
+        return expected.generation == self._generation and expected.fingerprint == self._fingerprint
 
     def _sync_from_disk(self) -> dict[str, Any] | None:
         credentials = load_credentials(self._config_dir)

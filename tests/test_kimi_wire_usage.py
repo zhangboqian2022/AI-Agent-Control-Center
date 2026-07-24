@@ -107,8 +107,9 @@ def test_partial_trailing_line_consumed_next_round(tmp_path):
 def test_oversized_and_malformed_lines_skipped(tmp_path):
     session = tmp_path / "s1"
     path = wire_path(session)
-    big = json.dumps({"type": "usage.record", "usageScope": "turn", "usage": {"output": 1},
-                      "pad": "x" * 70_000})
+    big = json.dumps(
+        {"type": "usage.record", "usageScope": "turn", "usage": {"output": 1}, "pad": "x" * 70_000}
+    )
     path.write_text(big + "\n" + "not json\n" + json.dumps(usage_record()) + "\n")
     tracker = WireUsageTracker()
     usage = tracker.poll(session)
