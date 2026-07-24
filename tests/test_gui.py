@@ -393,9 +393,7 @@ def test_card_context_menu_exposes_safe_controls(tmp_path: Path, qtbot: object) 
     labels = {action.text() for action in menu.actions()}
     assert "切换到任务" in labels
     assert "手动标记状态" in labels
-    assert labels.isdisjoint(
-        {"启动语音输入", "发送 Enter", "发送 1", "发送 2", "发送 ↑", "发送 ↓"}
-    )
+    assert labels.isdisjoint({"启动语音输入", "发送 Enter", "发送 1", "发送 2", "发送 ↑", "发送 ↓"})
     manager.close()
 
 
@@ -694,9 +692,7 @@ def test_discovery_warning_banner_copies_sanitized_diagnostics(
     manager.close()
 
 
-def test_kimi_discovery_warning_banner_names_kimi_source(
-    tmp_path: Path, qtbot: object
-) -> None:
+def test_kimi_discovery_warning_banner_names_kimi_source(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     health = DiscoveryHealth(
         degraded=True,
@@ -814,9 +810,7 @@ def test_only_selected_kimi_tasks_are_visible(tmp_path: Path, qtbot: object) -> 
     manager.close()
 
 
-def test_kimi_card_shows_work_dir_basename_next_to_status(
-    tmp_path: Path, qtbot: object
-) -> None:
+def test_kimi_card_shows_work_dir_basename_next_to_status(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     task = TaskConfig(
         id="kimi:workdir",
@@ -868,9 +862,7 @@ def test_remove_request_with_unknown_brand_prefix_logs_error(
     manager.close()
 
 
-def test_remove_request_dispatches_to_known_brand(
-    tmp_path: Path, qtbot: object
-) -> None:
+def test_remove_request_dispatches_to_known_brand(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     task = TaskConfig(
         id="kimi:dispatch",
@@ -1259,7 +1251,6 @@ def test_clear_retained_tasks_removes_terminal_kimi_cards(
     manager.close()
 
 
-
 def build_kimi_desktop_window(
     tmp_path: Path, qtbot: object
 ) -> tuple[MainWindow, TaskManager, list[tuple[set[str], set[str], set[str]]]]:
@@ -1286,9 +1277,7 @@ def build_kimi_desktop_window(
     return window, manager, applied
 
 
-def test_kimi_desktop_preferences_persist_and_apply(
-    tmp_path: Path, qtbot: object
-) -> None:
+def test_kimi_desktop_preferences_persist_and_apply(tmp_path: Path, qtbot: object) -> None:
     window, manager, applied = build_kimi_desktop_window(tmp_path, qtbot)
     window.set_kimi_desktop_monitoring_preferences({"conv-1"}, {"conv-2"}, {"conv-3"})
     assert applied[-1] == ({"conv-1"}, {"conv-2"}, {"conv-3"})
@@ -1302,15 +1291,11 @@ def test_kimi_desktop_preferences_persist_and_apply(
     manager.close()
 
 
-def test_kimi_desktop_preferences_reload_from_settings(
-    tmp_path: Path, qtbot: object
-) -> None:
+def test_kimi_desktop_preferences_reload_from_settings(tmp_path: Path, qtbot: object) -> None:
     window, manager, _ = build_kimi_desktop_window(tmp_path, qtbot)
     window.set_kimi_desktop_monitoring_preferences({"conv-1"}, {"conv-2"}, set())
     manager.close()
-    reloaded_settings = QSettings(
-        str(tmp_path / "gui-kd-settings.ini"), QSettings.Format.IniFormat
-    )
+    reloaded_settings = QSettings(str(tmp_path / "gui-kd-settings.ini"), QSettings.Format.IniFormat)
     config = default_config()
     store = StateStore(tmp_path / "gui-kd2.db")
     store.initialize(config.tasks)
@@ -1368,9 +1353,7 @@ def test_kimi_desktop_task_hidden_until_selected(tmp_path: Path, qtbot: object) 
     manager.close()
 
 
-def test_kimi_desktop_visible_by_default_in_fresh_window(
-    tmp_path: Path, qtbot: object
-) -> None:
+def test_kimi_desktop_visible_by_default_in_fresh_window(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     assert "kimi_desktop" in window.visible_agent_types
     manager.close()
@@ -1395,9 +1378,7 @@ def test_kimi_desktop_task_selection_dialog_applies_preferences(
     manager.close()
 
 
-def test_kimi_desktop_health_warning_merges_all_brands(
-    tmp_path: Path, qtbot: object
-) -> None:
+def test_kimi_desktop_health_warning_merges_all_brands(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     window.show()
     assert not window.discovery_warning.isVisible()
@@ -1406,9 +1387,7 @@ def test_kimi_desktop_health_warning_merges_all_brands(
     )
     assert window.discovery_warning.isVisible()
     assert "Kimi Desktop" in window.discovery_warning_label.text()
-    window.kimi_desktop_discovery_health_received.emit(
-        DiscoveryHealth(brand="Kimi Desktop")
-    )
+    window.kimi_desktop_discovery_health_received.emit(DiscoveryHealth(brand="Kimi Desktop"))
     assert not window.discovery_warning.isVisible()
     manager.close()
 

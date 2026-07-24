@@ -66,11 +66,7 @@ def _iso_time(value: object) -> datetime | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return (
-        parsed.astimezone(UTC)
-        if parsed.tzinfo is not None
-        else parsed.replace(tzinfo=UTC)
-    )
+    return parsed.astimezone(UTC) if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _weekly_window(value: object, *, now: datetime) -> CodexQuotaWindow | None:

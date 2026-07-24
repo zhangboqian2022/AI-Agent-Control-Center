@@ -20,14 +20,7 @@ def _now() -> datetime:
 
 
 def _db_path(root: Path) -> Path:
-    return (
-        root
-        / "agents"
-        / "main"
-        / "sessions"
-        / "hosted-logical"
-        / "conversations.sqlite"
-    )
+    return root / "agents" / "main" / "sessions" / "hosted-logical" / "conversations.sqlite"
 
 
 def _ms(moment: datetime) -> int:
@@ -49,9 +42,7 @@ def _write_conversations(db_path: Path, rows: list[tuple]) -> None:
             )
             """
         )
-        connection.executemany(
-            "INSERT INTO conversations VALUES (?, ?, ?, ?, ?)", rows
-        )
+        connection.executemany("INSERT INTO conversations VALUES (?, ?, ?, ?, ?)", rows)
         connection.commit()
     finally:
         connection.close()

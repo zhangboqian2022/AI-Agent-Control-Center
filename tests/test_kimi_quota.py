@@ -76,9 +76,7 @@ def test_parse_missing_sections_yield_unknown_windows():
 
 
 def test_parse_explicit_zero_is_not_unknown():
-    quota = parse_quota(
-        {"usage": {"limit": 0, "used": 0, "remaining": 0}}
-    )
+    quota = parse_quota({"usage": {"limit": 0, "used": 0, "remaining": 0}})
     assert quota.status is QuotaStatus.PARTIAL
     assert quota.weekly is not None
     assert quota.weekly.used == 0
@@ -159,12 +157,9 @@ def test_format_reset_countdown():
         == "2小时30分钟后重置"
     )
     assert (
-        format_reset_countdown(datetime(2026, 7, 24, 12, 45, tzinfo=UTC), now=now)
-        == "45分钟后重置"
+        format_reset_countdown(datetime(2026, 7, 24, 12, 45, tzinfo=UTC), now=now) == "45分钟后重置"
     )
-    assert (
-        format_reset_countdown(datetime(2026, 7, 24, 11, 0, tzinfo=UTC), now=now) == "即将重置"
-    )
+    assert format_reset_countdown(datetime(2026, 7, 24, 11, 0, tzinfo=UTC), now=now) == "即将重置"
 
 
 def test_format_balance():

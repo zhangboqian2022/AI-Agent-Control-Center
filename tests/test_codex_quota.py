@@ -82,18 +82,12 @@ def test_legacy_short_window_alone_is_unknown():
 
 def test_invalid_or_expired_weekly_window_is_unknown():
     invalid = token_count(primary=(101.0, 10080), secondary=None)
-    assert (
-        parse_rate_limits(invalid, now=NOW).status
-        is CodexQuotaStatus.UNKNOWN
-    )
+    assert parse_rate_limits(invalid, now=NOW).status is CodexQuotaStatus.UNKNOWN
 
     expired = token_count(primary=(9.0, 10080), secondary=None)
     rate_limits = expired["payload"]["rate_limits"]  # type: ignore[index]
     rate_limits["primary"]["resets_at"] = int((NOW - timedelta(seconds=1)).timestamp())  # type: ignore[index]
-    assert (
-        parse_rate_limits(expired, now=NOW).status
-        is CodexQuotaStatus.UNKNOWN
-    )
+    assert parse_rate_limits(expired, now=NOW).status is CodexQuotaStatus.UNKNOWN
 
 
 def test_parser_retains_no_private_event_content():
@@ -109,9 +103,7 @@ def test_reader_uses_bounded_tail_and_ignores_incomplete_last_line(tmp_path):
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     path = sessions / "rollout-current.jsonl"
-    valid = json.dumps(
-        token_count(primary=(9.0, 10080), secondary=None)
-    ).encode()
+    valid = json.dumps(token_count(primary=(9.0, 10080), secondary=None)).encode()
     with path.open("wb") as handle:
         handle.write(b"private-prefix-sentinel" * 20_000)
         handle.write(b"\n")
@@ -160,9 +152,7 @@ def test_reader_without_valid_metadata_returns_unknown(tmp_path):
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     (sessions / "rollout.jsonl").write_text(
-        "not-json\n"
-        + json.dumps(token_count(primary=(80.0, 300), secondary=None))
-        + "\n",
+        "not-json\n" + json.dumps(token_count(primary=(80.0, 300), secondary=None)) + "\n",
         encoding="utf-8",
     )
 

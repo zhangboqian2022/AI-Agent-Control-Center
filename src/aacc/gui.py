@@ -252,9 +252,7 @@ class QuotaBar(QFrame):
             "5h",
             quota.five_hour,
         )
-        balance = (
-            format_balance(quota.booster.balance_yuan) if quota.booster is not None else ""
-        )
+        balance = format_balance(quota.booster.balance_yuan) if quota.booster is not None else ""
         self.balance_label.setText(balance)
         tooltip_lines = [
             self._detail_tooltip("每周额度", quota.weekly),
@@ -265,9 +263,7 @@ class QuotaBar(QFrame):
         if balance:
             tooltip_lines.append(f"加油包余额：{balance}")
         if quota.fetched_at is not None:
-            tooltip_lines.append(
-                f"最后更新：{quota.fetched_at.astimezone().strftime('%H:%M:%S')}"
-            )
+            tooltip_lines.append(f"最后更新：{quota.fetched_at.astimezone().strftime('%H:%M:%S')}")
         tooltip_lines.append("点击刷新")
         self._last_quota_tooltip = "\n".join(tooltip_lines)
         self.setToolTip(self._last_quota_tooltip)
@@ -278,11 +274,7 @@ class QuotaBar(QFrame):
             self.summary_label.setText("Kimi 额度 · 数据过期")
         else:
             self.summary_label.setText("Kimi 额度 · 数据不可用")
-        previous = (
-            f"{self._last_quota_tooltip}\n"
-            if self._last_quota_tooltip
-            else ""
-        )
+        previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         self.setToolTip(f"{previous}额度刷新失败：{message}\n点击重试")
 
     @staticmethod
@@ -303,10 +295,7 @@ class QuotaBar(QFrame):
     def _detail_tooltip(name: str, detail: QuotaDetail | None) -> str:
         if detail is None:
             return f"{name}：未知"
-        return (
-            f"{name}：{detail.percentage}%"
-            f"（{format_reset_countdown(detail.reset_at)}）"
-        )
+        return f"{name}：{detail.percentage}%（{format_reset_countdown(detail.reset_at)}）"
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -357,10 +346,7 @@ class CodexQuotaBar(QFrame):
         self.setToolTip("尚未在本机 Codex 会话中发现有效周额度；点击重新扫描")
 
     def show_quota(self, quota: CodexQuotaSnapshot) -> None:
-        if (
-            quota.status is CodexQuotaStatus.UNKNOWN
-            or quota.weekly is None
-        ):
+        if quota.status is CodexQuotaStatus.UNKNOWN or quota.weekly is None:
             self.show_unknown()
             return
         self._has_known_quota = True
@@ -375,9 +361,7 @@ class CodexQuotaBar(QFrame):
         if quota.plan_type:
             tooltip_lines.append(f"套餐：{quota.plan_type}")
         if quota.observed_at is not None:
-            tooltip_lines.append(
-                f"本机观测：{quota.observed_at.astimezone().strftime('%H:%M:%S')}"
-            )
+            tooltip_lines.append(f"本机观测：{quota.observed_at.astimezone().strftime('%H:%M:%S')}")
         tooltip_lines.append("点击重新扫描本机 Codex 额度元数据")
         self._last_quota_tooltip = "\n".join(tooltip_lines)
         self.setToolTip(self._last_quota_tooltip)
@@ -388,11 +372,7 @@ class CodexQuotaBar(QFrame):
             self.summary_label.setText("Codex 额度 · 数据过期")
         else:
             self.summary_label.setText("Codex 额度 · 数据不可用")
-        previous = (
-            f"{self._last_quota_tooltip}\n"
-            if self._last_quota_tooltip
-            else ""
-        )
+        previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         self.setToolTip(f"{previous}额度读取失败：{message}\n点击重试")
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -415,9 +395,7 @@ class KimiOAuthDialog(QDialog):
         self.code_label = QLabel("")
         self.code_label.setObjectName("oauthCode")
         self.code_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.code_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.code_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.code_label)
         hint = QLabel("授权完成后此窗口会自动关闭")
         hint.setObjectName("quotaText")
@@ -768,15 +746,12 @@ class TaskSelectionDialog(QDialog):
             automatic = session_id in self._auto_active_ids
             automatic_label = "\n自动监控 · 运行中" if automatic else ""
             item = QListWidgetItem(
-                f"{title}\n{updated_at.astimezone().strftime('%Y-%m-%d %H:%M')}"
-                f"{automatic_label}"
+                f"{title}\n{updated_at.astimezone().strftime('%Y-%m-%d %H:%M')}{automatic_label}"
             )
             item.setData(Qt.ItemDataRole.UserRole, session_id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
-                Qt.CheckState.Checked
-                if session_id in selected_ids
-                else Qt.CheckState.Unchecked
+                Qt.CheckState.Checked if session_id in selected_ids else Qt.CheckState.Unchecked
             )
             self.tasks.addItem(item)
         layout.addWidget(self.tasks)
@@ -830,10 +805,7 @@ class CodexTaskSelectionDialog(TaskSelectionDialog):
         parent: QWidget,
     ) -> None:
         super().__init__(
-            [
-                (session.conversation_id, session.title, session.updated_at)
-                for session in sessions
-            ],
+            [(session.conversation_id, session.title, session.updated_at) for session in sessions],
             selected_ids,
             auto_active_ids,
             parent,
@@ -850,10 +822,7 @@ class KimiTaskSelectionDialog(TaskSelectionDialog):
         parent: QWidget,
     ) -> None:
         super().__init__(
-            [
-                (session.session_id, session.title, session.updated_at)
-                for session in sessions
-            ],
+            [(session.session_id, session.title, session.updated_at) for session in sessions],
             selected_ids,
             auto_active_ids,
             parent,
@@ -870,10 +839,7 @@ class KimiDesktopTaskSelectionDialog(TaskSelectionDialog):
         parent: QWidget,
     ) -> None:
         super().__init__(
-            [
-                (session.session_id, session.title, session.updated_at)
-                for session in sessions
-            ],
+            [(session.session_id, session.title, session.updated_at) for session in sessions],
             selected_ids,
             auto_active_ids,
             parent,
@@ -971,19 +937,15 @@ class MainWindow(QWidget):
         self._kimi_desktop_auto_active_ids = kimi_desktop_auto_active_ids or (lambda: set())
         self._kimi_desktop_retained_ids = kimi_desktop_retained_ids or (lambda: set())
         self._kimi_desktop_muted_ids = kimi_desktop_muted_ids or (lambda: set())
-        self._set_kimi_desktop_monitoring_preferences = (
-            set_kimi_desktop_monitoring_preferences
-            or (lambda _manual_ids, _retained_ids, _muted_ids: None)
+        self._set_kimi_desktop_monitoring_preferences = set_kimi_desktop_monitoring_preferences or (
+            lambda _manual_ids, _retained_ids, _muted_ids: None
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_healths: dict[str, DiscoveryHealth] = {}
         for health in (
             (discovery_health or DiscoveryHealth)(),
             (kimi_discovery_health or (lambda: DiscoveryHealth(brand="Kimi")))(),
-            (
-                kimi_desktop_discovery_health
-                or (lambda: DiscoveryHealth(brand="Kimi Desktop"))
-            )(),
+            (kimi_desktop_discovery_health or (lambda: DiscoveryHealth(brand="Kimi Desktop")))(),
         ):
             self._discovery_healths[health.brand] = health
         self._discovery_log_path = discovery_log_path
@@ -991,9 +953,7 @@ class MainWindow(QWidget):
         self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
         self.quota_service = quota_service
         self.codex_quota_service = codex_quota_service
-        self._open_url = open_url or (
-            lambda url: QDesktopServices.openUrl(QUrl(url))
-        )
+        self._open_url = open_url or (lambda url: QDesktopServices.openUrl(QUrl(url)))
         self._oauth_dialog: KimiOAuthDialog | None = None
         self.quota_bar: QuotaBar | None = None
         self.codex_quota_bar: CodexQuotaBar | None = None
@@ -1071,9 +1031,7 @@ class MainWindow(QWidget):
         if isinstance(saved_kimi_desktop_retained, str):
             self.kimi_desktop_retained_ids = {saved_kimi_desktop_retained}
         elif isinstance(saved_kimi_desktop_retained, list):
-            self.kimi_desktop_retained_ids = {
-                str(value) for value in saved_kimi_desktop_retained
-            }
+            self.kimi_desktop_retained_ids = {str(value) for value in saved_kimi_desktop_retained}
         else:
             self.kimi_desktop_retained_ids = set()
         saved_kimi_desktop_muted = self._settings.value("kimi_desktop_muted_tasks")
@@ -1167,16 +1125,10 @@ class MainWindow(QWidget):
 
         if self.codex_quota_service is not None:
             self.codex_quota_bar = CodexQuotaBar()
-            self.codex_quota_bar.clicked.connect(
-                self.codex_quota_service.refresh_now
-            )
+            self.codex_quota_bar.clicked.connect(self.codex_quota_service.refresh_now)
             layout.addWidget(self.codex_quota_bar)
-            self.codex_quota_service.quota_updated.connect(
-                self._on_codex_quota_updated
-            )
-            self.codex_quota_service.error_occurred.connect(
-                self._on_codex_quota_error
-            )
+            self.codex_quota_service.quota_updated.connect(self._on_codex_quota_updated)
+            self.codex_quota_service.error_occurred.connect(self._on_codex_quota_error)
         if self.quota_service is not None:
             self.quota_bar = QuotaBar()
             self.quota_bar.clicked.connect(self._on_quota_bar_clicked)
@@ -1356,8 +1308,7 @@ class MainWindow(QWidget):
             if task.agent.type != "kimi_desktop"
             or (
                 task.id.startswith("kimi_desktop:")
-                and task.id.removeprefix("kimi_desktop:")
-                in self.kimi_desktop_selected_ids
+                and task.id.removeprefix("kimi_desktop:") in self.kimi_desktop_selected_ids
             )
         ]
         return tasks
@@ -1522,10 +1473,7 @@ class MainWindow(QWidget):
             self.quota_service.begin_oauth()
 
     def _on_codex_quota_updated(self, quota: object) -> None:
-        if (
-            self.codex_quota_bar is not None
-            and isinstance(quota, CodexQuotaSnapshot)
-        ):
+        if self.codex_quota_bar is not None and isinstance(quota, CodexQuotaSnapshot):
             self.codex_quota_bar.show_quota(quota)
 
     def _on_codex_quota_error(self, message: str) -> None:
@@ -1669,15 +1617,11 @@ class MainWindow(QWidget):
         self.kimi_desktop_manual_ids = set(manual_ids)
         self.kimi_desktop_retained_ids = set(retained_ids) - self.kimi_desktop_manual_ids
         self.kimi_desktop_muted_ids = set(muted_ids) - self.kimi_desktop_manual_ids
-        self._settings.setValue(
-            "kimi_desktop_manual_tasks", sorted(self.kimi_desktop_manual_ids)
-        )
+        self._settings.setValue("kimi_desktop_manual_tasks", sorted(self.kimi_desktop_manual_ids))
         self._settings.setValue(
             "kimi_desktop_retained_tasks", sorted(self.kimi_desktop_retained_ids)
         )
-        self._settings.setValue(
-            "kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids)
-        )
+        self._settings.setValue("kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids))
         self._apply_kimi_desktop_monitoring_preferences()
         self.sync_cards()
 
@@ -1700,9 +1644,7 @@ class MainWindow(QWidget):
         muted_ids = self._kimi_desktop_muted_ids()
         if muted_ids != self.kimi_desktop_muted_ids:
             self.kimi_desktop_muted_ids = set(muted_ids)
-            self._settings.setValue(
-                "kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids)
-            )
+            self._settings.setValue("kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids))
 
     def _remove_task_requested(self, task_id: str) -> None:
         # Single funnel for card removal: a card whose task id matches no
@@ -1724,15 +1666,11 @@ class MainWindow(QWidget):
         self.kimi_desktop_manual_ids.discard(session_id)
         self.kimi_desktop_retained_ids.discard(session_id)
         self.kimi_desktop_muted_ids.add(session_id)
-        self._settings.setValue(
-            "kimi_desktop_manual_tasks", sorted(self.kimi_desktop_manual_ids)
-        )
+        self._settings.setValue("kimi_desktop_manual_tasks", sorted(self.kimi_desktop_manual_ids))
         self._settings.setValue(
             "kimi_desktop_retained_tasks", sorted(self.kimi_desktop_retained_ids)
         )
-        self._settings.setValue(
-            "kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids)
-        )
+        self._settings.setValue("kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids))
         self._apply_kimi_desktop_monitoring_preferences()
         self.sync_cards()
 
@@ -1861,9 +1799,7 @@ class MainWindow(QWidget):
             ) - selected_ids
             if dialog.restore_auto_requested():
                 muted_ids -= auto_active_ids
-            self.set_kimi_desktop_monitoring_preferences(
-                manual_ids, retained_ids, muted_ids
-            )
+            self.set_kimi_desktop_monitoring_preferences(manual_ids, retained_ids, muted_ids)
 
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
@@ -1976,9 +1912,7 @@ class MainWindow(QWidget):
         self._refresh_discovery_warning()
 
     def _refresh_discovery_warning(self) -> None:
-        degraded = [
-            health for health in self._discovery_healths.values() if health.degraded
-        ]
+        degraded = [health for health in self._discovery_healths.values() if health.degraded]
         if not degraded:
             self.discovery_warning.setVisible(False)
             return
@@ -2011,9 +1945,7 @@ class MainWindow(QWidget):
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("需要辅助功能权限")
         box.setText("AACC 需要辅助功能权限才能使用全局热键和键盘输入。是否打开系统设置？")
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes
-        )
+        box.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes)
         box.setDefaultButton(QMessageBox.StandardButton.Yes)
         box.setCheckBox(QCheckBox("不再提示", box))
         answer = box.exec()
@@ -2038,9 +1970,7 @@ class MainWindow(QWidget):
         if self.isVisible() and not self.isMinimized():
             self.hide()
         else:
-            self.setWindowState(
-                self.windowState() & ~Qt.WindowState.WindowMinimized
-            )
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
             self.show()
             self.raise_()
             self.activateWindow()

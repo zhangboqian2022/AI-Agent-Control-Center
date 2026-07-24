@@ -6,6 +6,7 @@ from the CLI on purpose: a third-party app that refreshed the CLI's own
 refresh_token would rotate it server-side and kick the CLI offline
 (lesson shared by KimiCodeBar and kimi-code-monitor).
 """
+
 from __future__ import annotations
 
 import json
@@ -273,9 +274,7 @@ def poll_device_token(
         elif error == "access_denied":
             raise KimiOAuthDeniedError("授权被拒绝")
         else:
-            raise KimiOAuthError(
-                f"Token polling failed (HTTP {status}): {_error_detail(data)}"
-            )
+            raise KimiOAuthError(f"Token polling failed (HTTP {status}): {_error_detail(data)}")
         sleep(interval)
     raise KimiOAuthError("设备授权轮询超时 (timeout)")
 

@@ -11,12 +11,7 @@ def test_late_replace_is_rejected_after_generation_invalidated(tmp_path):
 
     store.invalidate()
 
-    assert (
-        store.replace_if_current(
-            old, {"auth_method": "api_key", "api_key": "late"}
-        )
-        is None
-    )
+    assert store.replace_if_current(old, {"auth_method": "api_key", "api_key": "late"}) is None
     assert load_credentials(tmp_path) == {
         "auth_method": "api_key",
         "api_key": "old",
@@ -42,9 +37,7 @@ def test_current_snapshot_can_conditionally_replace_and_clear(tmp_path):
     store = CredentialStore(tmp_path)
     first = store.replace({"auth_method": "api_key", "api_key": "first"})
 
-    second = store.replace_if_current(
-        first, {"auth_method": "api_key", "api_key": "second"}
-    )
+    second = store.replace_if_current(first, {"auth_method": "api_key", "api_key": "second"})
 
     assert second is not None
     assert store.is_current(second)
