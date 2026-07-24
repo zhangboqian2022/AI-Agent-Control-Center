@@ -53,6 +53,12 @@ scripts/install.sh
 
 ## 当前进度（2026-07-24）
 
+- `main`：**1.4.0-rc.2 已发布**（tag `v1.4.0-rc.2` + GitHub Prerelease 附 DMG 与
+  `.sha256`，SHA-256 `3d8c5847404fbfb218fb91d4c3eda1cd1d4a10ae8b58a29573579d872ff595ed`）。
+  rc.1 发布后因真机反馈发现 5h 额度解析 bug（API 窗口单位拼写
+  `TIME_UNIT_MINUTE` 未被 `startswith("m")` 匹配，5h 恒显 0%；周额度 64%
+  解析正常），TDD 修复后以 rc.2 替换（rc.1 发布与 tag 已删除）。
+  本机 `~/Applications/AACC.app` 已对齐 1.4.0-rc.2。
 - `main`：**三合一整合已合并（未发版，目标 1.4.0）**（merge `73a648e`，365 测试
   + ruff + mypy strict 全绿；15 个任务评审 + 全分支终审均通过）。
   - M1 Kimi 账户额度监控：`kimi_oauth.py`（官方 packages/oauth Device Flow
