@@ -71,17 +71,10 @@ def test_clicked_signal(qapp):
     bar = QuotaBar()
     clicks: list[bool] = []
     bar.clicked.connect(lambda: clicks.append(True))
-    from PySide6.QtCore import QEvent, QPoint, Qt
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
 
-    event = QMouseEvent(
-        QEvent.Type.MouseButtonRelease,
-        QPoint(5, 5),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    bar.mouseReleaseEvent(event)
+    QTest.mouseClick(bar, Qt.MouseButton.LeftButton)
     assert clicks == [True]
 
 

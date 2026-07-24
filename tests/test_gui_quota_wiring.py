@@ -89,3 +89,47 @@ def test_save_api_key_and_logout_delegate(qtbot, tmp_path):
     service.logout = lambda: logged_out.append(True)  # type: ignore[method-assign]
     window.kimi_logout()
     assert logged_out == [True]
+
+
+def test_oauth_dialog_x_cancels_once(qtbot):
+    from aacc.gui import KimiOAuthDialog
+
+    dialog = KimiOAuthDialog()
+    qtbot.addWidget(dialog)
+    cancelled: list[bool] = []
+    dialog.cancelled.connect(lambda: cancelled.append(True))
+    dialog.show()
+
+    dialog.close()
+    dialog.close()
+
+    assert cancelled == [True]
+
+
+def test_oauth_dialog_escape_cancels_once(qtbot):
+    from PySide6.QtCore import Qt
+
+    from aacc.gui import KimiOAuthDialog
+
+    dialog = KimiOAuthDialog()
+    qtbot.addWidget(dialog)
+    cancelled: list[bool] = []
+    dialog.cancelled.connect(lambda: cancelled.append(True))
+    dialog.show()
+
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+
+    assert cancelled == [True]
+
+
+def test_oauth_dialog_success_close_does_not_cancel(qtbot):
+    from aacc.gui import KimiOAuthDialog
+
+    dialog = KimiOAuthDialog()
+    qtbot.addWidget(dialog)
+    cancelled: list[bool] = []
+    dialog.cancelled.connect(lambda: cancelled.append(True))
+
+    dialog.finish_and_close()
+
+    assert cancelled == []
