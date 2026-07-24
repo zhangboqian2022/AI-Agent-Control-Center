@@ -99,6 +99,7 @@ def test_release_version_is_consistent_across_project_and_build_scripts() -> Non
     assert 'AACC_VERSION="${AACC_VERSION:-1.4.1}"' in (ROOT / "scripts" / "build_app.sh").read_text(
         encoding="utf-8"
     )
+    assert f"当前开发分支版本：**{__version__}" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_installer_quits_running_copy_before_replacement() -> None:
