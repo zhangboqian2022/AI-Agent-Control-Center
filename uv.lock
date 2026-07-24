@@ -56,7 +56,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0,<7" },
     { name = "types-regex", marker = "extra == 'dev'", specifier = ">=2025,<2027" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
-    { name = "websockets", specifier = ">=16.1.1" },
+    { name = "websockets", specifier = ">=16,<17" },
 ]
 provides-extras = ["dev"]
 
