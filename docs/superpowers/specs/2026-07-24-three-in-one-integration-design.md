@@ -126,6 +126,16 @@
   若 WS 协议与预期偏差大，降级为 5s REST 轮询会话状态，仍交付"server 感知"。
 - 配置项：`kimi_web_relay_enabled: bool = False`（实验特性，默认关）。
 
+**M3 结论（2026-07-24）**：spike 已完成，协议事实全部落地（WS channel
+`/api/v1/ws`、握手/游标/断点续传/`resync_required` 语义、51 种事件载荷、
+`pending_interaction` 等待输入检测等，详见
+`docs/superpowers/specs/2026-07-24-kimi-web-relay-findings.md`，实测样例存
+`tests/fixtures/kimi_web/`）。**决策：1.4.0 不实现子系统 C**——磁盘发现 +
+M2 wire 尾随已覆盖会话状态与 token 指标，relay 的独有增量（推送延迟、
+等待输入检测）不值其作为三子系统中最大的实现成本，且依赖用户本机常驻
+`kimi web` 前台进程。本子系统以 findings 文档为交付物关闭；未来里程碑按
+`docs/superpowers/plans/2026-07-24-kimi-web-relay.md` 的实施计划骨架启动。
+
 ### 非目标（YAGNI）
 
 - 不合并 Swift/.NET 代码；不做 Sparkle 自更新、会话归档、`kimi web` 进程启停、
