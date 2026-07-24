@@ -51,8 +51,34 @@ scripts/install.sh
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-22）
+## 当前进度（2026-07-24）
 
+- `main`：**三合一整合已合并（未发版，目标 1.4.0）**（merge `73a648e`，365 测试
+  + ruff + mypy strict 全绿；15 个任务评审 + 全分支终审均通过）。
+  - M1 Kimi 账户额度监控：`kimi_oauth.py`（官方 packages/oauth Device Flow
+    移植，client_id 17e5f671，凭据存 AACC 配置目录 `kimi-credentials.json`
+    0600，绝不碰 CLI 凭据）+ `kimi_quota.py`（`/coding/v1/usages`，宽松解析，
+    加油包余额仅 ACTIVE/ENABLED 时取 amountLeft/1e8）+ `quota_service.py`
+    （60s 轮询/30s TTL/single-flight 刷新）+ 面板顶部 QuotaBar + 设备授权
+    对话框 + 设置页 API Key/退出登录。配置项 `app.kimi_quota_enabled`。
+  - M2 会话 token 指标：`kimi_metrics.py`（kimi-code-monitor metrics.js
+    移植）+ `kimi_wire_usage.py`（wire.jsonl 字节偏移增量尾随，截断重置、
+    半行留待下轮）；Kimi 卡片新增 `↑输入 ↓输出 缓存% · tok/s` 行（仅
+    累计非零时显示）。
+  - M3 kimi web relay：spike 完成（协议 fixture 在 `tests/fixtures/kimi_web/`，
+    结论 `docs/superpowers/specs/2026-07-24-kimi-web-relay-findings.md`），
+    **决策：子系统 C 推迟到 post-1.4.0**，实施骨架
+    `docs/superpowers/plans/2026-07-24-kimi-web-relay.md` 已备好
+    （pending_interaction 在 `event.session.work_changed`，不在
+    agent.status.updated）。
+  - 合规：三方 MIT 来源（MoonshotAI/kimi-code、KimiCodeBar ©xifandev、
+    kimi-code-monitor ©十叶）已在 `NOTICE` + 双语 README 致谢段声明。
+  - 1.4.0-rc.2 跟进项（终审 Minor）：OAuth 对话框 X 关闭应触发取消；
+    轮询 deadline 取 min(expires_in, 15min)；test_quota_bar 的
+    QMouseEvent 弃用警告；quota_service 三项线程边界（见
+    `.superpowers/sdd/progress.md` 清单）。
+  - 发版前必做：真机冒烟——构建安装后点 QuotaBar 完成一次真实设备授权，
+    确认额度渲染（M1 Task 7 Step 5 推迟项）。
 - `main`：**1.3.3-rc.1 已发布**（tag `v1.3.3-rc.1` + GitHub Prerelease 附
   DMG 与 `.sha256`，SHA-256 `64e2f5d8288fe5d40a37cbc8cbf639a25b2468a208f067abfcb8cec9c5d4a43f`）。
   内容即第二轮评审接受项（下条）。本机 `~/Applications/AACC.app` 已对齐；
