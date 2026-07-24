@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.0 — 2026-07-24
+
+- [Feature] Add Kimi account quota monitoring: weekly / 5-hour quota and booster balance in the panel header, via official device authorization or API key.
+- [Feature] Kimi Code task cards now show a token usage row: cumulative input/output, cache hit rate, and median generation speed (incremental wire tailing).
+- [Fix] The 5-hour quota window was not recognized when the API spells the window unit `TIME_UNIT_MINUTE`, so the 5-hour bar always showed 0%; window-unit matching now accepts the live spellings and rejects non-minute units.
+
 ## 1.4.0-rc.2 — 2026-07-24
 
 - [Fix] The 5-hour quota window was not recognized when the API spells the window unit `TIME_UNIT_MINUTE`, so the 5-hour bar always showed 0%; window-unit matching now accepts the live spellings and rejects non-minute units.
