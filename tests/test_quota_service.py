@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import suppress
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 from aacc.kimi_oauth import load_credentials, save_credentials
 from aacc.quota_service import (
     STATE_AUTHORIZED,
+    STATE_PENDING,
     STATE_UNAUTHORIZED,
     QuotaService,
 )
@@ -224,3 +226,189 @@ def test_start_and_stop_polling_thread(qapp, tmp_path):
         assert received.is_set()
     finally:
         service.stop()
+
+
+def test_poll_skips_while_oauth_is_pending(tmp_path):
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-old"})
+    calls: list[str] = []
+    service = make_service(tmp_path, quota_handler(calls))
+    service._state = STATE_PENDING
+
+    service._poll_once()
+
+    assert calls == []
+
+
+def test_delayed_refresh_cannot_overwrite_new_api_key(qapp, tmp_path):
+    save_credentials(tmp_path, {"auth_method": "oauth", "token": EXPIRED_TOKEN})
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/token":
+            refresh_started.set()
+            assert release_refresh.wait(5)
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "late-refresh",
+                    "refresh_token": "late-refresh-token",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx.Response(200, json=QUOTA_PAYLOAD)
+
+    service = make_service(tmp_path, handler)
+    service.refresh_now()
+    assert refresh_started.wait(5)
+
+    service.set_api_key("sk-new")
+    release_refresh.set()
+
+    assert wait_for(
+        lambda: (load_credentials(tmp_path) or {}).get("api_key") == "sk-new"
+    )
+    time.sleep(0.1)
+    assert load_credentials(tmp_path) == {
+        "auth_method": "api_key",
+        "api_key": "sk-new",
+    }
+
+
+def test_delayed_401_cannot_clear_new_api_key(qapp, tmp_path):
+    save_credentials(tmp_path, {"auth_method": "oauth", "token": VALID_TOKEN})
+    quota_started = threading.Event()
+    release_quota = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        quota_started.set()
+        assert release_quota.wait(5)
+        return httpx.Response(401, json={})
+
+    service = make_service(tmp_path, handler)
+    service.refresh_now()
+    assert quota_started.wait(5)
+
+    service.set_api_key("sk-new")
+    release_quota.set()
+
+    assert wait_for(lambda: not service._poll_lock.locked())
+    assert load_credentials(tmp_path) == {
+        "auth_method": "api_key",
+        "api_key": "sk-new",
+    }
+    assert service.state() == STATE_AUTHORIZED
+
+
+def test_api_key_wins_over_late_oauth(qapp, tmp_path):
+    token_started = threading.Event()
+    release_token = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/device_authorization":
+            return httpx.Response(
+                200,
+                json={
+                    "user_code": "CODE",
+                    "device_code": "device",
+                    "verification_uri_complete": "https://example.com",
+                    "interval": 1,
+                    "expires_in": 900,
+                },
+            )
+        if request.url.path == "/api/oauth/token":
+            token_started.set()
+            assert release_token.wait(5)
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "late-oauth",
+                    "refresh_token": "late-refresh",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx.Response(200, json=QUOTA_PAYLOAD)
+
+    service = make_service(tmp_path, handler)
+    service.begin_oauth()
+    assert token_started.wait(5)
+
+    service.set_api_key("sk-new")
+    release_token.set()
+
+    assert wait_for(lambda: service.state() != STATE_PENDING)
+    time.sleep(0.1)
+    assert load_credentials(tmp_path) == {
+        "auth_method": "api_key",
+        "api_key": "sk-new",
+    }
+
+
+def test_logout_wins_over_late_oauth(qapp, tmp_path):
+    token_started = threading.Event()
+    release_token = threading.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/device_authorization":
+            return httpx.Response(
+                200,
+                json={
+                    "user_code": "CODE",
+                    "device_code": "device",
+                    "verification_uri_complete": "https://example.com",
+                    "interval": 1,
+                    "expires_in": 900,
+                },
+            )
+        token_started.set()
+        assert release_token.wait(5)
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "late-oauth",
+                "refresh_token": "late-refresh",
+                "expires_in": 3600,
+            },
+        )
+
+    service = make_service(tmp_path, handler)
+    service.begin_oauth()
+    assert token_started.wait(5)
+
+    service.logout()
+    release_token.set()
+
+    assert wait_for(lambda: service.state() == STATE_UNAUTHORIZED)
+    time.sleep(0.1)
+    assert load_credentials(tmp_path) is None
+
+
+def test_two_threads_can_start_only_one_oauth_flow(tmp_path):
+    service = make_service(tmp_path, quota_handler([]))
+    pending_barrier = threading.Barrier(2)
+    original_set_state = service._set_state
+    flow_started = 0
+    flow_lock = threading.Lock()
+
+    def synchronize_pending(state: str) -> None:
+        if state == STATE_PENDING:
+            with suppress(threading.BrokenBarrierError):
+                pending_barrier.wait(timeout=1)
+        original_set_state(state)
+
+    def count_flow(*_args: object) -> None:
+        nonlocal flow_started
+        with flow_lock:
+            flow_started += 1
+
+    service._set_state = synchronize_pending  # type: ignore[method-assign]
+    service._oauth_flow = count_flow  # type: ignore[method-assign]
+    callers = [threading.Thread(target=service.begin_oauth) for _ in range(2)]
+
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(timeout=3)
+
+    assert flow_started == 1
+    assert service.state() == STATE_PENDING
