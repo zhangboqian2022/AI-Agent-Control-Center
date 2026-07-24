@@ -63,7 +63,13 @@ from aacc.discovery_service import DiscoveryHealth
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
 from aacc.kimi_metrics import format_usage_line
-from aacc.kimi_quota import KimiQuota, format_balance, format_reset_countdown
+from aacc.kimi_quota import (
+    KimiQuota,
+    QuotaDetail,
+    QuotaStatus,
+    format_balance,
+    format_reset_countdown,
+)
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
 from aacc.task_manager import TaskManager
@@ -167,6 +173,8 @@ class QuotaBar(QFrame):
 
     def __init__(self) -> None:
         super().__init__()
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
         self.setObjectName("quotaBar")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QHBoxLayout(self)
@@ -204,6 +212,8 @@ class QuotaBar(QFrame):
         self.show_unauthorized()
 
     def show_unauthorized(self) -> None:
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #e06c75;")
         self.summary_label.setText("Kimi 额度 · 点击授权")
         self.weekly_label.setText("周 --")
@@ -218,32 +228,83 @@ class QuotaBar(QFrame):
         self.summary_label.setText("Kimi 额度 · 授权中…")
 
     def show_quota(self, quota: KimiQuota) -> None:
-        self.dot.setStyleSheet("color: #98c379;")
-        self.summary_label.setText("Kimi 额度")
-        self.weekly_label.setText(f"周 {quota.weekly.percentage}%")
-        self.five_hour_label.setText(f"5h {quota.five_hour.percentage}%")
-        self.weekly_bar.setValue(quota.weekly.percentage)
-        self.five_hour_bar.setValue(quota.five_hour.percentage)
+        self._has_known_quota = quota.status is not QuotaStatus.UNKNOWN
+        if quota.status is QuotaStatus.UNKNOWN:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText("Kimi 额度 · 数据不可用")
+        elif quota.status is QuotaStatus.PARTIAL:
+            self.dot.setStyleSheet("color: #e5c07b;")
+            self.summary_label.setText("Kimi 额度 · 部分数据")
+        else:
+            self.dot.setStyleSheet("color: #98c379;")
+            self.summary_label.setText("Kimi 额度")
+        self._show_detail(
+            self.weekly_label,
+            self.weekly_bar,
+            "周",
+            quota.weekly,
+        )
+        self._show_detail(
+            self.five_hour_label,
+            self.five_hour_bar,
+            "5h",
+            quota.five_hour,
+        )
         balance = (
             format_balance(quota.booster.balance_yuan) if quota.booster is not None else ""
         )
         self.balance_label.setText(balance)
         tooltip_lines = [
-            f"每周额度：{quota.weekly.percentage}%"
-            f"（{format_reset_countdown(quota.weekly.reset_at)}）",
-            f"5 小时额度：{quota.five_hour.percentage}%"
-            f"（{format_reset_countdown(quota.five_hour.reset_at)}）",
+            self._detail_tooltip("每周额度", quota.weekly),
+            self._detail_tooltip("5 小时额度", quota.five_hour),
         ]
         if quota.membership_level:
             tooltip_lines.append(f"会员等级：{quota.membership_level}")
         if balance:
             tooltip_lines.append(f"加油包余额：{balance}")
+        if quota.fetched_at is not None:
+            tooltip_lines.append(
+                f"最后更新：{quota.fetched_at.astimezone().strftime('%H:%M:%S')}"
+            )
         tooltip_lines.append("点击刷新")
-        self.setToolTip("\n".join(tooltip_lines))
+        self._last_quota_tooltip = "\n".join(tooltip_lines)
+        self.setToolTip(self._last_quota_tooltip)
 
     def show_error(self, message: str) -> None:
         self.dot.setStyleSheet("color: #8997aa;")
-        self.setToolTip(f"额度刷新失败：{message}\n点击重试")
+        if self._has_known_quota:
+            self.summary_label.setText("Kimi 额度 · 数据过期")
+        else:
+            self.summary_label.setText("Kimi 额度 · 数据不可用")
+        previous = (
+            f"{self._last_quota_tooltip}\n"
+            if self._last_quota_tooltip
+            else ""
+        )
+        self.setToolTip(f"{previous}额度刷新失败：{message}\n点击重试")
+
+    @staticmethod
+    def _show_detail(
+        label: QLabel,
+        progress: QProgressBar,
+        prefix: str,
+        detail: QuotaDetail | None,
+    ) -> None:
+        if detail is None:
+            label.setText(f"{prefix} --")
+            progress.setValue(0)
+            return
+        label.setText(f"{prefix} {detail.percentage}%")
+        progress.setValue(detail.percentage)
+
+    @staticmethod
+    def _detail_tooltip(name: str, detail: QuotaDetail | None) -> str:
+        if detail is None:
+            return f"{name}：未知"
+        return (
+            f"{name}：{detail.percentage}%"
+            f"（{format_reset_countdown(detail.reset_at)}）"
+        )
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
