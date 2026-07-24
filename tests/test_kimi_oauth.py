@@ -204,6 +204,39 @@ def test_poll_device_token_timeout():
         )
 
 
+def test_poll_device_token_deadline_uses_device_code_expiry():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "authorization_pending"})
+
+    clock = {"now": 0.0}
+
+    def now() -> float:
+        return clock["now"]
+
+    def sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    authorization = DeviceAuthorization(
+        user_code="u",
+        device_code="dc",
+        verification_uri_complete="https://example.com",
+        interval_seconds=30,
+        expires_in_seconds=12,
+    )
+
+    with pytest.raises(KimiOAuthError, match="timeout|超时"):
+        poll_device_token(
+            make_client(handler),
+            authorization,
+            version="1",
+            device_id="d",
+            sleep=sleep,
+            now=now,
+        )
+
+    assert clock["now"] == 30
+
+
 def test_refresh_access_token_keeps_old_refresh_token_when_omitted():
     def handler(request: httpx.Request) -> httpx.Response:
         assert b"grant_type=refresh_token" in request.content
