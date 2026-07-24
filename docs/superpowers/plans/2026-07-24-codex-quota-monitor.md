@@ -52,7 +52,7 @@ def test_private_fields_are_never_retained():
 
 - [ ] **Step 2: Verify parser tests fail**
 
-Run: `.venv/bin/python -m pytest tests/test_codex_quota.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_codex_quota.py -q`
 Expected: FAIL because `aacc.codex_quota` does not exist.
 
 - [ ] **Step 3: Implement strict immutable models**
@@ -96,7 +96,7 @@ snapshot; otherwise return UNKNOWN with the file modification time.
 
 - [ ] **Step 6: Run tests and commit**
 
-Run: `.venv/bin/python -m pytest tests/test_codex_quota.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_codex_quota.py -q`
 Expected: all tests PASS.
 
 ```bash
@@ -135,7 +135,7 @@ def test_reader_error_does_not_kill_poll_thread(qapp):
 
 - [ ] **Step 2: Verify tests fail**
 
-Run: `.venv/bin/python -m pytest tests/test_codex_quota_service.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_codex_quota_service.py -q`
 Expected: FAIL because the service module does not exist.
 
 - [ ] **Step 3: Implement the service**
@@ -147,7 +147,7 @@ error string. Default interval is 10 seconds.
 
 - [ ] **Step 4: Run tests and commit**
 
-Run: `.venv/bin/python -m pytest tests/test_codex_quota_service.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_codex_quota_service.py -q`
 Expected: all tests PASS.
 
 ```bash
@@ -203,7 +203,7 @@ def test_codex_bar_unknown_and_stale_states(qapp):
 
 - [ ] **Step 3: Verify tests fail**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_app.py tests/test_codex_quota_bar.py -q`  
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_app.py tests/test_codex_quota_bar.py -q`
 Expected: missing service field, setting, and widget failures.
 
 - [ ] **Step 4: Add runtime ownership**
@@ -221,7 +221,7 @@ countdowns, observation time, and plan type.
 
 - [ ] **Step 6: Run GUI/runtime tests and commit**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_app.py tests/test_codex_quota_bar.py tests/test_gui_quota_wiring.py -q`  
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_app.py tests/test_codex_quota_bar.py tests/test_gui_quota_wiring.py -q`
 Expected: all tests PASS.
 
 ```bash
@@ -250,7 +250,7 @@ Assert both READMEs mention Codex weekly quota, local structured
 
 - [ ] **Step 2: Verify documentation tests fail**
 
-Run: `.venv/bin/python -m pytest tests/test_packaging.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_packaging.py -q`
 Expected: new content assertions fail.
 
 - [ ] **Step 3: Update bilingual documentation**
@@ -261,7 +261,7 @@ local observation, not an OpenAI billing API.
 
 - [ ] **Step 4: Run tests and commit**
 
-Run: `.venv/bin/python -m pytest tests/test_packaging.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_packaging.py -q`
 Expected: all tests PASS.
 
 ```bash

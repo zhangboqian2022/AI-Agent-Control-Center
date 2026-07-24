@@ -44,7 +44,7 @@ def test_ci_enforces_locked_sync_audit_report_and_diff_coverage():
 
 - [ ] **Step 2: Verify the test fails**
 
-Run: `.venv/bin/python -m pytest tests/test_packaging.py::test_ci_enforces_locked_sync_audit_report_and_diff_coverage -q`  
+Run: `.venv/bin/python -m pytest tests/test_packaging.py::test_ci_enforces_locked_sync_audit_report_and_diff_coverage -q`
 Expected: FAIL on current CI text.
 
 - [ ] **Step 3: Add the CI steps**
@@ -71,7 +71,7 @@ Add bounded dev dependencies for `diff-cover` and `pip-audit`, then run
 
 - [ ] **Step 4: Format the existing tree mechanically**
 
-Run: `.venv/bin/ruff format src tests`  
+Run: `.venv/bin/ruff format src tests`
 Expected: only formatting changes; no behavior changes.
 
 - [ ] **Step 5: Run local gates**
@@ -116,7 +116,7 @@ Assert the script is executable, passes `bash -n`, requires one semver argument,
 
 - [ ] **Step 2: Verify the test fails**
 
-Run: `.venv/bin/python -m pytest tests/test_packaging.py -k "release_assets" -q`  
+Run: `.venv/bin/python -m pytest tests/test_packaging.py -k "release_assets" -q`
 Expected: FAIL because the script is absent.
 
 - [ ] **Step 3: Implement the verifier**
@@ -133,7 +133,7 @@ It must never print signed redirect query strings.
 
 - [ ] **Step 4: Test against v1.4.0**
 
-Run: `scripts/verify_release.sh 1.4.0`  
+Run: `scripts/verify_release.sh 1.4.0`
 Expected: PASS and a concise statement naming both assets.
 
 - [ ] **Step 5: Document release order and commit**
@@ -173,7 +173,7 @@ and explicitly say self-signed/not notarized.
 
 - [ ] **Step 2: Verify assertions fail**
 
-Run: `.venv/bin/python -m pytest tests/test_packaging.py -k "gatekeeper or checksum" -q`  
+Run: `.venv/bin/python -m pytest tests/test_packaging.py -k "gatekeeper or checksum" -q`
 Expected: FAIL because exact commands are absent.
 
 - [ ] **Step 3: Add staged instructions**
@@ -184,7 +184,7 @@ build remains quarantined. Warn never to run the command for an unverified downl
 
 - [ ] **Step 4: Run packaging tests and commit**
 
-Run: `.venv/bin/python -m pytest tests/test_packaging.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_packaging.py -q`
 Expected: all tests PASS.
 
 ```bash
@@ -214,7 +214,7 @@ git commit -m "docs: clarify self-signed community installation"
 
 - [ ] **Step 1: Change version assertions to 1.4.1 and verify they fail**
 
-Run: `.venv/bin/python -m pytest tests/test_packaging.py tests/test_api.py -q`  
+Run: `.venv/bin/python -m pytest tests/test_packaging.py tests/test_api.py -q`
 Expected: FAIL while source remains 1.4.0.
 
 - [ ] **Step 2: Update every active version surface**
