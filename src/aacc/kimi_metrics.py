@@ -7,6 +7,7 @@ generation speed over a sliding sample window. See NOTICE.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -88,7 +89,7 @@ def decode_speed(output_tokens: int, duration_ms: object) -> int | None:
     if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)):
         return None
     duration = float(duration_ms)
-    if duration < MIN_SPEED_DURATION_MS or output == 0:
+    if not math.isfinite(duration) or duration < MIN_SPEED_DURATION_MS or output == 0:
         return None
     return round(output / (duration / 1000))
 
