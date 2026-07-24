@@ -2,7 +2,7 @@
 
 > 面向本机 AI Coding Agent 的 macOS 桌面状态与控制中心。
 
-[English README](README.md) · [下载 AACC 1.4.0](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.0/AACC-1.4.0.dmg) · [发布说明](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.0) · [产品设计](docs/product-design.zh-CN.md)
+[English README](README.md) · [下载 AACC 1.4.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg) · [发布说明](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.1) · [产品设计](docs/product-design.zh-CN.md)
 
 AACC 是一个本机优先的 macOS 悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
 
@@ -16,6 +16,7 @@ AACC 是一个本机优先的 macOS 悬浮面板，用于查看你选择监控�
 - **紧凑多工具卡片：** Codex 或已配置 Adapter 以小徽标标识，任务名称更大，并显示完整运行计时与一行短状态。
 - **面板自动伸缩：** 任务增加或移除时窗口自动拉长或收短；达到当前屏幕可用高度的 80% 后改为内部滚动。
 - **及时且克制的概括：** 每 5 秒检查 Codex 元数据，用“正在修改代码”“正在运行测试”等固定短语反馈活动，不展示原始载荷。
+- **Codex 周额度一眼可见：** 从本机 Codex 结构化额度元数据读取当前 10080 分钟周窗口；不会展示 Codex 五小时限制。
 - **本机优先：** 只读取判断状态所需的本机任务元数据，不上传对话内容。
 - **可靠的完成判断：** 优先依据 Codex `task_started` 与 `task_complete` 会话事件，避免任务完成后仍错误显示“执行中”。
 - **发现故障可见：** Codex 元数据连续读取失败时显示可恢复的黄色告警条，不再静默冻结旧状态。
@@ -27,9 +28,21 @@ AACC 是一个本机优先的 macOS 悬浮面板，用于查看你选择监控�
 
 ### 推荐：下载 DMG
 
-下载 [AACC-1.4.0.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.0/AACC-1.4.0.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
+下载 [AACC-1.4.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
 
-此版本使用本地自签名证书签名，尚未经过 Apple 公证。若首次启动被 macOS 拦截，请先核对 Release 校验值，再在"系统设置 → 隐私与安全性"选择"仍要打开"。待取得付费开发者账号后将切换为 Developer ID 签名与 Apple 公证。
+此版本使用本地自签名证书签名，尚未经过 Apple 公证。请先下载配套的 `.dmg.sha256` 资产，并对比：
+
+```bash
+shasum -a 256 AACC-1.4.1.dmg
+```
+
+仅在校验值一致后，若 macOS 拦截首次启动，再到“系统设置 → 隐私与安全性”选择“仍要打开”。如果该标准路径仍失败，最后才在本机移除隔离属性：
+
+```bash
+xattr -cr /Applications/AACC.app
+```
+
+待取得付费开发者账号后将切换为 Developer ID 签名与 Apple 公证。
 
 ### 从源码构建
 
@@ -61,6 +74,8 @@ cd AI-Agent-Control-Center
 单击卡片只会选中任务，不会隐藏 AACC。需要切换到 Codex 时，使用卡片右键菜单的“切换到任务”。
 
 对已选择的 Codex 会话，AACC 读取任务 ID、标题、更新时间、会话文件修改时间、事件名、匹配进程标识及有界的近期工具事件类别。为了区分测试与构建，它可能检查命令类别标记，但不会把原始提示词、回答、命令、凭证、代码或文件内容复制到面板、任务历史或日志。只有历史 `task_started` 且没有近期活动时会诚实显示未知状态，不会误报为运行。详见[中文用户指南](docs/user-guide.md)或 [English user guide](docs/user-guide.en.md)。
+
+Codex 额度条只显示周额度。它仅扫描近期本机会话文件的有界尾部，从结构化 `rate_limits` 对象接受当前 10080 分钟周窗口，并忽略旧版较短窗口；不登录 Codex、不调用私有额度接口，也不保留提示词或回答正文。元数据缺失、过期或格式变化时显示“数据不可用”，不会误报成 `0%`。
 
 ## CLI 与本地 API
 

@@ -86,7 +86,7 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-1.4.0.dmg" in script
+    assert "AACC-1.4.1.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
     assert "SKIP_BUILD" in script
@@ -94,9 +94,9 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
 
 
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
-    assert __version__ == "1.4.0"
-    assert 'version = "1.4.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'AACC_VERSION="${AACC_VERSION:-1.4.0}"' in (
+    assert __version__ == "1.4.1"
+    assert 'version = "1.4.1"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'AACC_VERSION="${AACC_VERSION:-1.4.1}"' in (
         ROOT / "scripts" / "build_app.sh"
     ).read_text(encoding="utf-8")
 
@@ -220,3 +220,13 @@ def test_release_verifier_rejects_incomplete_or_broken_assets() -> None:
     assert "asset_size" in script
     assert 'curl --fail --silent --show-error --location --head --output /dev/null "$url"' in script
     assert "github-repository" not in script
+
+
+def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() -> None:
+    for name in ("README.md", "README.zh-CN.md"):
+        content = (ROOT / name).read_text(encoding="utf-8")
+        assert "10080" in content
+        assert "300-minute" not in content
+        assert "300 分钟" not in content
+        assert "shasum -a 256 AACC-1.4.1.dmg" in content
+        assert "xattr -cr /Applications/AACC.app" in content
