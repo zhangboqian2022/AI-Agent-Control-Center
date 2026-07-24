@@ -5,6 +5,7 @@
 ## Unreleased
 
 - [Feature] Add Kimi account quota monitoring: weekly / 5-hour quota and booster balance in the panel header, via official device authorization or API key.
+- [Feature] Kimi Code task cards now show a token usage row: cumulative input/output, cache hit rate, and median generation speed (incremental wire tailing).
 
 ## 1.3.3-rc.1 — 2026-07-22
 
