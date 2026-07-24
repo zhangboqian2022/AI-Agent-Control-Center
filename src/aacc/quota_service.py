@@ -195,9 +195,10 @@ class QuotaService(QObject):
         try:
             self._poll_once()
         except Exception as error:  # polling must never kill the thread
-            self._logger.warning("Kimi quota poll failed: %s", error)
+            message = self._safe_error(error)
+            self._logger.warning("Kimi quota poll failed: %s", message)
             try:
-                self.error_occurred.emit(str(error))
+                self.error_occurred.emit(message)
             except RuntimeError:
                 return  # application shutting down
 
@@ -238,7 +239,7 @@ class QuotaService(QObject):
             self._clear_credentials_if_current(snapshot)
             return
         except KimiOAuthError as error:
-            self.error_occurred.emit(str(error))
+            self.error_occurred.emit(self._safe_error(error))
             return
         if grant is None:
             self._set_state_if_current(snapshot, STATE_UNAUTHORIZED)
@@ -249,7 +250,7 @@ class QuotaService(QObject):
             self._clear_credentials_if_current(grant.snapshot)
             return
         except (KimiQuotaError, httpx.HTTPError) as error:
-            self.error_occurred.emit(str(error))
+            self.error_occurred.emit(self._safe_error(error))
             return
         if not self._set_state_if_current(grant.snapshot, STATE_AUTHORIZED):
             return
@@ -386,10 +387,10 @@ class QuotaService(QObject):
         except KimiOAuthCancelledError:
             self._finish_oauth_failure(flow_id, "授权已取消")
         except (KimiOAuthError, httpx.HTTPError) as error:
-            self._finish_oauth_failure(flow_id, str(error))
+            self._finish_oauth_failure(flow_id, self._safe_error(error))
         except Exception as error:
-            self._logger.exception("Unexpected Kimi OAuth failure")
-            message = redact(str(error) or type(error).__name__)[:160]
+            message = self._safe_error(error)
+            self._logger.warning("Unexpected Kimi OAuth failure: %s", message)
             self._finish_oauth_failure(flow_id, message)
 
     def _finish_oauth_failure(self, flow_id: str, message: str) -> None:
@@ -403,6 +404,10 @@ class QuotaService(QObject):
         if changed:
             self.auth_state_changed.emit(state)
         self.oauth_finished.emit(False, message)
+
+    @staticmethod
+    def _safe_error(error: Exception) -> str:
+        return redact(str(error) or type(error).__name__)[:160]
 
     @staticmethod
     def _state_for_credentials(credentials: object) -> str:

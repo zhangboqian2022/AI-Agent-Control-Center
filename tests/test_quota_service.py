@@ -92,6 +92,26 @@ def test_poll_emits_quota_with_api_key(qapp, tmp_path):
     assert "/coding/v1/usages" in calls
 
 
+def test_poll_redacts_server_secret_from_error_signal(qapp, tmp_path):
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            500,
+            json={"message": "token=private-token-sentinel"},
+        )
+
+    service = make_service(tmp_path, handler)
+    errors: list[str] = []
+    service.error_occurred.connect(errors.append)
+
+    service.refresh_now()
+
+    assert wait_for(lambda: len(errors) == 1)
+    assert "private-token-sentinel" not in errors[0]
+    assert "[REDACTED]" in errors[0]
+
+
 def test_poll_401_clears_credentials(qapp, tmp_path):
     save_credentials(tmp_path, {"auth_method": "oauth", "token": VALID_TOKEN})
 
