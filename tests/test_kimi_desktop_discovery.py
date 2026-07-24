@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import aacc.kimi_desktop_discovery as kimi_desktop_module
 from aacc.kimi_desktop_discovery import (
     KimiDesktopDiscoveryError,
     KimiDesktopLocalDiscovery,
@@ -87,6 +88,25 @@ def test_missing_daimon_root_discovers_nothing(tmp_path: Path) -> None:
     assert discovery.discover() == []
     assert discovery.catalog() == []
     assert discovery.active_session_ids() == set()
+
+
+def test_read_only_catalog_connection_has_busy_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "daimon"
+    _write_conversations(_db_path(root), [])
+    real_connect = sqlite3.connect
+    observed: list[float | None] = []
+
+    def tracking_connect(database: str, *args: object, **kwargs: object) -> sqlite3.Connection:
+        timeout = kwargs.get("timeout")
+        observed.append(timeout if isinstance(timeout, float) else None)
+        return real_connect(database, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(kimi_desktop_module.sqlite3, "connect", tracking_connect)
+    assert _build(root).catalog() == []
+    assert observed == [5.0]
 
 
 def test_fresh_chat_conversation_is_running(tmp_path: Path) -> None:
