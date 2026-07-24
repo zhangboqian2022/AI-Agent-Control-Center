@@ -120,6 +120,15 @@ uv run mypy src
 
 作者与维护者：**zhangboqian** · <zhangboqian@hotmail.com> · [更新日志](CHANGELOG.zh-CN.md)
 
+## 致谢
+
+Kimi 额度监控与会话指标功能的产品设计参考了以下开源项目，并移植了部分逻辑：
+[MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code)（官方 OAuth 流程与额度接口约定）、
+[KimiCodeBar](https://github.com/xifandev/KimiCodeBar)（加油包解析与凭据隔离设计）、
+[kimi-code-monitor](https://github.com/bfjnbvf/kimi-code-monitor)（会话 token 指标算法）。
+这些项目均采用 MIT 开源许可协议；本项目遵从该协议，保留了各原作者的版权声明，
+详见 [NOTICE](NOTICE)。
+
 ## 许可证
 
 Copyright © 2026 zhangboqian。项目以 [MIT License](LICENSE) 开源。

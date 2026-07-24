@@ -13,3 +13,7 @@ dist/
 diagnostics/
 .superpowers/
 .worktrees/
+
+# 第三方参考项目克隆（仅本地分析用，不进仓）
+kimi-code-monitor/
+KimiCodeBar/

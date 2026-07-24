@@ -1,0 +1,26 @@
+AACC (AI Agent Control Center)
+Copyright (c) AACC contributors
+
+This product includes logic ported or adapted from the following
+MIT-licensed projects:
+
+1. MoonshotAI/kimi-code — packages/oauth
+   Copyright (c) MoonshotAI
+   https://github.com/MoonshotAI/kimi-code
+   Used for: the OAuth Device Code Flow parameters and token handling in
+   src/aacc/kimi_oauth.py, and the loose usages payload parsing rules in
+   src/aacc/kimi_quota.py.
+
+2. KimiCodeBar — https://github.com/xifandev/KimiCodeBar
+   Copyright (c) 2026 xifandev
+   Used for: booster-wallet parsing edge cases (balance units, ACTIVE /
+   ENABLED status gating) and the credential-storage isolation principle
+   in src/aacc/kimi_oauth.py / src/aacc/kimi_quota.py.
+
+3. kimi-code-monitor — https://github.com/bfjnbvf/kimi-code-monitor
+   Copyright (c) 2026 十叶
+   Used for: per-session token metric algorithms in src/aacc/kimi_metrics.py
+   (usage field normalization, median speed window).
+
+The MIT License text for each project is available in their respective
+repositories and at https://opensource.org/license/mit

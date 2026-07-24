@@ -8,10 +8,20 @@ from datetime import UTC, datetime
 from importlib import resources
 from pathlib import PurePath
 
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPoint,
+    QPropertyAnimation,
+    QSettings,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
+    QDesktopServices,
     QGuiApplication,
     QIcon,
     QMouseEvent,
@@ -28,10 +38,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizeGrip,
@@ -50,7 +62,10 @@ from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
+from aacc.kimi_metrics import format_usage_line
+from aacc.kimi_quota import KimiQuota, format_balance, format_reset_countdown
 from aacc.models import TaskConfig, TaskState, TaskStatus
+from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
 from aacc.task_manager import TaskManager
 
 _logger = logging.getLogger("aacc.gui")
@@ -145,6 +160,129 @@ class ElidedLabel(QLabel):
         )
 
 
+class QuotaBar(QFrame):
+    """Kimi account quota strip shown above the task list."""
+
+    clicked = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("quotaBar")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(7)
+        self.dot = QLabel("●")
+        self.dot.setObjectName("quotaDot")
+        layout.addWidget(self.dot)
+        self.summary_label = QLabel("Kimi 额度")
+        self.summary_label.setObjectName("quotaSummary")
+        layout.addWidget(self.summary_label)
+        layout.addSpacing(4)
+        self.weekly_label = QLabel("周 --")
+        self.weekly_label.setObjectName("quotaText")
+        layout.addWidget(self.weekly_label)
+        self.weekly_bar = QProgressBar()
+        self.weekly_bar.setObjectName("quotaProgress")
+        self.weekly_bar.setRange(0, 100)
+        self.weekly_bar.setTextVisible(False)
+        self.weekly_bar.setFixedSize(56, 5)
+        layout.addWidget(self.weekly_bar)
+        self.five_hour_label = QLabel("5h --")
+        self.five_hour_label.setObjectName("quotaText")
+        layout.addWidget(self.five_hour_label)
+        self.five_hour_bar = QProgressBar()
+        self.five_hour_bar.setObjectName("quotaProgress")
+        self.five_hour_bar.setRange(0, 100)
+        self.five_hour_bar.setTextVisible(False)
+        self.five_hour_bar.setFixedSize(56, 5)
+        layout.addWidget(self.five_hour_bar)
+        layout.addStretch()
+        self.balance_label = QLabel("")
+        self.balance_label.setObjectName("quotaBalance")
+        layout.addWidget(self.balance_label)
+        self.show_unauthorized()
+
+    def show_unauthorized(self) -> None:
+        self.dot.setStyleSheet("color: #e06c75;")
+        self.summary_label.setText("Kimi 额度 · 点击授权")
+        self.weekly_label.setText("周 --")
+        self.five_hour_label.setText("5h --")
+        self.weekly_bar.setValue(0)
+        self.five_hour_bar.setValue(0)
+        self.balance_label.setText("")
+        self.setToolTip("点击通过 Kimi 官方设备授权登录，查询账户额度")
+
+    def show_pending(self) -> None:
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText("Kimi 额度 · 授权中…")
+
+    def show_quota(self, quota: KimiQuota) -> None:
+        self.dot.setStyleSheet("color: #98c379;")
+        self.summary_label.setText("Kimi 额度")
+        self.weekly_label.setText(f"周 {quota.weekly.percentage}%")
+        self.five_hour_label.setText(f"5h {quota.five_hour.percentage}%")
+        self.weekly_bar.setValue(quota.weekly.percentage)
+        self.five_hour_bar.setValue(quota.five_hour.percentage)
+        balance = (
+            format_balance(quota.booster.balance_yuan) if quota.booster is not None else ""
+        )
+        self.balance_label.setText(balance)
+        tooltip_lines = [
+            f"每周额度：{quota.weekly.percentage}%"
+            f"（{format_reset_countdown(quota.weekly.reset_at)}）",
+            f"5 小时额度：{quota.five_hour.percentage}%"
+            f"（{format_reset_countdown(quota.five_hour.reset_at)}）",
+        ]
+        if quota.membership_level:
+            tooltip_lines.append(f"会员等级：{quota.membership_level}")
+        if balance:
+            tooltip_lines.append(f"加油包余额：{balance}")
+        tooltip_lines.append("点击刷新")
+        self.setToolTip("\n".join(tooltip_lines))
+
+    def show_error(self, message: str) -> None:
+        self.dot.setStyleSheet("color: #8997aa;")
+        self.setToolTip(f"额度刷新失败：{message}\n点击重试")
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class KimiOAuthDialog(QDialog):
+    cancelled = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Kimi 授权")
+        self.setMinimumWidth(320)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("浏览器已打开 Kimi 授权页面，请确认以下验证码："))
+        self.code_label = QLabel("")
+        self.code_label.setObjectName("oauthCode")
+        self.code_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.code_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.code_label)
+        hint = QLabel("授权完成后此窗口会自动关闭")
+        hint.setObjectName("quotaText")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(hint)
+        cancel = QPushButton("取消授权")
+        cancel.clicked.connect(self._on_cancel)
+        layout.addWidget(cancel)
+
+    def set_code(self, user_code: str) -> None:
+        self.code_label.setText(user_code)
+
+    def _on_cancel(self) -> None:
+        self.cancelled.emit()
+        self.close()
+
+
 class TaskCard(QFrame):
     action_requested = Signal(str, str)
     remove_requested = Signal(str)
@@ -222,6 +360,11 @@ class TaskCard(QFrame):
         activity_row.addWidget(self.message_label, 1)
         details_layout.addLayout(activity_row)
 
+        self.usage_label = QLabel()
+        self.usage_label.setObjectName("usageLabel")
+        self.usage_label.hide()
+        details_layout.addWidget(self.usage_label)
+
         self.updated_label = QLabel()
         self.updated_label.setObjectName("updatedLabel")
         self.updated_label.hide()
@@ -265,6 +408,12 @@ class TaskCard(QFrame):
             self.workdir_label.show()
         else:
             self.workdir_label.hide()
+        usage = state.metadata.get("usage")
+        if self.task.agent.type == "kimi_code" and isinstance(usage, dict):
+            self.usage_label.setText(format_usage_line(usage))
+            self.usage_label.show()
+        else:
+            self.usage_label.hide()
         self.message_label.setText(state.message or "暂无状态说明")
         self.updated_label.setText(
             f"最后活动：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
@@ -393,6 +542,18 @@ class SettingsDialog(QDialog):
         rotate_credentials = QPushButton("重置 API 凭证")
         rotate_credentials.clicked.connect(window.rotate_credentials)
         layout.addWidget(rotate_credentials)
+        if window.quota_service is not None:
+            layout.addWidget(QLabel("Kimi 额度（可用 API Key 替代 OAuth 授权）"))
+            api_key = QLineEdit()
+            api_key.setPlaceholderText("sk-kimi-…")
+            api_key.setEchoMode(QLineEdit.EchoMode.Password)
+            layout.addWidget(api_key)
+            save_key = QPushButton("保存 Kimi API Key")
+            save_key.clicked.connect(lambda: window.save_kimi_api_key(api_key.text()))
+            layout.addWidget(save_key)
+            kimi_logout = QPushButton("退出 Kimi 登录")
+            kimi_logout.clicked.connect(window.kimi_logout)
+            layout.addWidget(kimi_logout)
         layout.addWidget(QLabel("显示哪些程序"))
         labels = {
             "codex_cli": "Codex",
@@ -605,6 +766,8 @@ class MainWindow(QWidget):
         accessibility_trusted: bool = True,
         open_accessibility_settings_callback: Callable[[], None] | None = None,
         settings: QSettings | None = None,
+        quota_service: QuotaService | None = None,
+        open_url: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
         self.manager = manager
@@ -653,6 +816,12 @@ class MainWindow(QWidget):
         self._discovery_log_path = discovery_log_path
         self.accessibility_trusted = accessibility_trusted
         self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
+        self.quota_service = quota_service
+        self._open_url = open_url or (
+            lambda url: QDesktopServices.openUrl(QUrl(url))
+        )
+        self._oauth_dialog: KimiOAuthDialog | None = None
+        self.quota_bar: QuotaBar | None = None
         self._unsubscribe_discovery_health = (
             subscribe_discovery_health(self.discovery_health_received.emit)
             if subscribe_discovery_health is not None
@@ -820,6 +989,17 @@ class MainWindow(QWidget):
             button.setFixedSize(28, 28)
             header.addWidget(button)
         layout.addLayout(header)
+
+        if self.quota_service is not None:
+            self.quota_bar = QuotaBar()
+            self.quota_bar.clicked.connect(self._on_quota_bar_clicked)
+            layout.addWidget(self.quota_bar)
+            self.quota_service.quota_updated.connect(self._on_quota_updated)
+            self.quota_service.auth_state_changed.connect(self._on_quota_auth_state)
+            self.quota_service.oauth_code_ready.connect(self._on_oauth_code_ready)
+            self.quota_service.oauth_finished.connect(self._on_oauth_finished)
+            self.quota_service.error_occurred.connect(self._on_quota_error)
+            self._on_quota_auth_state(self.quota_service.state())
 
         self.discovery_warning = QFrame()
         self.discovery_warning.setObjectName("discoveryWarning")
@@ -1145,6 +1325,62 @@ class MainWindow(QWidget):
                 }
             ):
                 self.tray.showMessage(card.task.name, state.message or STATUS_NAMES[state.status])
+
+    def _on_quota_bar_clicked(self) -> None:
+        if self.quota_service is None:
+            return
+        if self.quota_service.state() == STATE_AUTHORIZED:
+            self.quota_service.refresh_now()
+        elif self.quota_service.state() != STATE_PENDING:
+            self.quota_service.begin_oauth()
+
+    def _on_quota_updated(self, quota: object) -> None:
+        if self.quota_bar is not None and isinstance(quota, KimiQuota):
+            self.quota_bar.show_quota(quota)
+
+    def _on_quota_auth_state(self, state: str) -> None:
+        if self.quota_bar is None:
+            return
+        if state == STATE_PENDING:
+            self.quota_bar.show_pending()
+        elif state != STATE_AUTHORIZED:
+            self.quota_bar.show_unauthorized()
+
+    def _on_quota_error(self, message: str) -> None:
+        if self.quota_bar is not None:
+            self.quota_bar.show_error(message)
+
+    def _on_oauth_code_ready(self, user_code: str, url: str) -> None:
+        if self._oauth_dialog is None:
+            self._oauth_dialog = KimiOAuthDialog(self)
+            self._oauth_dialog.cancelled.connect(self._on_oauth_cancelled)
+        self._oauth_dialog.set_code(user_code)
+        self._oauth_dialog.show()
+        self._open_url(url)
+
+    def _on_oauth_cancelled(self) -> None:
+        if self.quota_service is not None:
+            self.quota_service.cancel_oauth()
+
+    def _on_oauth_finished(self, success: bool, message: str) -> None:
+        if self._oauth_dialog is not None:
+            self._oauth_dialog.close()
+            self._oauth_dialog.deleteLater()
+            self._oauth_dialog = None
+        if not success and message:
+            self.subtitle.setText(f"KIMI 授权失败：{message[:60]}")
+
+    def save_kimi_api_key(self, key: str) -> None:
+        if self.quota_service is None:
+            return
+        try:
+            self.quota_service.set_api_key(key)
+        except ValueError as error:
+            self.subtitle.setText(str(error))
+
+    def kimi_logout(self) -> None:
+        if self.quota_service is not None:
+            self.quota_service.logout()
 
     def set_compact(self, compact: bool) -> None:
         self.compact_mode = compact
