@@ -2,6 +2,14 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.1 — 2026-07-24
+
+- [Feature] Add a read-only Codex weekly quota strip from bounded local structured metadata. Only the current 10080-minute weekly window is accepted; legacy shorter windows are ignored and no five-hour Codex limit is displayed.
+- [Security] Serialize Kimi credential writes with generation/fingerprint checks so delayed refresh, OAuth, logout, and API-key changes cannot overwrite a newer credential generation.
+- [Stability] Skip Kimi polling while authorization is pending, close every HTTP client deterministically, bound device polling to 15 minutes, cancel OAuth on every dialog-close path, and recover safely from unexpected or persistence errors.
+- [Honesty] Distinguish unknown, partial, and stale Kimi quota data instead of silently rendering malformed API responses as zero usage.
+- [Delivery] Make locked formatting, typing, tests, 90% changed-line coverage, and a non-empty blocking dependency audit mandatory; retain the JSON audit report and add a release-asset verifier.
+
 ## 1.4.0 — 2026-07-24
 
 - [Feature] Add Kimi account quota monitoring: weekly / 5-hour quota and booster balance in the panel header, via official device authorization or API key.

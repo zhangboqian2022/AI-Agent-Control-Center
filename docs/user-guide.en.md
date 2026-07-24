@@ -16,9 +16,13 @@ The panel starts near the top-right of the main display and remembers its positi
 
 If Codex metadata polling repeatedly fails, a yellow banner appears without discarding the last-known task states. **Copy diagnostics** copies a sanitized ID, counters, timestamps, and log path. The banner clears after two healthy polls.
 
+## Codex weekly quota
+
+The Codex quota strip reads only the structured `rate_limits` object from bounded tails of recent local session files. It accepts a fresh 10080-minute weekly window and intentionally ignores legacy shorter windows, so there is no five-hour Codex field. AACC does not authenticate to Codex, call a private quota endpoint, or retain prompt/response content. Missing, expired, or changed metadata is shown as unavailable instead of zero usage. Click the strip to rescan.
+
 ## DMG installation
 
-Run `./scripts/build_dmg.sh` to create `AACC-1.4.0.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This build is signed with a local self-signed certificate and is not notarized; verify the published SHA-256 before using **Open Anyway**.
+Run `./scripts/build_dmg.sh` to create `AACC-1.4.1.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This build is signed with a local self-signed certificate and is not notarized. Compare `shasum -a 256 AACC-1.4.1.dmg` with the published `.sha256` asset before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.
 
 ## Terminal and iTerm2 binding
 
