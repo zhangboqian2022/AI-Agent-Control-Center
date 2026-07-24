@@ -359,6 +359,28 @@ def test_delayed_401_cannot_clear_new_api_key(qapp, tmp_path):
     assert service.state() == STATE_AUTHORIZED
 
 
+def test_external_credential_removal_during_quota_reconciles_state(qapp, tmp_path):
+    save_credentials(tmp_path, {"auth_method": "oauth", "token": VALID_TOKEN})
+    quota_started = threading.Event()
+    release_quota = threading.Event()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        quota_started.set()
+        assert release_quota.wait(5)
+        return httpx.Response(200, json=QUOTA_PAYLOAD)
+
+    service = make_service(tmp_path, handler)
+    service.refresh_now()
+    assert quota_started.wait(5)
+
+    clear_credentials(tmp_path)
+    release_quota.set()
+
+    assert wait_for(lambda: not service._poll_lock.locked())
+    assert wait_for(lambda: service.state() == STATE_UNAUTHORIZED)
+    assert load_credentials(tmp_path) is None
+
+
 def test_api_key_wins_over_late_oauth(qapp, tmp_path):
     token_started = threading.Event()
     release_token = threading.Event()
