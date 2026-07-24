@@ -124,11 +124,12 @@ Author and maintainer: **zhangboqian** · <zhangboqian@hotmail.com> · [Changelo
 
 ## Attribution
 
-The Kimi quota monitoring and session metrics features adapt logic from the following MIT-licensed open-source projects:
+The product design of the Kimi quota monitoring and session metrics features was informed by the following open-source projects, with some logic adapted:
 [MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code) (official OAuth flow and quota API conventions),
 [KimiCodeBar](https://github.com/xifandev/KimiCodeBar) (booster-wallet parsing and credential isolation design),
 [kimi-code-monitor](https://github.com/bfjnbvf/kimi-code-monitor) (per-session token metric algorithms).
-See [NOTICE](NOTICE) for details.
+All three are released under the MIT License; this project complies with that license
+and retains each author's copyright notice. See [NOTICE](NOTICE) for details.
 
 ## License
 
