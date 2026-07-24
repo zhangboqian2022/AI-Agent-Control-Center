@@ -459,6 +459,27 @@ def test_poll_closes_created_http_client(tmp_path):
     assert clients[0].close_calls == 1
 
 
+def test_no_fd_leak_over_poll_cycles(tmp_path):
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-key"})
+    clients: list[TrackingClient] = []
+
+    def server_error(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"message": "unavailable"})
+
+    def factory() -> httpx.Client:
+        client = TrackingClient(server_error)
+        clients.append(client)
+        return client
+
+    service = QuotaService(tmp_path, version="test", client_factory=factory)
+
+    for _ in range(200):
+        service._poll_once()
+
+    assert len(clients) == 200
+    assert all(client.close_calls == 1 for client in clients)
+
+
 def test_oauth_closes_created_http_client(qapp, tmp_path):
     clients: list[TrackingClient] = []
 
