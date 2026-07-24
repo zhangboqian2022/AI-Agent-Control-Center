@@ -234,6 +234,7 @@ class QuotaService(QObject):
         try:
             grant = self._access_token(client, snapshot)
         except _StaleCredentialOperation:
+            self._reconcile_state_from_credentials()
             return
         except KimiOAuthUnauthorizedError:
             self._clear_credentials_if_current(snapshot)
@@ -327,6 +328,15 @@ class QuotaService(QObject):
         if changed:
             self.auth_state_changed.emit(STATE_UNAUTHORIZED)
         return True
+
+    def _reconcile_state_from_credentials(self) -> None:
+        with self._state_lock:
+            if self._state == STATE_PENDING:
+                return
+            state = self._state_for_credentials(self._credentials.snapshot().credentials)
+            changed = self._set_state_locked(state)
+        if changed:
+            self.auth_state_changed.emit(state)
 
     def _interruptible_sleep(
         self,
