@@ -13,7 +13,14 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_required_scripts_exist_are_executable_and_parse() -> None:
-    for name in ("install.sh", "uninstall.sh", "build_app.sh", "build_dmg.sh", "start.sh"):
+    for name in (
+        "install.sh",
+        "uninstall.sh",
+        "build_app.sh",
+        "build_dmg.sh",
+        "start.sh",
+        "verify_release.sh",
+    ):
         path = ROOT / "scripts" / name
         assert path.exists(), name
         assert os.access(path, os.X_OK), name
@@ -196,3 +203,20 @@ def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
 def test_build_uses_locked_development_environment() -> None:
     script = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
     assert "uv sync --locked --extra dev" in script
+
+
+def test_release_verifier_rejects_incomplete_or_broken_assets() -> None:
+    path = ROOT / "scripts" / "verify_release.sh"
+    assert path.exists()
+    assert os.access(path, os.X_OK)
+    assert subprocess.run(["/bin/bash", "-n", str(path)], check=False).returncode == 0
+
+    script = path.read_text(encoding="utf-8")
+    assert "draft" in script
+    assert "prerelease" in script
+    assert "AACC-${release_version}.dmg" in script
+    assert "AACC-${release_version}.dmg.sha256" in script
+    assert "browser_download_url" in script
+    assert "asset_size" in script
+    assert 'curl --fail --silent --show-error --location --head --output /dev/null "$url"' in script
+    assert "github-repository" not in script
