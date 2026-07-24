@@ -1,11 +1,12 @@
 import sqlite3
 import stat
+import time
 from datetime import timedelta
 from pathlib import Path
 
 from aacc.config import default_config
 from aacc.models import TaskState, TaskStatus
-from aacc.persistence import StateStore
+from aacc.persistence import HISTORY_CLEANUP_INTERVAL_SECONDS, StateStore
 
 
 def test_state_survives_store_reopen_and_history_is_ordered(tmp_path: Path) -> None:
@@ -41,7 +42,10 @@ def test_expired_history_cleanup_is_throttled_between_updates(tmp_path: Path) ->
     store.update(TaskState.new("task-1", "running", message="again", source="api"))
     assert cleanups == []
 
-    store._last_history_cleanup = 0.0
+    # Force the throttle window to elapse relative to *now*: setting the
+    # timestamp to 0.0 only works when machine uptime exceeds the interval
+    # (fresh CI runners are younger than one hour).
+    store._last_history_cleanup = time.monotonic() - HISTORY_CLEANUP_INTERVAL_SECONDS - 1
     store.update(TaskState.new("task-1", "completed", source="api"))
     assert cleanups == [True]
     store.close()
