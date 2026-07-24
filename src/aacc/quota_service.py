@@ -10,24 +10,24 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 from PySide6.QtCore import QObject, Signal
 
+from aacc.credential_store import CredentialSnapshot, CredentialStore
 from aacc.kimi_oauth import (
     KimiOAuthCancelledError,
     KimiOAuthError,
     KimiOAuthToken,
     KimiOAuthUnauthorizedError,
-    clear_credentials,
-    load_credentials,
     load_or_create_device_id,
     poll_device_token,
     refresh_access_token,
     request_device_authorization,
-    save_credentials,
 )
 from aacc.kimi_quota import (
     KimiQuotaError,
@@ -40,6 +40,16 @@ STATE_PENDING = "pending"
 STATE_AUTHORIZED = "authorized"
 
 CACHE_TTL_SECONDS = 30.0
+
+
+@dataclass(frozen=True)
+class AccessGrant:
+    token: str
+    snapshot: CredentialSnapshot
+
+
+class _StaleCredentialOperation(RuntimeError):
+    pass
 
 
 class QuotaService(QObject):
@@ -65,12 +75,14 @@ class QuotaService(QObject):
         self._interval = max(0.2, interval_seconds)
         self._client_factory = client_factory
         self._state_lock = threading.RLock()
-        self._state = (
-            STATE_AUTHORIZED if load_credentials(config_dir) else STATE_UNAUTHORIZED
+        self._credentials = CredentialStore(config_dir)
+        self._state = self._state_for_credentials(
+            self._credentials.snapshot().credentials
         )
+        self._active_flow_id: str | None = None
+        self._oauth_cancel_event: threading.Event | None = None
         self._stop = threading.Event()
         self._wake = threading.Event()
-        self._cancel_oauth = threading.Event()
         self._refresh_lock = threading.Lock()
         self._poll_lock = threading.Lock()
         self._last_fetch_monotonic = 0.0
@@ -90,7 +102,9 @@ class QuotaService(QObject):
 
     def stop(self) -> None:
         self._stop.set()
-        self._cancel_oauth.set()
+        with self._state_lock:
+            if self._oauth_cancel_event is not None:
+                self._oauth_cancel_event.set()
         self._wake.set()
         if self._thread.is_alive():
             self._thread.join(timeout=self._interval + 2)
@@ -108,39 +122,77 @@ class QuotaService(QObject):
         with self._state_lock:
             if self._state == STATE_PENDING:
                 return
-        self._cancel_oauth.clear()
-        self._set_state(STATE_PENDING)
+            self._credentials.invalidate()
+            snapshot = self._credentials.snapshot()
+            flow_id = uuid.uuid4().hex
+            cancel_event = threading.Event()
+            self._active_flow_id = flow_id
+            self._oauth_cancel_event = cancel_event
+            changed = self._set_state_locked(STATE_PENDING)
+        if changed:
+            self.auth_state_changed.emit(STATE_PENDING)
         threading.Thread(
-            target=self._oauth_flow, name="aacc-kimi-oauth", daemon=True
+            target=self._oauth_flow,
+            args=(flow_id, snapshot, cancel_event),
+            name="aacc-kimi-oauth",
+            daemon=True,
         ).start()
 
     def cancel_oauth(self) -> None:
-        self._cancel_oauth.set()
+        with self._state_lock:
+            if self._oauth_cancel_event is not None:
+                self._oauth_cancel_event.set()
 
     def set_api_key(self, key: str) -> None:
         trimmed = key.strip()
         if not trimmed:
             raise ValueError("API Key 不能为空")
-        save_credentials(
-            self._config_dir, {"auth_method": "api_key", "api_key": trimmed}
-        )
-        self._last_fetch_monotonic = 0.0
-        self._set_state(STATE_AUTHORIZED)
+        with self._state_lock:
+            cancelled_flow = self._invalidate_active_flow_locked()
+            self._credentials.invalidate()
+            self._credentials.replace(
+                {"auth_method": "api_key", "api_key": trimmed}
+            )
+            self._last_fetch_monotonic = 0.0
+            changed = self._set_state_locked(STATE_AUTHORIZED)
+        if changed:
+            self.auth_state_changed.emit(STATE_AUTHORIZED)
+        if cancelled_flow:
+            self.oauth_finished.emit(False, "授权已取消")
         self.refresh_now()
 
     def logout(self) -> None:
-        self._cancel_oauth.set()
-        clear_credentials(self._config_dir)
-        self._set_state(STATE_UNAUTHORIZED)
+        with self._state_lock:
+            cancelled_flow = self._invalidate_active_flow_locked()
+            self._credentials.invalidate()
+            snapshot = self._credentials.snapshot()
+            self._credentials.clear_if_current(snapshot)
+            changed = self._set_state_locked(STATE_UNAUTHORIZED)
+        if changed:
+            self.auth_state_changed.emit(STATE_UNAUTHORIZED)
+        if cancelled_flow:
+            self.oauth_finished.emit(False, "授权已取消")
 
     # ---------- internals (worker thread) ----------
 
     def _set_state(self, state: str) -> None:
         with self._state_lock:
-            changed = state != self._state
-            self._state = state
+            changed = self._set_state_locked(state)
         if changed:
             self.auth_state_changed.emit(state)
+
+    def _set_state_locked(self, state: str) -> bool:
+        changed = state != self._state
+        self._state = state
+        return changed
+
+    def _invalidate_active_flow_locked(self) -> bool:
+        active = self._active_flow_id is not None
+        if self._oauth_cancel_event is not None:
+            self._oauth_cancel_event.set()
+        self._active_flow_id = None
+        self._oauth_cancel_event = None
+        return active
 
     def _poll_guarded(self) -> None:
         try:
@@ -159,78 +211,154 @@ class QuotaService(QObject):
             self._wake.clear()
 
     def _poll_once(self) -> None:
+        with self._state_lock:
+            if self._state == STATE_PENDING:
+                return
         if time.monotonic() - self._last_fetch_monotonic < CACHE_TTL_SECONDS:
             return
         if not self._poll_lock.acquire(blocking=False):
             return
         try:
+            with self._state_lock:
+                if self._state == STATE_PENDING:
+                    return
+                snapshot = self._credentials.snapshot()
             client = self._client_factory()
             try:
-                token = self._access_token(client)
+                grant = self._access_token(client, snapshot)
+            except _StaleCredentialOperation:
+                return
             except KimiOAuthUnauthorizedError:
-                clear_credentials(self._config_dir)
-                self._set_state(STATE_UNAUTHORIZED)
+                self._clear_credentials_if_current(snapshot)
                 return
             except KimiOAuthError as error:
                 self.error_occurred.emit(str(error))
                 return
-            if token is None:
-                self._set_state(STATE_UNAUTHORIZED)
+            if grant is None:
+                self._set_state_if_current(snapshot, STATE_UNAUTHORIZED)
                 return
-            self._set_state(STATE_AUTHORIZED)
             try:
-                quota = fetch_quota(client, token)
+                quota = fetch_quota(client, grant.token)
             except KimiQuotaUnauthorizedError:
-                clear_credentials(self._config_dir)
-                self._set_state(STATE_UNAUTHORIZED)
+                self._clear_credentials_if_current(grant.snapshot)
                 return
             except (KimiQuotaError, httpx.HTTPError) as error:
                 self.error_occurred.emit(str(error))
                 return
-            self._last_fetch_monotonic = time.monotonic()
+            if not self._set_state_if_current(
+                grant.snapshot, STATE_AUTHORIZED
+            ):
+                return
+            with self._state_lock:
+                if (
+                    self._state == STATE_PENDING
+                    or not self._credentials.is_current(grant.snapshot)
+                ):
+                    return
+                self._last_fetch_monotonic = time.monotonic()
             self.quota_updated.emit(quota)
         finally:
             self._poll_lock.release()
 
-    def _access_token(self, client: httpx.Client) -> str | None:
-        credentials = load_credentials(self._config_dir)
+    def _access_token(
+        self,
+        client: httpx.Client,
+        snapshot: CredentialSnapshot,
+    ) -> AccessGrant | None:
+        credentials = snapshot.credentials
         if not credentials:
             return None
         if credentials.get("auth_method") == "api_key":
             key = credentials.get("api_key")
-            return key if isinstance(key, str) and key else None
+            return (
+                AccessGrant(key, snapshot)
+                if isinstance(key, str) and key
+                else None
+            )
         token = KimiOAuthToken.from_dict(credentials.get("token"))
         if token is None or not token.is_valid():
             return None
         if not token.needs_refresh():
-            return token.access_token
+            return AccessGrant(token.access_token, snapshot)
         with self._refresh_lock:
-            # Re-read after taking the lock: another thread may have refreshed.
-            credentials = load_credentials(self._config_dir) or {}
+            with self._state_lock:
+                if (
+                    self._state == STATE_PENDING
+                    or not self._credentials.is_current(snapshot)
+                ):
+                    raise _StaleCredentialOperation
+                current = self._credentials.snapshot()
+            credentials = current.credentials or {}
             token = KimiOAuthToken.from_dict(credentials.get("token"))
             if token is None or not token.is_valid():
                 return None
             if not token.needs_refresh():
-                return token.access_token
+                return AccessGrant(token.access_token, current)
             refreshed = refresh_access_token(
                 client, token, version=self._version, device_id=self._device_id
             )
-            save_credentials(
-                self._config_dir,
-                {"auth_method": "oauth", "token": refreshed.to_dict()},
-            )
-            return refreshed.access_token
+            with self._state_lock:
+                if self._state == STATE_PENDING:
+                    raise _StaleCredentialOperation
+                committed = self._credentials.replace_if_current(
+                    current,
+                    {"auth_method": "oauth", "token": refreshed.to_dict()},
+                )
+            if committed is None:
+                raise _StaleCredentialOperation
+            return AccessGrant(refreshed.access_token, committed)
 
-    def _interruptible_sleep(self, seconds: float) -> None:
+    def _set_state_if_current(
+        self,
+        snapshot: CredentialSnapshot,
+        state: str,
+    ) -> bool:
+        with self._state_lock:
+            if (
+                self._state == STATE_PENDING
+                or not self._credentials.is_current(snapshot)
+            ):
+                return False
+            changed = self._set_state_locked(state)
+        if changed:
+            self.auth_state_changed.emit(state)
+        return True
+
+    def _clear_credentials_if_current(
+        self,
+        snapshot: CredentialSnapshot,
+    ) -> bool:
+        with self._state_lock:
+            if self._state == STATE_PENDING:
+                return False
+            if not self._credentials.clear_if_current(snapshot):
+                return False
+            changed = self._set_state_locked(STATE_UNAUTHORIZED)
+        if changed:
+            self.auth_state_changed.emit(STATE_UNAUTHORIZED)
+        return True
+
+    def _interruptible_sleep(
+        self,
+        seconds: float,
+        cancel_event: threading.Event,
+    ) -> None:
         deadline = time.monotonic() + seconds
-        while not self._cancel_oauth.is_set():
+        while not cancel_event.is_set():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
-            self._cancel_oauth.wait(min(remaining, 0.5))
+            cancel_event.wait(min(remaining, 0.5))
 
-    def _oauth_flow(self) -> None:
+    def _oauth_flow(
+        self,
+        flow_id: str,
+        snapshot: CredentialSnapshot,
+        cancel_event: threading.Event,
+    ) -> None:
         try:
+            if cancel_event.is_set():
+                raise KimiOAuthCancelledError("OAuth flow cancelled")
             client = self._client_factory()
             authorization = request_device_authorization(
                 client, version=self._version, device_id=self._device_id
@@ -243,19 +371,62 @@ class QuotaService(QObject):
                 authorization,
                 version=self._version,
                 device_id=self._device_id,
-                sleep=self._interruptible_sleep,
-                is_cancelled=self._cancel_oauth.is_set,
+                sleep=lambda seconds: self._interruptible_sleep(
+                    seconds, cancel_event
+                ),
+                is_cancelled=cancel_event.is_set,
             )
-            save_credentials(
-                self._config_dir, {"auth_method": "oauth", "token": token.to_dict()}
-            )
-            self._last_fetch_monotonic = 0.0
-            self._set_state(STATE_AUTHORIZED)
+            if cancel_event.is_set():
+                raise KimiOAuthCancelledError("OAuth flow cancelled")
+            with self._state_lock:
+                if self._active_flow_id != flow_id:
+                    return
+                committed = self._credentials.replace_if_current(
+                    snapshot,
+                    {"auth_method": "oauth", "token": token.to_dict()},
+                )
+                if committed is None:
+                    return
+                self._active_flow_id = None
+                self._oauth_cancel_event = None
+                self._last_fetch_monotonic = 0.0
+                changed = self._set_state_locked(STATE_AUTHORIZED)
+            if changed:
+                self.auth_state_changed.emit(STATE_AUTHORIZED)
             self.oauth_finished.emit(True, "")
             self.refresh_now()
         except KimiOAuthCancelledError:
-            self._set_state(STATE_UNAUTHORIZED)
-            self.oauth_finished.emit(False, "授权已取消")
+            self._finish_oauth_failure(flow_id, "授权已取消")
         except (KimiOAuthError, httpx.HTTPError) as error:
-            self._set_state(STATE_UNAUTHORIZED)
-            self.oauth_finished.emit(False, str(error))
+            self._finish_oauth_failure(flow_id, str(error))
+
+    def _finish_oauth_failure(self, flow_id: str, message: str) -> None:
+        with self._state_lock:
+            if self._active_flow_id != flow_id:
+                return
+            self._active_flow_id = None
+            self._oauth_cancel_event = None
+            state = self._state_for_credentials(
+                self._credentials.snapshot().credentials
+            )
+            changed = self._set_state_locked(state)
+        if changed:
+            self.auth_state_changed.emit(state)
+        self.oauth_finished.emit(False, message)
+
+    @staticmethod
+    def _state_for_credentials(credentials: object) -> str:
+        if not isinstance(credentials, dict):
+            return STATE_UNAUTHORIZED
+        if credentials.get("auth_method") == "api_key":
+            key = credentials.get("api_key")
+            return (
+                STATE_AUTHORIZED
+                if isinstance(key, str) and bool(key.strip())
+                else STATE_UNAUTHORIZED
+            )
+        if credentials.get("auth_method") == "oauth":
+            token = KimiOAuthToken.from_dict(credentials.get("token"))
+            if token is not None and token.is_valid():
+                return STATE_AUTHORIZED
+        return STATE_UNAUTHORIZED
