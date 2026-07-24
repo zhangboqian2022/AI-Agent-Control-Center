@@ -53,18 +53,20 @@ scripts/install.sh
 
 ## 当前进度（2026-07-24）
 
-- 当前开发分支版本：**1.4.1（待发布，尚未创建 tag / GitHub Release）**，
-  分支 `codex/fix-1.4.1-quota-reliability`。已完成 Kimi OAuth/轮询凭据
-  generation + fingerprint 条件写入、pending 隔离、所有 HTTP Client
-  确定关闭、OAuth 全关闭路径取消、UNKNOWN/PARTIAL/STALE 诚实展示、Kimi
-  Desktop SQLite 5 秒 busy timeout，以及 Codex 只读周额度条。Codex 额度
-  **只接受 10080 分钟周窗口**，明确忽略旧 300 分钟窗口，不显示五小时字段；
-  本机真实元数据读取已验证。CI 现强制锁文件、ruff format、mypy strict、
-  全量测试、changed-line 覆盖率 ≥90% 与非空阻塞式 pip-audit JSON 报告。
-  1.4.1 App 已在本机成功构建并通过 `codesign --verify --deep --strict`。
-  README 的 1.4.1 下载链接在 Release 发布前会返回 404；发布时必须上传 DMG
-  与 `.dmg.sha256` 后运行 `scripts/verify_release.sh 1.4.1`，并完成 macOS
-  13/15 真机冒烟，才可把本条改为“已发布”。
+- `main`：**1.4.1 正式版已发布**（tag `v1.4.1` + GitHub Release（Latest，非
+  Prerelease）附 DMG 与 `.sha256`，SHA-256
+  `fda8131f359f55dccca3a64a125aaf59377322a479d4f9934db15e53d2713d94`）。
+  本版完成 Kimi OAuth/轮询凭据 generation + fingerprint 条件写入、pending
+  隔离、所有 HTTP Client 确定关闭、OAuth 全关闭路径取消、
+  UNKNOWN/PARTIAL/STALE 诚实展示、Kimi Desktop SQLite 5 秒 busy timeout，
+  以及 Codex 只读周额度条。Codex 额度**只接受 10080 分钟周窗口**，明确
+  忽略旧 300 分钟窗口，不显示五小时字段；本机真实元数据读取已验证。
+  GitHub Actions 的全量测试、ruff format、mypy strict、changed-line
+  覆盖率 ≥90%、非空阻塞式 pip-audit JSON 报告均通过；
+  `scripts/verify_release.sh 1.4.1` 已确认正式 Release 状态、资产与下载 URL。
+  1.4.1 App 已覆盖安装到 `~/Applications/AACC.app` 并通过
+  `codesign --verify --deep --strict`。macOS 13/15 真机矩阵仍未签字，
+  不宣称已经覆盖这些组合。
 - **已修复：CI 全红但本地全绿的"幽灵"失败**（`67b83be`）。
   `test_expired_history_cleanup_is_throttled_between_updates` 把
   `_last_history_cleanup` 置 `0.0` 来伪造"距上次清理已过 1 小时"，而
