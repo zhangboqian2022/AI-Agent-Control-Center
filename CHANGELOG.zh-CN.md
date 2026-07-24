@@ -2,6 +2,8 @@
 
 ## 1.4.1 — 2026-07-24
 
+[中英文发布说明](docs/release-notes-1.4.1.md)
+
 - [功能] 新增只读 Codex 周额度条，只从本机有界的结构化元数据读取；仅接受当前 10080 分钟周窗口，忽略旧版较短窗口，不显示 Codex 五小时限制。
 - [安全] Kimi 凭据写入统一加入 generation/fingerprint 条件更新，延迟刷新、OAuth、退出登录和 API Key 修改不能再覆盖更新一代凭据。
 - [稳定性] Kimi 授权 pending 时跳过轮询、所有 HTTP Client 确定关闭、设备轮询最长 15 分钟、对话框所有关闭路径都会取消 OAuth，并可从意外异常或持久化失败安全回退；Kimi Desktop 只读目录连接新增 5 秒 SQLite busy timeout。
