@@ -161,3 +161,52 @@ def test_to_int_non_finite_is_safe():
     quota = parse_quota({"usage": {"limit": "inf", "used": "nan"}})
     assert quota.weekly.limit == 0
     assert quota.weekly.used == 0
+
+
+def test_parse_real_payload_time_unit_minute_window():
+    """Regression: the live API spells the 5h window unit TIME_UNIT_MINUTE."""
+    payload = {
+        "user": {"userId": "x", "region": "REGION_CN", "membership": {"level": "LEVEL_ADVANCED"}},
+        "usage": {
+            "limit": "100",
+            "used": "64",
+            "remaining": "36",
+            "resetTime": "2026-07-27T13:28:47.922661Z",
+        },
+        "limits": [
+            {
+                "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                "detail": {
+                    "limit": "100",
+                    "used": "30",
+                    "remaining": "70",
+                    "resetTime": "2026-07-24T07:28:47.922661Z",
+                },
+            }
+        ],
+        "parallel": {"limit": "30"},
+        "totalQuota": {},
+        "authentication": {"method": "METHOD_ACCESS_TOKEN", "scope": "FEATURE_CODING"},
+        "subType": "TYPE_PURCHASE",
+        "domain": "DOMAIN_NEXUS",
+    }
+    quota = parse_quota(payload)
+    assert quota.weekly.percentage == 64
+    assert quota.five_hour.limit == 100
+    assert quota.five_hour.used == 30
+    assert quota.five_hour.percentage == 30
+
+
+def test_five_hour_window_rejects_non_minute_units():
+    from aacc.kimi_quota import parse_quota
+
+    for unit in ("TIME_UNIT_HOUR", "month", "TIME_UNIT_SECOND"):
+        payload = {
+            "limits": [
+                {
+                    "window": {"duration": 300, "timeUnit": unit},
+                    "detail": {"limit": "100", "used": "30"},
+                }
+            ]
+        }
+        assert parse_quota(payload).five_hour.limit == 0, unit

@@ -114,7 +114,12 @@ def _is_five_hour_window(window: object) -> bool:
     if duration != FIVE_HOUR_WINDOW_MINUTES:
         return False
     unit = window.get("timeUnit") or window.get("unit") or ""
-    return not isinstance(unit, str) or not unit or unit.lower().startswith("m")
+    if not isinstance(unit, str) or not unit:
+        return True
+    # The live API spells the unit "TIME_UNIT_MINUTE"; older payloads used
+    # short forms ("m", "min", "minute"). "month" must not match.
+    normalized = unit.lower().removeprefix("time_unit_")
+    return normalized == "m" or normalized.startswith("min")
 
 
 def _parse_booster(raw: object) -> BoosterWallet | None:
