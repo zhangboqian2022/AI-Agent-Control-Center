@@ -2,6 +2,10 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- [Feature] Add Kimi account quota monitoring: weekly / 5-hour quota and booster balance in the panel header, via official device authorization or API key.
+
 ## 1.3.3-rc.1 — 2026-07-22
 
 - [Security] `save_config` now rejects a symlinked configuration directory (defense in depth alongside the existing config-file symlink check).
