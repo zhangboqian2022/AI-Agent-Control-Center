@@ -125,6 +125,8 @@ def test_build_runtime_skips_quota_service_when_disabled(tmp_path: Path) -> None
 
 
 def test_build_runtime_default_factory_honors_kimi_quota_enabled(tmp_path: Path) -> None:
+    import yaml
+
     from aacc.quota_service import QuotaService
 
     config_path = tmp_path / "config.yaml"
@@ -137,11 +139,38 @@ def test_build_runtime_default_factory_honors_kimi_quota_enabled(tmp_path: Path)
     finally:
         runtime.close()
 
-    import yaml
-
-    config_path.write_text(yaml.safe_dump({"app": {"kimi_quota_enabled": False}}))
+    config_path.write_text(
+        yaml.safe_dump({"app": {"kimi_quota_enabled": False}}),
+        encoding="utf-8",
+    )
     runtime = build_runtime(config_path, tmp_path / "aacc-disabled.db")
     try:
         assert runtime.quota_service is None
+    finally:
+        runtime.close()
+
+
+def test_build_runtime_default_factory_honors_codex_quota_enabled(
+    tmp_path: Path,
+) -> None:
+    import yaml
+
+    from aacc.codex_quota_service import CodexQuotaService
+
+    config_path = tmp_path / "config.yaml"
+    database_path = tmp_path / "aacc.db"
+    runtime = build_runtime(config_path, database_path)
+    try:
+        assert isinstance(runtime.codex_quota_service, CodexQuotaService)
+    finally:
+        runtime.close()
+
+    config_path.write_text(
+        yaml.safe_dump({"app": {"codex_quota_enabled": False}}),
+        encoding="utf-8",
+    )
+    runtime = build_runtime(config_path, tmp_path / "aacc-disabled.db")
+    try:
+        assert runtime.codex_quota_service is None
     finally:
         runtime.close()

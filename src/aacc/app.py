@@ -16,6 +16,8 @@ from aacc.accessibility import is_accessibility_trusted, open_accessibility_sett
 from aacc.api import create_api
 from aacc.automation import MacAutomation
 from aacc.automation_executor import AutomationExecutor
+from aacc.codex_quota import CodexQuotaReader
+from aacc.codex_quota_service import CodexQuotaService
 from aacc.config import load_config, rotate_api_token
 from aacc.constants import (
     APP_SUPPORT_DIR,
@@ -47,9 +49,12 @@ class Runtime:
     discovery: CodexDiscoveryService
     kimi_discovery: KimiDiscoveryService
     kimi_desktop_discovery: KimiDesktopDiscoveryService
+    codex_quota_service: CodexQuotaService | None = None
     quota_service: QuotaService | None = None
 
     def close(self) -> None:
+        if self.codex_quota_service is not None:
+            self.codex_quota_service.stop()
         if self.quota_service is not None:
             self.quota_service.stop()
         self.kimi_desktop_discovery.stop()
@@ -65,12 +70,23 @@ def _default_quota_service_factory(config_dir: Path, config: AppConfig) -> Quota
     return QuotaService(config_dir, version=aacc.__version__)
 
 
+def _default_codex_quota_service_factory(
+    config: AppConfig,
+) -> CodexQuotaService | None:
+    if not config.app.codex_quota_enabled:
+        return None
+    reader = CodexQuotaReader(Path.home() / ".codex" / "sessions")
+    return CodexQuotaService(reader)
+
+
 def build_runtime(
     config_path: Path,
     database_path: Path,
     *,
     accessibility_trusted: Callable[[], bool] = lambda: True,
     quota_service_factory: Callable[[Path], QuotaService | None] | None = None,
+    codex_quota_service_factory: Callable[[], CodexQuotaService | None]
+    | None = None,
 ) -> Runtime:
     config = load_config(config_path)
     store = StateStore(database_path)
@@ -79,6 +95,9 @@ def build_runtime(
     automation = MacAutomation(config, accessibility_trusted=accessibility_trusted)
     factory = quota_service_factory or (
         lambda config_dir: _default_quota_service_factory(config_dir, config)
+    )
+    codex_quota_factory = codex_quota_service_factory or (
+        lambda: _default_codex_quota_service_factory(config)
     )
     return Runtime(
         config_path=config_path,
@@ -89,6 +108,7 @@ def build_runtime(
         discovery=CodexDiscoveryService(manager),
         kimi_discovery=KimiDiscoveryService(manager),
         kimi_desktop_discovery=KimiDesktopDiscoveryService(manager),
+        codex_quota_service=codex_quota_factory(),
         quota_service=factory(config_path.parent),
     )
 
@@ -166,6 +186,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         set_kimi_desktop_monitoring_preferences=runtime.kimi_desktop_discovery.set_monitoring_preferences,
         rotate_api_token_callback=lambda: rotate_api_token(runtime.config_path, runtime.config),
         quota_service=runtime.quota_service,
+        codex_quota_service=runtime.codex_quota_service,
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
         kimi_discovery_health=runtime.kimi_discovery.health,
@@ -184,6 +205,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
     runtime.kimi_desktop_discovery.start()
     if runtime.quota_service is not None:
         runtime.quota_service.start()
+    if runtime.codex_quota_service is not None:
+        runtime.codex_quota_service.start()
 
     api_server: APIServerThread | None = None
     if runtime.config.app.api.enabled:
