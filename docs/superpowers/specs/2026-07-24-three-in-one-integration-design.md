@@ -106,7 +106,8 @@
 - 只解析 usage 相关字段，不读取 prompt/response 内容（与现有 wire 扫描的
   隐私边界一致）；单行超 64KB 跳过（复用现有限制）。
 - 接入点：`KimiLocalDiscovery.discover()` 为每个返回的 `DiscoveredTask` 在
-  `TaskState.metadata` 附 `usage` 字典；`TaskCard` 对 `kimi_code` 类型卡片
+  `TaskState.metadata` 附 `usage` 字典（仅当累计 token 非零——wire 存在但尚无
+  已记录回合的会话不附加该键）；`TaskCard` 对 `kimi_code` 类型卡片
   渲染指标行：`↑12.3k ↓1.2k 缓存68% · 42 tok/s`（无数据时不渲染该行）。
 
 ### 子系统 C：kimi web 实时通道（P2，实验性，默认关闭）
