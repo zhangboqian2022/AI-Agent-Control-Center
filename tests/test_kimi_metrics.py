@@ -51,6 +51,12 @@ def test_normalize_usage_floats_are_floored():
     assert usage.input_tokens == 10
 
 
+def test_normalize_usage_non_finite_becomes_zero():
+    usage = normalize_usage({"output": float("inf"), "inputOther": float("nan")})
+    assert usage.output_tokens == 0
+    assert usage.input_tokens == 0
+
+
 def test_decode_speed_thresholds():
     assert decode_speed(200, 4000) == 50
     assert decode_speed(0, 4000) is None

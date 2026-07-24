@@ -29,7 +29,7 @@ def _to_non_negative_int(value: object) -> int:
             return 0
     else:
         return 0
-    if number != number or number <= 0:  # NaN or non-positive
+    if not math.isfinite(number) or number <= 0:  # NaN/inf or non-positive
         return 0
     return int(number)
 

@@ -10,6 +10,7 @@ See NOTICE.
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -65,15 +66,16 @@ def _to_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return int(value)
+        return int(value) if math.isfinite(value) else None
     if isinstance(value, str):
         try:
             return int(value)
         except ValueError:
             try:
-                return int(float(value))
+                number = float(value)
             except ValueError:
                 return None
+            return int(number) if math.isfinite(number) else None
     return None
 
 
