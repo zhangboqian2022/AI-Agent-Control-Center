@@ -58,6 +58,8 @@ from aacc import public_version
 from aacc.automation import AutomationError
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
+from aacc.codex_quota import CodexQuotaSnapshot, CodexQuotaStatus
+from aacc.codex_quota_service import CodexQuotaService
 from aacc.constants import DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
 from aacc.kimi_desktop_discovery import KimiDesktopSession
@@ -305,6 +307,93 @@ class QuotaBar(QFrame):
             f"{name}：{detail.percentage}%"
             f"（{format_reset_countdown(detail.reset_at)}）"
         )
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class CodexQuotaBar(QFrame):
+    """Read-only Codex weekly quota sourced from local session metadata."""
+
+    clicked = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self.setObjectName("quotaBar")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(7)
+        self.dot = QLabel("●")
+        self.dot.setObjectName("quotaDot")
+        layout.addWidget(self.dot)
+        self.summary_label = QLabel("Codex 额度")
+        self.summary_label.setObjectName("quotaSummary")
+        layout.addWidget(self.summary_label)
+        layout.addSpacing(4)
+        self.weekly_label = QLabel("周 --")
+        self.weekly_label.setObjectName("quotaText")
+        layout.addWidget(self.weekly_label)
+        self.weekly_bar = QProgressBar()
+        self.weekly_bar.setObjectName("quotaProgress")
+        self.weekly_bar.setRange(0, 100)
+        self.weekly_bar.setTextVisible(False)
+        self.weekly_bar.setFixedSize(56, 5)
+        layout.addWidget(self.weekly_bar)
+        layout.addStretch()
+        self.show_unknown()
+
+    def show_unknown(self) -> None:
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self.dot.setStyleSheet("color: #8997aa;")
+        self.summary_label.setText("Codex 额度 · 数据不可用")
+        self.weekly_label.setText("周 --")
+        self.weekly_bar.setValue(0)
+        self.setToolTip("尚未在本机 Codex 会话中发现有效周额度；点击重新扫描")
+
+    def show_quota(self, quota: CodexQuotaSnapshot) -> None:
+        if (
+            quota.status is CodexQuotaStatus.UNKNOWN
+            or quota.weekly is None
+        ):
+            self.show_unknown()
+            return
+        self._has_known_quota = True
+        self.dot.setStyleSheet("color: #98c379;")
+        self.summary_label.setText("Codex 额度")
+        self.weekly_label.setText(f"周 {quota.weekly.used_percent}%")
+        self.weekly_bar.setValue(quota.weekly.used_percent)
+        tooltip_lines = [
+            f"每周已用：{quota.weekly.used_percent}%"
+            f"（{format_reset_countdown(quota.weekly.resets_at)}）"
+        ]
+        if quota.plan_type:
+            tooltip_lines.append(f"套餐：{quota.plan_type}")
+        if quota.observed_at is not None:
+            tooltip_lines.append(
+                f"本机观测：{quota.observed_at.astimezone().strftime('%H:%M:%S')}"
+            )
+        tooltip_lines.append("点击重新扫描本机 Codex 额度元数据")
+        self._last_quota_tooltip = "\n".join(tooltip_lines)
+        self.setToolTip(self._last_quota_tooltip)
+
+    def show_error(self, message: str) -> None:
+        self.dot.setStyleSheet("color: #8997aa;")
+        if self._has_known_quota:
+            self.summary_label.setText("Codex 额度 · 数据过期")
+        else:
+            self.summary_label.setText("Codex 额度 · 数据不可用")
+        previous = (
+            f"{self._last_quota_tooltip}\n"
+            if self._last_quota_tooltip
+            else ""
+        )
+        self.setToolTip(f"{previous}额度读取失败：{message}\n点击重试")
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -850,6 +939,7 @@ class MainWindow(QWidget):
         open_accessibility_settings_callback: Callable[[], None] | None = None,
         settings: QSettings | None = None,
         quota_service: QuotaService | None = None,
+        codex_quota_service: CodexQuotaService | None = None,
         open_url: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
@@ -900,11 +990,13 @@ class MainWindow(QWidget):
         self.accessibility_trusted = accessibility_trusted
         self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
         self.quota_service = quota_service
+        self.codex_quota_service = codex_quota_service
         self._open_url = open_url or (
             lambda url: QDesktopServices.openUrl(QUrl(url))
         )
         self._oauth_dialog: KimiOAuthDialog | None = None
         self.quota_bar: QuotaBar | None = None
+        self.codex_quota_bar: CodexQuotaBar | None = None
         self._unsubscribe_discovery_health = (
             subscribe_discovery_health(self.discovery_health_received.emit)
             if subscribe_discovery_health is not None
@@ -1073,6 +1165,18 @@ class MainWindow(QWidget):
             header.addWidget(button)
         layout.addLayout(header)
 
+        if self.codex_quota_service is not None:
+            self.codex_quota_bar = CodexQuotaBar()
+            self.codex_quota_bar.clicked.connect(
+                self.codex_quota_service.refresh_now
+            )
+            layout.addWidget(self.codex_quota_bar)
+            self.codex_quota_service.quota_updated.connect(
+                self._on_codex_quota_updated
+            )
+            self.codex_quota_service.error_occurred.connect(
+                self._on_codex_quota_error
+            )
         if self.quota_service is not None:
             self.quota_bar = QuotaBar()
             self.quota_bar.clicked.connect(self._on_quota_bar_clicked)
@@ -1416,6 +1520,17 @@ class MainWindow(QWidget):
             self.quota_service.refresh_now()
         elif self.quota_service.state() != STATE_PENDING:
             self.quota_service.begin_oauth()
+
+    def _on_codex_quota_updated(self, quota: object) -> None:
+        if (
+            self.codex_quota_bar is not None
+            and isinstance(quota, CodexQuotaSnapshot)
+        ):
+            self.codex_quota_bar.show_quota(quota)
+
+    def _on_codex_quota_error(self, message: str) -> None:
+        if self.codex_quota_bar is not None:
+            self.codex_quota_bar.show_error(message)
 
     def _on_quota_updated(self, quota: object) -> None:
         if self.quota_bar is not None and isinstance(quota, KimiQuota):

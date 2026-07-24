@@ -59,6 +59,7 @@ class AppSettings(BaseModel):
         default_factory=lambda: ["codex_cli", "kimi_code", "kimi_desktop"]
     )
     api: APIConfig = Field(default_factory=APIConfig)
+    codex_quota_enabled: bool = True
     kimi_quota_enabled: bool = True
 
 

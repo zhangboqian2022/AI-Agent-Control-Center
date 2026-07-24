@@ -8,7 +8,13 @@ from aacc.quota_service import STATE_AUTHORIZED, STATE_UNAUTHORIZED, QuotaServic
 pytest.importorskip("pytestqt")
 
 
-def make_window(qtbot, tmp_path, handler=None, with_service=True):
+def make_window(
+    qtbot,
+    tmp_path,
+    handler=None,
+    with_service=True,
+    codex_quota_service=None,
+):
     from aacc.automation import MacAutomation
     from aacc.automation_executor import AutomationExecutor
     from aacc.config import default_config
@@ -37,6 +43,7 @@ def make_window(qtbot, tmp_path, handler=None, with_service=True):
         AutomationExecutor(automation),
         enable_tray=False,
         quota_service=service,
+        codex_quota_service=codex_quota_service,
         open_url=opened.append,
     )
     qtbot.addWidget(window)
@@ -133,3 +140,26 @@ def test_oauth_dialog_success_close_does_not_cancel(qtbot):
     dialog.finish_and_close()
 
     assert cancelled == []
+
+
+def test_codex_quota_bar_click_triggers_local_refresh(qtbot, tmp_path):
+    from aacc.codex_quota import CodexQuotaSnapshot
+    from aacc.codex_quota_service import CodexQuotaService
+
+    class EmptyReader:
+        def read_latest(self) -> CodexQuotaSnapshot:
+            raise AssertionError("click test replaces refresh_now")
+
+    codex_service = CodexQuotaService(EmptyReader())
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        codex_quota_service=codex_service,
+    )
+    refreshed: list[bool] = []
+    codex_service.refresh_now = lambda: refreshed.append(True)  # type: ignore[method-assign]
+
+    assert window.codex_quota_bar is not None
+    window.codex_quota_bar.clicked.emit()
+
+    assert refreshed == [True]
