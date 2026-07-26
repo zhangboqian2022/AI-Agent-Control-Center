@@ -10,6 +10,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!AACC-windows.spec
 diagnostics/
 .superpowers/
 .worktrees/
@@ -20,3 +21,8 @@ KimiCodeBar/
 
 # 送审导出目录（git archive 产物）
 code/
+
+# Local agent tooling
+.agents/
+.claude/
+skills-lock.json

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ FileModifiedAt = Callable[[Path], datetime]
 ProcessAlive = Callable[[], bool]
 
 _KIMI_PROCESS_PATTERN = re.compile(r"(?:^|/)kimi(?:\s|$)", re.IGNORECASE)
+_KIMI_PROCESS_PATTERN_WIN32 = re.compile(r"^kimi(?:\.exe)?$", re.IGNORECASE)
 _NAME_MAX_LENGTH = 20
 _WIRE_SCAN_CHUNK_BYTES = 65_536
 # Total reverse-scan budget per wire file: bounds the work done when a
@@ -35,6 +37,21 @@ _TURN_ACTIVE_TYPES = {"turn.prompt", "llm.request", "context.append_loop_event"}
 # must count as turn boundaries, otherwise a cancelled session shows running
 # until the active-turn window expires.
 _TURN_ENDED_TYPES = {"turn.cancel"}
+
+
+def _default_process_pattern() -> re.Pattern[str]:
+    """Process-name pattern matching the Kimi Code CLI, per platform."""
+    if sys.platform == "win32":
+        return _KIMI_PROCESS_PATTERN_WIN32
+    return _KIMI_PROCESS_PATTERN
+
+
+def _default_terminal_config(work_dir: str | None) -> TerminalConfig:
+    """Terminal targeting for discovered Kimi Code tasks, per platform."""
+    if sys.platform == "win32":
+        title = Path(work_dir).name if work_dir else None
+        return TerminalConfig(type="windows_terminal", window_title=title or None)
+    return TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal")
 
 
 class KimiDiscoveryError(RuntimeError):
@@ -224,7 +241,7 @@ class KimiLocalDiscovery:
         self.now = now
         self.file_modified_at = file_modified_at or self._file_modified_at
         self.agent_process_alive = agent_process_alive or CachedProcessAlive(
-            "name", lambda value: bool(_KIMI_PROCESS_PATTERN.search(value))
+            "name", lambda value: bool(_default_process_pattern().search(value))
         )
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         # A turn in progress may leave the wire untouched for minutes (a slow
@@ -275,9 +292,7 @@ class KimiLocalDiscovery:
                         slot=1,
                         name=(session["title"] or f"Kimi 任务 {session_id[:8]}")[:_NAME_MAX_LENGTH],
                         agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
-                        terminal=TerminalConfig(
-                            type="terminal_app", app_bundle_id="com.apple.Terminal"
-                        ),
+                        terminal=_default_terminal_config(session["work_dir"]),
                     ),
                     state=TaskState(
                         task_id=task_id,

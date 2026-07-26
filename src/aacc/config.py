@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +30,13 @@ def _migrate_0_to_1(raw: dict[str, Any]) -> dict[str, Any]:
 MIGRATIONS: dict[int, Migration] = {0: _migrate_0_to_1}
 
 
+def _default_terminal_config() -> TerminalConfig:
+    if sys.platform == "win32":
+        # Windows has no bundle-id concept; windows_terminal focuses by title.
+        return TerminalConfig(type="windows_terminal")
+    return TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal")
+
+
 def _default_tasks() -> list[TaskConfig]:
     return [
         TaskConfig(
@@ -36,21 +44,21 @@ def _default_tasks() -> list[TaskConfig]:
             slot=1,
             name="Codex 任务",
             agent=AgentConfig(type="codex_cli", display_name="Codex CLI"),
-            terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+            terminal=_default_terminal_config(),
         ),
         TaskConfig(
             id="task-2",
             slot=2,
             name="Claude 任务",
             agent=AgentConfig(type="claude_code", display_name="Claude Code"),
-            terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+            terminal=_default_terminal_config(),
         ),
         TaskConfig(
             id="task-3",
             slot=3,
             name="Kimi 任务",
             agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
-            terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+            terminal=_default_terminal_config(),
         ),
         TaskConfig(
             id="task-4",
@@ -59,7 +67,7 @@ def _default_tasks() -> list[TaskConfig]:
             agent=AgentConfig(
                 type="generic_cli", display_name="Z Code", process_patterns=["zcode"]
             ),
-            terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+            terminal=_default_terminal_config(),
         ),
     ]
 
@@ -109,7 +117,10 @@ def save_config(path: Path, config: AppConfig) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        if sys.platform != "win32":
+            # os.fchmod is Unix-only; on Windows the default ACL already
+            # restricts the file to the current user.
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             yaml.safe_dump(
                 config.model_dump(mode="json"),
@@ -121,11 +132,14 @@ def save_config(path: Path, config: AppConfig) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary, path)
         os.chmod(path, 0o600)
-        directory_descriptor = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
+        if sys.platform != "win32":
+            # Windows cannot open a directory handle with os.open; the file
+            # flush+fsync above is kept on every platform.
+            directory_descriptor = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
     finally:
         temporary.unlink(missing_ok=True)
 

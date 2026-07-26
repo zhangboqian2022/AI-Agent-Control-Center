@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 import aacc.accessibility as accessibility
 
@@ -50,3 +51,23 @@ def test_accessibility_failures_are_safe(monkeypatch: object) -> None:
         subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())
     )
     assert accessibility.open_accessibility_settings() is None
+
+
+def test_accessibility_always_trusted_on_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.accessibility import is_accessibility_trusted
+
+    assert is_accessibility_trusted() is True
+    assert is_accessibility_trusted(prompt=True) is True
+
+
+def test_open_settings_noop_on_windows(monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    called: list[object] = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: called.append(a) or None)
+    from aacc.accessibility import open_accessibility_settings
+
+    open_accessibility_settings()
+    assert called == []

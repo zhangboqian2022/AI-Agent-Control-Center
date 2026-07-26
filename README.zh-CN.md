@@ -62,6 +62,27 @@ cd AI-Agent-Control-Center
 ./scripts/build_dmg.sh
 ```
 
+### Windows
+
+要求 Windows 10+、Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)。
+
+```powershell
+git clone https://github.com/zhangboqian2022/AI-Agent-Control-Center.git
+cd AI-Agent-Control-Center
+.\scripts\build_windows.ps1
+```
+
+构建产物为 windowed 单目录 `dist\AACC\AACC.exe`，直接运行即可。Windows 版未做代码签名，首次运行会出现 SmartScreen 提示——核对来源后选择“更多信息 → 仍要运行”。
+
+与 macOS 版的能力对照：
+
+| 能力 | macOS | Windows |
+| --- | --- | --- |
+| 窗口聚焦 | Bundle ID + AppleScript | 窗口标题匹配（无 bundle id） |
+| 语音输入 | macOS 听写 | Win+H |
+| 辅助功能授权 | 注入/热键需要 | 不需要 |
+| 签名 | 自签名，Gatekeeper 提示 | 未签名，SmartScreen 提示 |
+
 ## 用 Codex 任务
 
 1. 启动 AACC，点击右上角齿轮打开设置。
