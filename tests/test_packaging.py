@@ -178,6 +178,20 @@ def test_documentation_download_links_match_package_version() -> None:
             assert referenced == dmg_name, path.name
 
 
+def test_windows_spec_exists_and_excludes_quartz() -> None:
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    assert "console=False" in spec
+    assert "Quartz" in spec  # 出现在 excludes
+    assert "BUNDLE" not in spec
+    assert "styles.qss" in spec
+
+
+def test_windows_build_script_invokes_pyinstaller() -> None:
+    script = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
+    assert "AACC-windows.spec" in script
+    assert "pyinstaller" in script.lower()
+
+
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "fetch-depth: 0" in workflow

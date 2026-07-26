@@ -1,8 +1,11 @@
 import sqlite3
 import stat
+import sys
 import time
 from datetime import timedelta
 from pathlib import Path
+
+import pytest
 
 from aacc.config import default_config
 from aacc.models import TaskState, TaskStatus
@@ -71,6 +74,9 @@ def test_history_returns_recent_rows_oldest_to_newest(tmp_path: Path) -> None:
     store.close()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_database_is_private(tmp_path: Path) -> None:
     path = tmp_path / "aacc.db"
     store = StateStore(path)

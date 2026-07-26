@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import sys
 import tempfile
 import time
 import uuid
@@ -116,14 +117,19 @@ def oauth_host() -> str:
 
 
 def device_headers(version: str, device_id: str) -> dict[str, str]:
-    mac_version = platform.mac_ver()[0] or "unknown"
+    if sys.platform == "win32":
+        os_version = platform.version() or "unknown"
+        device_model = f"Windows {os_version} {platform.machine()}"
+    else:
+        os_version = platform.mac_ver()[0] or "unknown"
+        device_model = f"macOS {os_version} {platform.machine()}"
     return {
         "X-Msh-Platform": "kimi_code_cli",
         "X-Msh-Version": version,
         "X-Msh-Device-Id": device_id,
         "X-Msh-Device-Name": platform.node() or "unknown",
-        "X-Msh-Device-Model": f"macOS {mac_version} {platform.machine()}",
-        "X-Msh-Os-Version": mac_version,
+        "X-Msh-Device-Model": device_model,
+        "X-Msh-Os-Version": os_version,
     }
 
 
@@ -328,7 +334,10 @@ def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
     )
     temporary = Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        if sys.platform != "win32":
+            # os.fchmod is Unix-only; on Windows the default ACL already
+            # restricts the file to the current user.
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.flush()

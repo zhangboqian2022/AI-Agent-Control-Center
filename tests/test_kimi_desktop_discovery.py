@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -265,3 +266,69 @@ def test_conversations_written_through_wal_are_visible(tmp_path: Path) -> None:
         assert [task.config.id for task in tasks] == ["kimi_desktop:conv-wal"]
     finally:
         connection.close()
+
+
+def test_daimon_roots_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\u\AppData\Local")
+    monkeypatch.setenv("APPDATA", r"C:\Users\u\AppData\Roaming")
+    from aacc.kimi_desktop_discovery import _default_daimon_roots
+
+    roots = _default_daimon_roots()
+    assert roots == [
+        Path(r"C:\Users\u\AppData\Local") / "kimi-desktop" / "daimon-share" / "daimon",
+        Path(r"C:\Users\u\AppData\Roaming") / "kimi-desktop" / "daimon-share" / "daimon",
+    ]
+
+
+def test_daimon_roots_windows_missing_env(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
+    from aacc.kimi_desktop_discovery import _default_daimon_roots
+
+    assert _default_daimon_roots() == []
+
+
+def test_daimon_roots_darwin_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    from aacc.kimi_desktop_discovery import _default_daimon_roots
+
+    assert _default_daimon_roots() == [
+        Path.home() / "Library" / "Application Support" / "kimi-desktop" / "daimon-share" / "daimon"
+    ]
+
+
+def test_app_process_match_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.kimi_desktop_discovery import _default_app_process_match
+
+    assert _default_app_process_match(r"C:\Program Files\Kimi\Kimi.exe")
+    assert _default_app_process_match(r"C:\Program Files\Kimi\KIMI.EXE")
+    assert not _default_app_process_match(r"C:\Program Files\Kimi\notkimi.exe")
+    assert not _default_app_process_match("/Applications/Kimi.app/Contents/MacOS/Kimi")
+
+
+def test_app_process_match_darwin_unchanged() -> None:
+    from aacc.kimi_desktop_discovery import _default_app_process_match
+
+    assert _default_app_process_match("/Applications/Kimi.app/Contents/MacOS/Kimi")
+    assert not _default_app_process_match(r"C:\Program Files\Kimi\Kimi.exe")
+
+
+def test_terminal_config_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.kimi_desktop_discovery import _default_terminal_config
+
+    terminal = _default_terminal_config()
+    assert terminal.type == "windows_terminal"
+    assert terminal.window_title == "Kimi"
+    assert terminal.app_bundle_id is None
+
+
+def test_terminal_config_darwin_unchanged() -> None:
+    from aacc.kimi_desktop_discovery import _default_terminal_config
+
+    terminal = _default_terminal_config()
+    assert terminal.type == "mac_app"
+    assert terminal.app_bundle_id == "com.moonshot.kimichat"

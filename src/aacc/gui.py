@@ -60,7 +60,7 @@ from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.codex_quota import CodexQuotaSnapshot, CodexQuotaStatus
 from aacc.codex_quota_service import CodexQuotaService
-from aacc.constants import DEFAULT_CONFIG_PATH
+from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
@@ -900,7 +900,7 @@ class MainWindow(QWidget):
         subscribe_kimi_desktop_discovery_health: (
             Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
         ) = None,
-        discovery_log_path: str = "~/Library/Application Support/AACC/logs/app.log",
+        discovery_log_path: str = str(APP_SUPPORT_DIR / "logs" / "app.log"),
         accessibility_trusted: bool = True,
         open_accessibility_settings_callback: Callable[[], None] | None = None,
         settings: QSettings | None = None,

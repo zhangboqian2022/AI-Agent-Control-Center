@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import platform
+import sys
 
 import httpx
 import pytest
@@ -275,6 +277,9 @@ def test_client_id_is_official_kimi_code_client():
     assert CLIENT_ID == "17e5f671-d194-4dfb-9706-5516cb48c098"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_credentials_roundtrip_permissions_and_clear(tmp_path):
     save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
     assert load_credentials(tmp_path) == {"auth_method": "api_key", "api_key": "sk-kimi-x"}
@@ -282,6 +287,21 @@ def test_credentials_roundtrip_permissions_and_clear(tmp_path):
     assert mode == 0o600
     clear_credentials(tmp_path)
     assert load_credentials(tmp_path) is None
+
+
+def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
+    # os.fchmod does not exist on Windows; simulate that to prove the
+    # win32 path never calls it (Windows ACLs already restrict the file).
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def raise_attribute_error(_descriptor: int, _mode: int) -> None:
+        raise AttributeError("simulating windows")
+
+    monkeypatch.setattr(os, "fchmod", raise_attribute_error, raising=False)
+
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
+
+    assert load_credentials(tmp_path) == {"auth_method": "api_key", "api_key": "sk-kimi-x"}
 
 
 def test_load_credentials_tolerates_junk(tmp_path):
@@ -292,9 +312,34 @@ def test_load_credentials_tolerates_junk(tmp_path):
     assert load_credentials(tmp_path) is None
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_device_id_created_once_with_permissions(tmp_path):
     first = load_or_create_device_id(tmp_path)
     assert first
     assert load_or_create_device_id(tmp_path) == first
     mode = os.stat(tmp_path / "device_id").st_mode & 0o777
     assert mode == 0o600
+
+
+def test_device_headers_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(platform, "version", lambda: "10.0.22631")
+    monkeypatch.setattr(platform, "machine", lambda: "AMD64")
+    from aacc.kimi_oauth import device_headers
+
+    headers = device_headers("1.0.0", "dev-1")
+    assert headers["X-Msh-Device-Model"] == "Windows 10.0.22631 AMD64"
+    assert headers["X-Msh-Os-Version"] == "10.0.22631"
+
+
+def test_device_headers_macos_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(platform, "mac_ver", lambda: ("15.5", ("", "", ""), "arm64"))
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    from aacc.kimi_oauth import device_headers
+
+    headers = device_headers("1.0.0", "dev-1")
+    assert headers["X-Msh-Device-Model"] == "macOS 15.5 arm64"
+    assert headers["X-Msh-Os-Version"] == "15.5"

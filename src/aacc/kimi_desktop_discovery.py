@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import sqlite3
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +26,45 @@ SELECT conversation_id, title, updated_at_ms, kernel_session_dir, workspace_path
 FROM conversations
 """
 _NAME_MAX_LENGTH = 20
+
+
+def _default_daimon_roots() -> list[Path]:
+    """Candidate daimon data roots, per platform.
+
+    On Windows both %LOCALAPPDATA% and %APPDATA% are candidates; an unset
+    environment variable is skipped.
+    """
+    if sys.platform == "win32":
+        roots = []
+        for env_var in ("LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(env_var)
+            if base:
+                roots.append(Path(base) / "kimi-desktop" / "daimon-share" / "daimon")
+        return roots
+    return [_DAIMON_ROOT]
+
+
+def _default_daimon_root() -> Path:
+    """First existing daimon root; falls back to the first candidate."""
+    roots = _default_daimon_roots()
+    for root in roots:
+        if root.exists():
+            return root
+    return roots[0] if roots else _DAIMON_ROOT
+
+
+def _default_app_process_match(exe: str) -> bool:
+    """Match the Kimi Desktop app executable path, per platform."""
+    if sys.platform == "win32":
+        return exe.lower().endswith("\\kimi.exe")
+    return "/Kimi.app/" in exe
+
+
+def _default_terminal_config() -> TerminalConfig:
+    """Terminal targeting for discovered Kimi Desktop tasks, per platform."""
+    if sys.platform == "win32":
+        return TerminalConfig(type="windows_terminal", window_title="Kimi")
+    return TerminalConfig(type="mac_app", app_bundle_id="com.moonshot.kimichat")
 
 
 class KimiDesktopDiscoveryError(RuntimeError):
@@ -58,7 +99,7 @@ class KimiDesktopLocalDiscovery:
         active_turn_window_seconds: float = 1800.0,
         max_tasks: int = 20,
     ) -> None:
-        self.daimon_root = daimon_root or _DAIMON_ROOT
+        self.daimon_root = daimon_root or _default_daimon_root()
         self.conversations_path = (
             self.daimon_root
             / "agents"
@@ -70,7 +111,7 @@ class KimiDesktopLocalDiscovery:
         self.now = now
         self.file_modified_at = file_modified_at or self._file_modified_at
         self.app_process_alive = app_process_alive or CachedProcessAlive(
-            "exe", lambda value: "/Kimi.app/" in value
+            "exe", _default_app_process_match
         )
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         self.active_turn_window_seconds = max(
@@ -134,10 +175,7 @@ class KimiDesktopLocalDiscovery:
                             conversation["title"] or f"Kimi Desktop 任务 {conversation['id'][:8]}"
                         )[:_NAME_MAX_LENGTH],
                         agent=AgentConfig(type="kimi_desktop", display_name="Kimi Desktop"),
-                        terminal=TerminalConfig(
-                            type="mac_app",
-                            app_bundle_id="com.moonshot.kimichat",
-                        ),
+                        terminal=_default_terminal_config(),
                     ),
                     state=TaskState(
                         task_id=task_id,
