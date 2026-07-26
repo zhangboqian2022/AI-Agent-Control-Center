@@ -396,6 +396,62 @@ def test_active_turn_window_is_bounded(tmp_path: Path) -> None:
     assert tasks[0].state.message == "空闲"
 
 
+def test_cancelled_turn_is_not_reported_running(tmp_path: Path) -> None:
+    # 用户在 CLI 里取消回合：wire 以 turn.cancel 收尾、没有 usage.record，
+    # 会话不得继续显示“正在运行”。
+    home = tmp_path / ".kimi-code"
+    session_id = "session_cancelled-0010"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="取消", updated_at="2026-07-18T11:59:00Z")
+    _write_wire_events(
+        session_dir,
+        [
+            {"type": "turn.prompt"},
+            {"type": "llm.request"},
+            {"type": "turn.cancel"},
+        ],
+    )
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": RECENT, "state.json": RECENT}),
+        agent_process_alive=lambda: True,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.COMPLETED
+
+
+def test_session_without_turn_events_is_not_reported_running(tmp_path: Path) -> None:
+    # 会话只被打开过（wire 只有 config/metadata 等无关事件、从未有回合），
+    # 落在活跃回合窗口内也不得按“正在运行”展示。活动时间在 90 秒窗口之外、
+    # 1800 秒活跃回合窗口之内，以隔离回合判定分支。
+    mid = datetime(2026, 7, 18, 11, 50, tzinfo=UTC)
+    home = tmp_path / ".kimi-code"
+    session_id = "session_noturn-0011"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="仅打开", updated_at="2026-07-18T11:50:00Z")
+    _write_wire_events(
+        session_dir,
+        [
+            {"type": "metadata"},
+            {"type": "tools.set_active_tools"},
+            {"type": "config.update"},
+        ],
+    )
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": mid, "state.json": mid}),
+        agent_process_alive=lambda: True,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.IDLE
+
+
 def test_completed_turn_detected_beyond_oversized_irrelevant_event(tmp_path: Path) -> None:
     home = tmp_path / ".kimi-code"
     session_id = "session_oversize-0001"

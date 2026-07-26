@@ -31,6 +31,10 @@ _WIRE_MAX_LINE_BYTES = 65_536
 # are ignored when scanning for turn state. Only event *types* are inspected,
 # never prompt or response content.
 _TURN_ACTIVE_TYPES = {"turn.prompt", "llm.request", "context.append_loop_event"}
+# Events that end a turn without emitting `usage.record` (user cancel). They
+# must count as turn boundaries, otherwise a cancelled session shows running
+# until the active-turn window expires.
+_TURN_ENDED_TYPES = {"turn.cancel"}
 
 
 class KimiDiscoveryError(RuntimeError):
@@ -79,11 +83,15 @@ def kimi_session_activity_at(
 def kimi_session_turn_completed(session_dir: Path) -> bool | None:
     """Detect a finished turn from the wire, reading event types only.
 
-    A completed turn ends with a `usage.record` event scoped to the turn;
-    any later turn-boundary event (prompt, loop activity, llm request)
-    means the session is working again. Returns True for completed,
-    False for active, and None when the scan budget is exhausted before
-    either signal — an undetermined scan must never fabricate completion.
+    A completed turn ends with a `usage.record` event scoped to the turn, or
+    with an explicit turn-ending event (`turn.cancel`); any later
+    turn-boundary event (prompt, loop activity, llm request) means the
+    session is working again. Returns True for finished, False for active,
+    and None when no turn signal exists in the scanned range — either the
+    scan budget was exhausted before either signal, or the wire simply has
+    no turn events yet (a session that was only opened). An undetermined
+    scan must never fabricate completion, and a turnless session must never
+    fabricate activity.
     """
     wire_path = session_dir / "agents" / "main" / "wire.jsonl"
     truncated = [False]
@@ -95,11 +103,13 @@ def kimi_session_turn_completed(session_dir: Path) -> bool | None:
                 event_type, usage_scope = _wire_event(line)
                 if event_type in _TURN_ACTIVE_TYPES:
                     return False
+                if event_type in _TURN_ENDED_TYPES:
+                    return True
                 if event_type == "usage.record" and usage_scope == "turn":
                     return True
     except OSError:
         return None
-    return None if truncated[0] else False
+    return None
 
 
 def evaluate_kimi_session_status(
