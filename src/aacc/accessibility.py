@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from typing import Any
 
 
@@ -11,6 +12,9 @@ def _load_quartz() -> Any:
 
 
 def is_accessibility_trusted(prompt: bool = False) -> bool:
+    if sys.platform == "win32":
+        # Windows 的 SendInput 注入不需要辅助功能授权。
+        return True
     try:
         quartz = _load_quartz()
         options = {quartz.kAXTrustedCheckOptionPrompt: prompt}
@@ -20,6 +24,8 @@ def is_accessibility_trusted(prompt: bool = False) -> bool:
 
 
 def open_accessibility_settings() -> None:
+    if sys.platform == "win32":
+        return
     try:
         subprocess.run(
             [
