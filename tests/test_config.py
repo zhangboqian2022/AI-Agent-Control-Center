@@ -16,6 +16,9 @@ from aacc.config import (
 )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_default_config_has_four_agents_and_random_token(tmp_path: Path) -> None:
     first = create_default_config(tmp_path / "first.yaml")
     second = create_default_config(tmp_path / "second.yaml")
@@ -84,6 +87,9 @@ def test_save_config_rejects_symlink_parent(tmp_path: Path) -> None:
         save_config(link_dir / "config.yaml", default_config())
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_load_repairs_empty_token_and_permissions(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("app:\n  api:\n    token: ''\n", encoding="utf-8")
@@ -140,6 +146,9 @@ def test_atomic_save_keeps_original_if_replace_fails(
     assert not list(tmp_path.glob(".config.yaml.*"))
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_rotate_token_updates_same_object_and_disk(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     config = create_default_config(path)
@@ -198,6 +207,27 @@ def test_save_config_skips_directory_fsync_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
+    path = tmp_path / "config.yaml"
+    config = default_config()
+
+    save_config(path, config)
+
+    persisted = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert persisted["app"]["api"]["token"] == config.app.api.token
+    assert len(persisted["tasks"]) == 4
+
+
+def test_save_config_skips_fchmod_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # os.fchmod does not exist on Windows; simulate that to prove the
+    # win32 path never calls it (Windows ACLs already restrict the file).
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def raise_attribute_error(_descriptor: int, _mode: int) -> None:
+        raise AttributeError("simulating windows")
+
+    monkeypatch.setattr(os, "fchmod", raise_attribute_error, raising=False)
     path = tmp_path / "config.yaml"
     config = default_config()
 

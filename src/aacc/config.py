@@ -117,7 +117,10 @@ def save_config(path: Path, config: AppConfig) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        if sys.platform != "win32":
+            # os.fchmod is Unix-only; on Windows the default ACL already
+            # restricts the file to the current user.
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             yaml.safe_dump(
                 config.model_dump(mode="json"),

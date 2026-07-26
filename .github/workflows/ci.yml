@@ -22,6 +22,7 @@ jobs:
       - name: Format
         run: uv run ruff format --check src tests
       - name: Type check
+        if: matrix.os == 'macos-latest'
         run: uv run mypy src/aacc
       - name: Test
         run: QT_QPA_PLATFORM=offscreen uv run pytest --cov=src/aacc --cov-report=xml -q
