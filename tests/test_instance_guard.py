@@ -75,6 +75,8 @@ def test_activate_existing_instance_windows(tmp_path, monkeypatch) -> None:
         find_window_by_title=lambda title: 42 if title == "AACC" else None,
         focus_window=lambda hwnd: focused.append(hwnd) or True,
     )
-    monkeypatch.setitem(sys.modules, "aacc.win32", fake_win32)
+    # aacc.win32 is importable off-Windows now, so ``from aacc import win32``
+    # resolves via the cached package attribute; patch that attribute.
+    monkeypatch.setattr("aacc.win32", fake_win32, raising=False)
     guard_mod.activate_existing_instance()
     assert focused == [42]
