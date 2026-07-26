@@ -21,6 +21,7 @@ KimiCodeBar/
 
 # 送审导出目录（git archive 产物）
 code/
+wincode/
 
 # Local agent tooling
 .agents/
