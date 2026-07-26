@@ -1,4 +1,5 @@
 import json
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -732,3 +733,40 @@ def test_slots_are_reassigned_and_capped_by_max_tasks(tmp_path: Path) -> None:
         "session_slot-0002",
         "session_slot-0001",
     ]
+
+
+def test_process_pattern_windows_matches_kimi_exe(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.kimi_discovery import _default_process_pattern
+
+    pattern = _default_process_pattern()
+    assert pattern.search("kimi.exe")
+    assert pattern.search("KIMI.EXE")
+    assert not pattern.search("notkimi.exe")
+
+
+def test_process_pattern_darwin_unchanged() -> None:
+    from aacc.kimi_discovery import _default_process_pattern
+
+    pattern = _default_process_pattern()
+    assert pattern.search("/usr/local/bin/kimi ")
+    assert not pattern.search("kimi.exe")
+
+
+def test_discovered_task_terminal_windows(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.kimi_discovery import _default_terminal_config
+
+    terminal = _default_terminal_config("/home/user/myproject")
+    assert terminal.type == "windows_terminal"
+    assert terminal.window_title == "myproject"
+    assert terminal.app_bundle_id is None
+
+
+def test_discovered_task_terminal_darwin_unchanged() -> None:
+    from aacc.kimi_discovery import _default_terminal_config
+
+    terminal = _default_terminal_config("/home/user/myproject")
+    assert terminal.type == "terminal_app"
+    assert terminal.app_bundle_id == "com.apple.Terminal"
+    assert terminal.window_title is None

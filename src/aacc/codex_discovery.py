@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sys
 from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -52,13 +54,31 @@ class SessionSignal:
 class SessionStartCache:
     scanned_size: int
     started_at: datetime | None
-    device: int
-    inode: int
+    fingerprint: tuple[object, ...]
     boundary_digest: bytes
     start_offset: int | None
     start_digest: bytes | None
     modified_ns: int
     changed_ns: int
+
+
+def _file_fingerprint(path: Path, stat: os.stat_result) -> tuple[object, ...]:
+    """Stable identity of a session file for cache validation.
+
+    Windows filesystems often report ``st_ino == 0``, which would alias every
+    file; the fingerprint falls back to path + mtime + size there.
+    """
+    if stat.st_ino == 0:
+        return (str(path), stat.st_mtime_ns, stat.st_size)
+    return (stat.st_dev, stat.st_ino)
+
+
+def _default_terminal_config(work_dir: str | None = None) -> TerminalConfig:
+    """Terminal targeting for discovered Codex tasks, per platform."""
+    if sys.platform == "win32":
+        title = Path(work_dir).name if work_dir else None
+        return TerminalConfig(type="windows_terminal", window_title=title or None)
+    return TerminalConfig(type="mac_app", app_bundle_id="com.openai.codex")
 
 
 class CodexLocalDiscovery:
@@ -141,7 +161,7 @@ class CodexLocalDiscovery:
                         slot=1,
                         name=session["title"] or f"Codex 任务 {conversation_id[:8]}",
                         agent=AgentConfig(type="codex_cli", display_name="Codex"),
-                        terminal=TerminalConfig(type="mac_app", app_bundle_id="com.openai.codex"),
+                        terminal=_default_terminal_config(),
                     ),
                     state=TaskState(
                         task_id=task_id,
@@ -474,8 +494,7 @@ class CodexLocalDiscovery:
         cached = self._session_start_cache.get(path)
         cache_valid = (
             cached is not None
-            and cached.device == stat.st_dev
-            and cached.inode == stat.st_ino
+            and cached.fingerprint == _file_fingerprint(path, stat)
             and 0 <= cached.scanned_size <= complete_size
             and cached.boundary_digest == self._boundary_digest(path, cached.scanned_size)
             and self._cached_start_matches(path, cached)
@@ -574,8 +593,7 @@ class CodexLocalDiscovery:
         entry = SessionStartCache(
             scanned_size=complete_size,
             started_at=started_at,
-            device=stat.st_dev,
-            inode=stat.st_ino,
+            fingerprint=_file_fingerprint(path, stat),
             boundary_digest=digest,
             start_offset=start_offset,
             start_digest=start_digest,

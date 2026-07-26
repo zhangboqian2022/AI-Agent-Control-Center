@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 from collections.abc import AsyncIterator
 from typing import cast
 
@@ -112,10 +113,17 @@ class GenericCLIAdapter(BaseAgentAdapter):
         return None
 
 
+def _default_codex_process_pattern() -> str:
+    """Default process pattern for the Codex CLI preset, per platform."""
+    if sys.platform == "win32":
+        return r"^codex(?:\.exe)?$"
+    return r"(?:^|/)codex(?:\s|$)"
+
+
 PRESETS: dict[str, dict[str, object]] = {
     "codex_cli": {
         "display_name": "Codex CLI",
-        "process_patterns": [r"(?:^|/)codex(?:\s|$)"],
+        "process_patterns": [_default_codex_process_pattern()],
         "running_patterns": [r"^(?:Thinking|Working|正在(?:思考|执行))\b"],
         "waiting_input_patterns": [r"^(?:Enter your choice|Waiting for input)\b"],
         "waiting_approval_patterns": [
