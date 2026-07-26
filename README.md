@@ -64,6 +64,27 @@ To create a distributable image:
 ./scripts/build_dmg.sh
 ```
 
+### Windows
+
+Requirements: Windows 10+, Python 3.12+, and [uv](https://docs.astral.sh/uv/).
+
+```powershell
+git clone https://github.com/zhangboqian2022/AI-Agent-Control-Center.git
+cd AI-Agent-Control-Center
+.\scripts\build_windows.ps1
+```
+
+This produces a windowed single-folder bundle at `dist\AACC\AACC.exe`; run it directly. The Windows build is unsigned, so SmartScreen warns on first launch — verify the source, then choose **More info → Run anyway**.
+
+Capability comparison with the macOS build:
+
+| Capability | macOS | Windows |
+| --- | --- | --- |
+| Window focus | Bundle ID + AppleScript | Window-title matching (no bundle ID) |
+| Voice input | macOS dictation | Win+H |
+| Accessibility permission | Required for injection and hotkeys | Not required |
+| Signing | Self-signed, Gatekeeper prompt | Unsigned, SmartScreen prompt |
+
 ## Use AACC with Codex
 
 1. Launch AACC. Open its settings with the gear icon.

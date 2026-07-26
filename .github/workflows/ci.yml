@@ -4,7 +4,11 @@ on: [push, pull_request]
 
 jobs:
   test:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,15 +26,17 @@ jobs:
       - name: Test
         run: QT_QPA_PLATFORM=offscreen uv run pytest --cov=src/aacc --cov-report=xml -q
       - name: Changed-line coverage
+        if: matrix.os == 'macos-latest'
         run: uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
       - name: Dependency vulnerability scan
+        if: matrix.os == 'macos-latest'
         run: |
           uv export --locked --extra dev --no-emit-project \
             --format requirements-txt --output-file pip-audit-requirements.txt
           uv run pip-audit --requirement pip-audit-requirements.txt \
             --no-deps --disable-pip --format=json --output=pip-audit.json
       - name: Upload vulnerability report
-        if: always()
+        if: always() && matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: pip-audit-report

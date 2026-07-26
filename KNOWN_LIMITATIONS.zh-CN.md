@@ -9,3 +9,8 @@
 - Codex 发现当前适配元数据兼容标识 `2026-07`。未来格式变化可能暂时导致发现降级；AACC 会保留最后状态并显示告警。
 - Codex 额度是从本机有界结构化元数据读取的只读周额度指示。AACC 只接受未过期的 10080 分钟窗口，忽略旧版较短窗口；元数据缺失或变化时显示不可用，不调用 Codex 私有额度接口。
 - 最低支持 macOS 13；集成检查表中未标记通过的系统/硬件组合不宣称已实测。
+- Windows 终端聚焦依赖窗口标题匹配，标题被 shell 改写时可能失准。
+- `SetForegroundWindow` 受 Windows 前景锁限制，激活被拒时降级处理并记录日志。
+- Kimi Desktop daimon 的 Windows 路径为候选路径 best-effort，未在真机验证。
+- Windows 版无代码签名，首次运行有 SmartScreen 提示。
+- F13–F20 热键在多数 Windows 键盘需要 Fn 层映射。
