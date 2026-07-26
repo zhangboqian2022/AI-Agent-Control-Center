@@ -13,6 +13,7 @@ class HotkeyDriver(Protocol):
 
     def stop(self) -> None: ...
 
+
 FUNCTION_KEYCODES = {
     "F13": 105,
     "F14": 107,

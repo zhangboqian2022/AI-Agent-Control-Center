@@ -295,12 +295,7 @@ def test_daimon_roots_darwin_unchanged(monkeypatch) -> None:
     from aacc.kimi_desktop_discovery import _default_daimon_roots
 
     assert _default_daimon_roots() == [
-        Path.home()
-        / "Library"
-        / "Application Support"
-        / "kimi-desktop"
-        / "daimon-share"
-        / "daimon"
+        Path.home() / "Library" / "Application Support" / "kimi-desktop" / "daimon-share" / "daimon"
     ]
 
 

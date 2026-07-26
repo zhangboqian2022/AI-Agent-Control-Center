@@ -66,9 +66,7 @@ def test_open_settings_noop_on_windows(monkeypatch) -> None:
 
     monkeypatch.setattr(sys, "platform", "win32")
     called: list[object] = []
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **k: called.append(a) or None
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: called.append(a) or None)
     from aacc.accessibility import open_accessibility_settings
 
     open_accessibility_settings()

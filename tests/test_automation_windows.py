@@ -140,9 +140,7 @@ def test_factory_returns_windows_automation_on_win32(monkeypatch) -> None:
     import aacc.automation as automation_mod
 
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setitem(
-        sys.modules, "aacc.win32", types.SimpleNamespace()
-    )
+    monkeypatch.setitem(sys.modules, "aacc.win32", types.SimpleNamespace())
     controller = automation_mod.create_automation(AppConfig())
     assert isinstance(controller, WindowsAutomation)
 
