@@ -102,6 +102,8 @@ class WindowsGlobalHotkeys:
         return self.error is None and self._running
 
     def start(self) -> bool:
+        if self._running:
+            return self.error is None
         self.error = None
         app = self._qt_app
         if app is None:
@@ -111,13 +113,17 @@ class WindowsGlobalHotkeys:
         if app is None:
             self.error = "QApplication is required for global hotkeys"
             return False
+        registered: list[int] = []
         for hotkey_id, vk in self._vk_by_id.items():
             if not self._win32.register_hotkey(self._hwnd, hotkey_id, vk):
+                for registered_id in registered:
+                    self._win32.unregister_hotkey(self._hwnd, registered_id)
                 self.error = f"RegisterHotKey failed for hotkey id {hotkey_id}"
                 logging.getLogger("aacc.hotkeys").warning(
                     "Global hotkeys unavailable: %s", self.error
                 )
                 return False
+            registered.append(hotkey_id)
         self._filter = _HotkeyEventFilter(self)
         app.installNativeEventFilter(self._filter)
         self._running = True

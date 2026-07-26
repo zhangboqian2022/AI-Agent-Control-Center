@@ -61,3 +61,35 @@ def test_start_failure_sets_error(qapp) -> None:
     assert hotkeys.start() is False
     assert hotkeys.error is not None
     assert not hotkeys.available
+
+
+def test_start_rolls_back_registered_hotkeys_on_failure(qapp) -> None:
+    win32 = FakeWin32()
+    win32.register_hotkey = lambda hwnd, hotkey_id, vk: vk != 0x7D  # type: ignore[method-assign]
+    hotkeys = WindowsGlobalHotkeys(
+        {"a": "F13", "b": "F14"},
+        {"a": lambda: None, "b": lambda: None},
+        hwnd=99,
+        win32_module=win32,
+        qt_app=qapp,
+    )
+    assert hotkeys.start() is False
+    assert hotkeys.error is not None
+    assert not hotkeys.available
+    # 0x7C（F13，id 1）注册成功后必须被回滚注销，不能泄漏系统级热键占用
+    assert (99, 1) in win32.unregistered
+
+
+def test_start_is_idempotent_while_running(qapp) -> None:
+    win32 = FakeWin32()
+    hotkeys = WindowsGlobalHotkeys(
+        {"toggle": "F13"},
+        {"toggle": lambda: None},
+        hwnd=99,
+        win32_module=win32,
+        qt_app=qapp,
+    )
+    assert hotkeys.start() is True
+    assert hotkeys.start() is True
+    assert len(win32.registered) == 1
+    hotkeys.stop()
