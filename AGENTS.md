@@ -58,7 +58,10 @@ scripts/install.sh
 
 ## 当前进度（2026-07-26）
 
-- `feat/windows-port`：**Windows 移植完成（8 个任务，未合并、未发版）**。
+- `main`：**Windows 移植已合并（merge `a47196e`，未发版）**。另含
+  `1eb8a58` 修复：取消的回合（turn.cancel 无 usage.record）与从未有回合
+  事件的 kimi 会话不再误报"正在运行"（曾致 1 个终端显示 3 个运行中）。
+  移植内容（8 个 SDD 任务，分支 feat/windows-port 已删）：
   代码层（Task 1–7）：平台化发现源/配置/路径、`win32.py` +
   `automation_windows.py` + `hotkeys_windows.py` 工厂分发（聚焦=窗口标题
   匹配，语音=Win+H，无需辅助功能授权）。收尾（Task 8）：
