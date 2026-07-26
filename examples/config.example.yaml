@@ -79,3 +79,14 @@ tasks:
       window_title: AACC-TASK-4
     enabled: true
 
+# Windows 示例：终端类型 windows_terminal 按窗口标题聚焦（无 bundle id 概念）
+# Windows example: the windows_terminal type focuses by window title (no bundle id)
+# tasks:
+#   - id: "task-1"
+#     name: "我的项目"
+#     agent:
+#       type: "kimi_code"
+#     terminal:
+#       type: "windows_terminal"
+#       window_title: "我的项目"
+
