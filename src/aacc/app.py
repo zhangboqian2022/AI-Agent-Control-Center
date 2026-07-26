@@ -212,7 +212,16 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         api_server = APIServerThread(runtime)
         api_server.start()
 
-    hotkeys = GlobalHotkeys(runtime.config.hotkeys, _hotkey_actions(window))  # type: ignore[arg-type]
+    if sys.platform == "win32":
+        from aacc.hotkeys_windows import WindowsGlobalHotkeys
+
+        hotkeys = WindowsGlobalHotkeys(
+            runtime.config.hotkeys,
+            _hotkey_actions(window),  # type: ignore[arg-type]
+            hwnd=int(window.winId()),
+        )
+    else:
+        hotkeys = GlobalHotkeys(runtime.config.hotkeys, _hotkey_actions(window))  # type: ignore[arg-type]
     hotkey_sync = AccessibilityHotkeySync(hotkeys)
     hotkey_sync.sync(trusted)
 
