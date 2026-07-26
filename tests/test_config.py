@@ -1,5 +1,6 @@
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -175,3 +176,33 @@ def test_load_config_rejects_invalid_adapter_regex(tmp_path: Path) -> None:
 
 def test_default_visible_agent_types_include_kimi_desktop() -> None:
     assert "kimi_desktop" in default_config().app.visible_agent_types
+
+
+def test_default_terminal_config_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    config = default_config()
+    for task in config.tasks:
+        assert task.terminal.type == "terminal_app"
+        assert task.terminal.app_bundle_id == "com.apple.Terminal"
+
+
+def test_default_terminal_config_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    config = default_config()
+    for task in config.tasks:
+        assert task.terminal.type == "windows_terminal"
+        assert task.terminal.app_bundle_id is None
+
+
+def test_save_config_skips_directory_fsync_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    path = tmp_path / "config.yaml"
+    config = default_config()
+
+    save_config(path, config)
+
+    persisted = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert persisted["app"]["api"]["token"] == config.app.api.token
+    assert len(persisted["tasks"]) == 4
