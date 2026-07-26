@@ -88,6 +88,13 @@ def test_codex_default_process_pattern_windows(monkeypatch) -> None:
     pattern = _default_codex_process_pattern()
     assert re.search(pattern, "codex.exe", re.IGNORECASE)
     assert re.search(pattern, "CODEX", re.IGNORECASE)
+    # detect() searches against a "name + cmdline" haystack: the pattern must
+    # match path-qualified and argument-bearing command lines, not only the
+    # bare executable name.
+    assert re.search(
+        pattern, r"codex.exe C:\Users\u\bin\codex.exe --flag", re.IGNORECASE
+    )
+    assert re.search(pattern, r"C:\Tools\codex.exe", re.IGNORECASE)
     assert not re.search(pattern, "notcodex.exe", re.IGNORECASE)
 
 

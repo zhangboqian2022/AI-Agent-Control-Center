@@ -114,9 +114,14 @@ class GenericCLIAdapter(BaseAgentAdapter):
 
 
 def _default_codex_process_pattern() -> str:
-    """Default process pattern for the Codex CLI preset, per platform."""
+    """Default process pattern for the Codex CLI preset, per platform.
+
+    Patterns are searched against a "name + cmdline" haystack (see
+    ``BaseAgentAdapter.detect``), so they must match path-qualified and
+    argument-bearing command lines, not only the bare executable name.
+    """
     if sys.platform == "win32":
-        return r"^codex(?:\.exe)?$"
+        return r"(?:^|[/\\])codex(?:\.exe)?(?:\s|$)"
     return r"(?:^|/)codex(?:\s|$)"
 
 
