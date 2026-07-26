@@ -14,8 +14,8 @@ from PySide6.QtWidgets import QApplication
 import aacc
 from aacc.accessibility import is_accessibility_trusted, open_accessibility_settings
 from aacc.api import create_api
-from aacc.automation import MacAutomation
-from aacc.automation_executor import AutomationExecutor
+from aacc.automation import create_automation
+from aacc.automation_executor import AutomationController, AutomationExecutor
 from aacc.codex_quota import CodexQuotaReader
 from aacc.codex_quota_service import CodexQuotaService
 from aacc.config import load_config, rotate_api_token
@@ -44,7 +44,7 @@ class Runtime:
     config_path: Path
     config: AppConfig
     manager: TaskManager
-    automation: MacAutomation
+    automation: AutomationController
     automation_executor: AutomationExecutor
     discovery: CodexDiscoveryService
     kimi_discovery: KimiDiscoveryService
@@ -91,7 +91,7 @@ def build_runtime(
     store = StateStore(database_path)
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    automation = MacAutomation(config, accessibility_trusted=accessibility_trusted)
+    automation = create_automation(config, accessibility_trusted=accessibility_trusted)
     factory = quota_service_factory or (
         lambda config_dir: _default_quota_service_factory(config_dir, config)
     )
