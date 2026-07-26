@@ -16,6 +16,4 @@ def test_app_support_dir_windows_prefers_appdata() -> None:
 
 
 def test_app_support_dir_windows_falls_back_to_home() -> None:
-    assert default_app_support_dir("win32", None) == (
-        Path.home() / "AppData" / "Roaming" / "AACC"
-    )
+    assert default_app_support_dir("win32", None) == (Path.home() / "AppData" / "Roaming" / "AACC")

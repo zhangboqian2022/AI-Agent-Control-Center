@@ -72,9 +72,7 @@ class INPUT(ctypes.Structure):
 # stand-in elsewhere so the module stays importable for off-Windows tests.
 _WNDENUMPROC = cast(
     Callable[[Callable[[int, int], bool]], Any],
-    getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(
-        wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
-    ),
+    getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM),
 )
 
 
@@ -123,8 +121,7 @@ def _text_to_utf16_units(text: str) -> list[int]:
     """Split text into UTF-16 code units (surrogate pairs stay two units)."""
     data = text.encode("utf-16-le")
     return [
-        int.from_bytes(data[offset : offset + 2], "little")
-        for offset in range(0, len(data), 2)
+        int.from_bytes(data[offset : offset + 2], "little") for offset in range(0, len(data), 2)
     ]
 
 
