@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aacc.models import AppConfig, TaskConfig
 from aacc.security import redact
+
+if TYPE_CHECKING:
+    from aacc.automation_windows import WindowsAutomation
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -207,3 +211,16 @@ class MacAutomation:
             )
             self._run(["/usr/bin/osascript", "-e", statement])
             return "已触发系统听写"
+
+
+def create_automation(
+    config: AppConfig,
+    *,
+    accessibility_trusted: Callable[[], bool] = lambda: True,
+) -> MacAutomation | WindowsAutomation:
+    """Platform dispatch for the desktop automation controller."""
+    if sys.platform == "win32":
+        from aacc.automation_windows import WindowsAutomation
+
+        return WindowsAutomation(config, accessibility_trusted=accessibility_trusted)
+    return MacAutomation(config, accessibility_trusted=accessibility_trusted)
