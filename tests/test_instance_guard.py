@@ -3,9 +3,14 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from aacc.instance_guard import InstanceGuard
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_only_one_guard_can_hold_lock_and_file_is_private(tmp_path: Path) -> None:
     path = tmp_path / "aacc.lock"
     first = InstanceGuard(path)

@@ -70,7 +70,7 @@ class GlobalHotkeys:
     def _run(self) -> None:
         self.error = None
         try:
-            import Quartz  # type: ignore[import-untyped]
+            import Quartz  # type: ignore  # import-not-found off-mac, import-untyped with pyobjc
 
             self._quartz = Quartz
             mask = Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)

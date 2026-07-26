@@ -64,10 +64,15 @@ scripts/install.sh
   匹配，语音=Win+H，无需辅助功能授权）。收尾（Task 8）：
   `AACC-windows.spec` + `scripts/build_windows.ps1`（windowed 单目录
   `dist/AACC/AACC.exe`，未签名有 SmartScreen 提示）；CI matrix 增加
-  `windows-latest`（diff-cover / pip-audit / upload 保持 `macos-latest`
-  单点）；pyproject 描述改跨平台；README 双语 Windows 章节、
+  `windows-latest`：两条腿都跑 ruff check / ruff format --check / pytest，
+  mypy 因跨平台 typeshed 差异保持 `macos-latest` 单点（diff-cover /
+  pip-audit / upload 同为 mac 单点）；POSIX 权限位断言的测试以
+  `skipif(sys.platform == "win32")` 跳过（Windows 不强制权限位），
+  `os.fchmod`（Unix-only）在 `save_config`/`save_credentials` 内按
+  `sys.platform != "win32"` 守卫（Windows ACL 默认仅当前用户可读，
+  规格已认可此降级）；pyproject 描述改跨平台；README 双语 Windows 章节、
   KNOWN_LIMITATIONS 双语 5 条 Windows 差异、
-  `docs/windows-verification-checklist` 双语冒烟清单。473 测试 + ruff +
+  `docs/windows-verification-checklist` 双语冒烟清单。475 测试 + ruff +
   mypy strict 全绿；Windows 真机构建与冒烟未执行（按清单待验）。
 - `main`：**1.4.1 正式版已发布**（tag `v1.4.1` + GitHub Release（Latest，非
   Prerelease）附 DMG 与 `.sha256`，SHA-256

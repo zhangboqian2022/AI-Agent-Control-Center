@@ -6,7 +6,7 @@ from typing import Any
 
 
 def _load_quartz() -> Any:
-    import Quartz  # type: ignore[import-untyped]
+    import Quartz  # type: ignore  # import-not-found off-mac, import-untyped with pyobjc
 
     return Quartz
 

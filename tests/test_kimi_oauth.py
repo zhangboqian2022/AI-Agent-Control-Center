@@ -277,6 +277,9 @@ def test_client_id_is_official_kimi_code_client():
     assert CLIENT_ID == "17e5f671-d194-4dfb-9706-5516cb48c098"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_credentials_roundtrip_permissions_and_clear(tmp_path):
     save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
     assert load_credentials(tmp_path) == {"auth_method": "api_key", "api_key": "sk-kimi-x"}
@@ -284,6 +287,21 @@ def test_credentials_roundtrip_permissions_and_clear(tmp_path):
     assert mode == 0o600
     clear_credentials(tmp_path)
     assert load_credentials(tmp_path) is None
+
+
+def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
+    # os.fchmod does not exist on Windows; simulate that to prove the
+    # win32 path never calls it (Windows ACLs already restrict the file).
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def raise_attribute_error(_descriptor: int, _mode: int) -> None:
+        raise AttributeError("simulating windows")
+
+    monkeypatch.setattr(os, "fchmod", raise_attribute_error, raising=False)
+
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
+
+    assert load_credentials(tmp_path) == {"auth_method": "api_key", "api_key": "sk-kimi-x"}
 
 
 def test_load_credentials_tolerates_junk(tmp_path):
@@ -294,6 +312,9 @@ def test_load_credentials_tolerates_junk(tmp_path):
     assert load_credentials(tmp_path) is None
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
+)
 def test_device_id_created_once_with_permissions(tmp_path):
     first = load_or_create_device_id(tmp_path)
     assert first
