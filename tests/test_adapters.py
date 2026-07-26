@@ -1,4 +1,6 @@
 import asyncio
+import re
+import sys
 
 import pytest
 
@@ -77,3 +79,19 @@ def test_disconnect_unblocks_waiting_event_consumer() -> None:
             await asyncio.wait_for(consumer, timeout=0.1)
 
     asyncio.run(scenario())
+
+
+def test_codex_default_process_pattern_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.adapters import _default_codex_process_pattern
+
+    pattern = _default_codex_process_pattern()
+    assert re.search(pattern, "codex.exe", re.IGNORECASE)
+    assert re.search(pattern, "CODEX", re.IGNORECASE)
+    assert not re.search(pattern, "notcodex.exe", re.IGNORECASE)
+
+
+def test_codex_default_process_pattern_darwin_unchanged() -> None:
+    from aacc.adapters import _default_codex_process_pattern
+
+    assert _default_codex_process_pattern() == r"(?:^|/)codex(?:\s|$)"

@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -931,3 +933,45 @@ def test_current_codex_metadata_fixture_parses_running_and_completed_sessions(
         ("fixture-running-0001", TaskStatus.RUNNING),
         ("fixture-complete-0002", TaskStatus.COMPLETED),
     ]
+
+
+def test_file_fingerprint_falls_back_when_inode_is_zero(tmp_path: Path) -> None:
+    from aacc.codex_discovery import _file_fingerprint
+
+    path = tmp_path / "session.jsonl"
+    path.write_text("data", encoding="utf-8")
+    fake = os.stat_result((0o100644, 0, 42, 1, 0, 0, 7, 0, 1_700_000_000, 0))
+    assert fake.st_ino == 0
+    fingerprint = _file_fingerprint(path, fake)
+    assert fingerprint == (str(path), fake.st_mtime_ns, fake.st_size)
+    real = path.stat()
+    assert real.st_ino != 0
+    assert _file_fingerprint(path, real) == (real.st_dev, real.st_ino)
+
+
+def test_terminal_config_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.codex_discovery import _default_terminal_config
+
+    terminal = _default_terminal_config("/home/user/myproject")
+    assert terminal.type == "windows_terminal"
+    assert terminal.window_title == "myproject"
+    assert terminal.app_bundle_id is None
+
+
+def test_terminal_config_windows_without_work_dir(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    from aacc.codex_discovery import _default_terminal_config
+
+    terminal = _default_terminal_config(None)
+    assert terminal.type == "windows_terminal"
+    assert terminal.window_title is None
+
+
+def test_terminal_config_darwin_unchanged() -> None:
+    from aacc.codex_discovery import _default_terminal_config
+
+    terminal = _default_terminal_config("/home/user/myproject")
+    assert terminal.type == "mac_app"
+    assert terminal.app_bundle_id == "com.openai.codex"
+    assert terminal.window_title is None
