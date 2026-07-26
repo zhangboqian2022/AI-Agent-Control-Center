@@ -40,6 +40,11 @@ scripts/install.sh
 - `src/aacc/task_manager.py` + `persistence.py` + `state_machine.py`：任务状态机
   与 SQLite 持久化。
 - `src/aacc/app.py`：组装 Runtime（三个 discovery 服务 + GUI + 可选 API server）。
+- 平台抽象：`src/aacc/win32.py`（ctypes Win32 绑定）、
+  `automation_windows.py` / `hotkeys_windows.py`（Windows 桌面自动化与全局
+  热键）；`automation.py` 的 `create_automation` 与 `app.py` 的热键装配按
+  `sys.platform` 工厂分发——macOS 走 AppleScript/Quartz，Windows 走窗口
+  标题匹配 + Win+H 语音，无需辅助功能授权。
 
 ## 约定
 
@@ -51,8 +56,19 @@ scripts/install.sh
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-24）
+## 当前进度（2026-07-26）
 
+- `feat/windows-port`：**Windows 移植完成（8 个任务，未合并、未发版）**。
+  代码层（Task 1–7）：平台化发现源/配置/路径、`win32.py` +
+  `automation_windows.py` + `hotkeys_windows.py` 工厂分发（聚焦=窗口标题
+  匹配，语音=Win+H，无需辅助功能授权）。收尾（Task 8）：
+  `AACC-windows.spec` + `scripts/build_windows.ps1`（windowed 单目录
+  `dist/AACC/AACC.exe`，未签名有 SmartScreen 提示）；CI matrix 增加
+  `windows-latest`（diff-cover / pip-audit / upload 保持 `macos-latest`
+  单点）；pyproject 描述改跨平台；README 双语 Windows 章节、
+  KNOWN_LIMITATIONS 双语 5 条 Windows 差异、
+  `docs/windows-verification-checklist` 双语冒烟清单。473 测试 + ruff +
+  mypy strict 全绿；Windows 真机构建与冒烟未执行（按清单待验）。
 - `main`：**1.4.1 正式版已发布**（tag `v1.4.1` + GitHub Release（Latest，非
   Prerelease）附 DMG 与 `.sha256`，SHA-256
   `fda8131f359f55dccca3a64a125aaf59377322a479d4f9934db15e53d2713d94`）。
