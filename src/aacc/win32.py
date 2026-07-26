@@ -27,6 +27,8 @@ VK_LWIN = 0x5B
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
+WM_HOTKEY = 0x0312
+MOD_NOREPEAT = 0x4000
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -157,3 +159,13 @@ def send_unicode_text(text: str) -> None:
         events.append(_char_input(unit))
         events.append(_char_input(unit, key_up=True))
     _send_input(events)
+
+
+def register_hotkey(hwnd: int, hotkey_id: int, vk: int) -> bool:
+    u32 = _require_user32()
+    return bool(u32.RegisterHotKey(hwnd, hotkey_id, MOD_NOREPEAT, vk))
+
+
+def unregister_hotkey(hwnd: int, hotkey_id: int) -> None:
+    u32 = _require_user32()
+    u32.UnregisterHotKey(hwnd, hotkey_id)

@@ -3,7 +3,15 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
+
+
+class HotkeyDriver(Protocol):
+    """Structural interface shared by the macOS and Windows hotkey drivers."""
+
+    def start(self) -> bool: ...
+
+    def stop(self) -> None: ...
 
 FUNCTION_KEYCODES = {
     "F13": 105,
@@ -129,7 +137,7 @@ class AccessibilityHotkeySync:
     (no app restart needed) and stops it when permission is revoked.
     """
 
-    def __init__(self, hotkeys: GlobalHotkeys) -> None:
+    def __init__(self, hotkeys: HotkeyDriver) -> None:
         self._hotkeys = hotkeys
         self._running = False
 
