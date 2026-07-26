@@ -77,6 +77,15 @@ scripts/install.sh
   KNOWN_LIMITATIONS 双语 5 条 Windows 差异、
   `docs/windows-verification-checklist` 双语冒烟清单。475 测试 + ruff +
   mypy strict 全绿；Windows 真机构建与冒烟未执行（按清单待验）。
+  **已推送 origin/main（fb20bc5）；`wincode/` 送审副本已建**（HEAD
+  `git archive` 快照，剔除 docs/superpowers 与 tests/fixtures，已入
+  .gitignore；代码再改需重新导出：`git archive HEAD | tar -x -C wincode`）。
+  **明日接续点**：① Windows 真机跑 `scripts\build_windows.ps1` 构建 +
+  按 `docs/windows-verification-checklist.zh-CN.md` 逐项冒烟；
+  ② 遗留 Minor 排期（真机里程碑）：SetForegroundWindow 前景锁
+  workaround、user32 argtypes、_send_input GetLastError 诊断、win32
+  指纹降级对增长文件的缓存失效（性能）、msvcrt type: ignore 在真
+  Windows mypy 下需移除；③ 若冒烟通过可考虑发 Windows 版 release。
 - `main`：**1.4.1 正式版已发布**（tag `v1.4.1` + GitHub Release（Latest，非
   Prerelease）附 DMG 与 `.sha256`，SHA-256
   `fda8131f359f55dccca3a64a125aaf59377322a479d4f9934db15e53d2713d94`）。
