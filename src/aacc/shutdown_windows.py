@@ -407,13 +407,19 @@ class WindowsShutdownListener:
             return
         self._quit_scheduled = True
         window = self._window
+        qt_app = self._qt_app
         self._qt_app = None
         self._window = None
         self._release_timer()
-        if window is not None:
-            _logger.info("Shutdown listener requesting Qt quit")
-            window.quit_application()
-            _logger.info("Shutdown listener Qt quit request returned")
+        try:
+            if window is not None:
+                _logger.info("Shutdown listener requesting Qt quit")
+                window.quit_application()
+                _logger.info("Shutdown listener Qt quit request returned")
+        finally:
+            if qt_app is not None:
+                qt_app.exit(0)
+                _logger.info("Shutdown listener requested Qt event-loop exit")
 
     def stop(self) -> None:
         self._release_resources()
