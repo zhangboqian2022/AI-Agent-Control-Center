@@ -77,7 +77,11 @@ Windows 真机与多用户权限验证完成后，才能把本草案转为正式
 - 本机只读 Codex probe 找到已安装可执行文件，在没有启动 Codex 任务的情况下
   返回 `status=ok`、周额度 14%、重置时间 `2026-08-02T00:40:57+00:00`、
   方案 `prolite`。
-- Hosted macOS/Windows Actions URL：推送候选分支后补录。
+- Hosted macOS/Windows Actions：
+  [run 30234298287](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30234298287)
+  双平台成功。Windows 实际执行结果为 `522 passed, 10 skipped`，严格 mypy、
+  零已知漏洞依赖审计、`AACC.exe` 构建、三个平台模块 archive 检查，以及
+  ACL/Windows 字体布局回归均通过。
 
 ## Manual release gates
 
