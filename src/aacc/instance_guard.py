@@ -3,8 +3,32 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from importlib import import_module
 from pathlib import Path
-from typing import IO
+from typing import IO, Protocol, cast
+
+
+class PosixFileLock(Protocol):
+    LOCK_EX: int
+    LOCK_NB: int
+    LOCK_UN: int
+
+    def flock(self, file: IO[str] | int, operation: int) -> None: ...
+
+
+class WindowsFileLock(Protocol):
+    LK_NBLCK: int
+    LK_UNLCK: int
+
+    def locking(self, fd: int, mode: int, nbytes: int) -> None: ...
+
+
+def _posix_file_lock() -> PosixFileLock:
+    return cast(PosixFileLock, import_module("fcntl"))
+
+
+def _windows_file_lock() -> WindowsFileLock:
+    return cast(WindowsFileLock, import_module("msvcrt"))
 
 
 class InstanceGuard:
@@ -31,7 +55,7 @@ class InstanceGuard:
 
     @staticmethod
     def _lock_posix(handle: IO[str]) -> bool:
-        import fcntl
+        fcntl = _posix_file_lock()
 
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -41,11 +65,11 @@ class InstanceGuard:
 
     @staticmethod
     def _lock_windows(handle: IO[str]) -> bool:
-        import msvcrt
+        msvcrt = _windows_file_lock()
 
         handle.seek(0)
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
             return False
         return True
@@ -55,13 +79,11 @@ class InstanceGuard:
             return
         try:
             if sys.platform == "win32":
-                import msvcrt
-
+                msvcrt = _windows_file_lock()
                 self._handle.seek(0)
                 msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:
-                import fcntl
-
+                fcntl = _posix_file_lock()
                 fcntl.flock(self._handle, fcntl.LOCK_UN)
         finally:
             self._handle.close()

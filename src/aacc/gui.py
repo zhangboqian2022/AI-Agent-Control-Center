@@ -1752,6 +1752,7 @@ class MainWindow(QWidget):
             self.remove_kimi_desktop_task(task_id)
         else:
             _logger.error("Unknown brand dispatch: %s", task_id)
+            self.subtitle.setText("操作未生效")
 
     def remove_kimi_desktop_task(self, task_id: str) -> None:
         if not task_id.startswith("kimi_desktop:"):

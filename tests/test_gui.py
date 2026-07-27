@@ -859,6 +859,7 @@ def test_remove_request_with_unknown_brand_prefix_logs_error(
     with caplog.at_level("ERROR", logger="aacc.gui"):
         window._remove_task_requested("futurebrand:abc")
     assert "futurebrand:abc" in caplog.text
+    assert window.subtitle.text() == "操作未生效"
     manager.close()
 
 
