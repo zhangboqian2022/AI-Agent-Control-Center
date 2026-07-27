@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
+import pytest
+
+from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail, QuotaStatus
 from aacc.kimi_web_quota import merge_kimi_quota, parse_membership_quota
 
 NOW = datetime(2026, 7, 27, 5, 0, tzinfo=UTC)
@@ -24,14 +26,16 @@ def quota(
     weekly: QuotaDetail | None,
     monthly: QuotaDetail | None,
     fetched_at: datetime | None = NOW,
+    membership_level: str | None = None,
+    booster: BoosterWallet | None = None,
 ) -> KimiQuota:
     known = sum(item is not None for item in (five_hour, weekly, monthly))
     return KimiQuota(
         five_hour=five_hour,
         weekly=weekly,
         monthly=monthly,
-        membership_level=None,
-        booster=None,
+        membership_level=membership_level,
+        booster=booster,
         status=QuotaStatus.OK if known == 3 else QuotaStatus.PARTIAL,
         fetched_at=fetched_at,
     )
@@ -192,6 +196,11 @@ def test_merge_rejects_code_fallback_older_than_330_seconds():
 
 
 def test_merge_accepts_code_fallback_exactly_330_seconds_old():
+    code_booster = BoosterWallet(
+        status="STATUS_ACTIVE",
+        is_enabled=True,
+        balance_yuan=12.5,
+    )
     web = quota(
         five_hour=None,
         weekly=None,
@@ -203,6 +212,8 @@ def test_merge_accepts_code_fallback_exactly_330_seconds_old():
         weekly=detail(72),
         monthly=detail(99),
         fetched_at=NOW - timedelta(seconds=330),
+        membership_level="FRESH-CODE",
+        booster=code_booster,
     )
 
     result = merge_kimi_quota(web, code)
@@ -210,6 +221,8 @@ def test_merge_accepts_code_fallback_exactly_330_seconds_old():
     assert result.five_hour is code.five_hour
     assert result.weekly is code.weekly
     assert result.monthly is web.monthly
+    assert result.membership_level == "FRESH-CODE"
+    assert result.booster is code_booster
 
 
 def test_merge_rejects_code_fallback_without_timestamp_or_from_future():
@@ -239,3 +252,40 @@ def test_merge_rejects_code_fallback_without_timestamp_or_from_future():
     assert missing_result.weekly is None
     assert future_result.five_hour is None
     assert future_result.weekly is None
+
+
+@pytest.mark.parametrize(
+    "fetched_at",
+    [
+        NOW - timedelta(seconds=331),
+        None,
+        NOW + timedelta(seconds=1),
+    ],
+)
+def test_merge_rejects_stale_or_unverifiable_code_metadata(
+    fetched_at: datetime | None,
+):
+    web = quota(
+        five_hour=None,
+        weekly=None,
+        monthly=detail(31),
+        fetched_at=NOW,
+    )
+    code_booster = BoosterWallet(
+        status="STATUS_ACTIVE",
+        is_enabled=True,
+        balance_yuan=12.5,
+    )
+    code = quota(
+        five_hour=detail(2),
+        weekly=detail(72),
+        monthly=detail(99),
+        fetched_at=fetched_at,
+        membership_level="STALE-CODE",
+        booster=code_booster,
+    )
+
+    result = merge_kimi_quota(web, code)
+
+    assert result.membership_level is None
+    assert result.booster is None

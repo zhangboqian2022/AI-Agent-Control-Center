@@ -78,6 +78,39 @@ def test_stop_join_timeout_does_not_depend_on_poll_interval(tmp_path):
     assert thread.join_timeouts == [2.0]
 
 
+def test_refresh_after_stop_does_not_start_one_shot_poll(tmp_path, monkeypatch):
+    service = QuotaService(tmp_path, version="test")
+    polls: list[bool] = []
+    spawned: list[bool] = []
+    service._poll_guarded = lambda: polls.append(True)  # type: ignore[method-assign]
+
+    class UnexpectedThread:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+            spawned.append(True)
+
+        def start(self) -> None:
+            pass
+
+    service.stop()
+    monkeypatch.setattr("aacc.quota_service.threading.Thread", UnexpectedThread)
+    service.refresh_now()
+    time.sleep(0.1)
+
+    assert polls == []
+    assert spawned == []
+
+
+def test_start_after_stop_fails_closed(tmp_path):
+    service = QuotaService(tmp_path, version="test")
+    service.stop()
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        service.start()
+
+    assert not service._thread.is_alive()
+
+
 VALID_TOKEN = {
     "access_token": "at",
     "refresh_token": "rt",
