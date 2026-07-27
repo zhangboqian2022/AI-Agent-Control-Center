@@ -156,7 +156,7 @@ def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_r
 
     class FailingListener:
         def start(self, _app, _window) -> None:
-            raise OSError(r"secret=C:\private")
+            raise ValueError(r"secret=C:\private")
 
         def stop(self) -> None:
             events.append("listener-stop")
@@ -174,7 +174,7 @@ def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_r
         app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 1
     )
     assert events == ["listener-stop", "runtime-close"]
-    assert shown and "secret" not in shown[0] and "STARTUP-SHUTDOWN-OSError" in shown[0]
+    assert shown and "secret" not in shown[0] and "STARTUP-SHUTDOWN-ValueError" in shown[0]
 
 
 def test_windows_shutdown_control_command_runs_before_paths_or_guard(
@@ -292,12 +292,25 @@ def test_runtime_close_reaches_manager_after_earlier_stop_failure(caplog) -> Non
         discovery=Component("codex", fail=True),  # type: ignore[arg-type]
         kimi_discovery=Component("kimi"),  # type: ignore[arg-type]
         kimi_desktop_discovery=Component("desktop"),  # type: ignore[arg-type]
+        codex_quota_service=Component("codex-quota", fail=True),  # type: ignore[arg-type]
+        quota_service=Component("kimi-quota"),  # type: ignore[arg-type]
+        kimi_web_quota_service=Component("web-quota"),  # type: ignore[arg-type]
     )
 
     runtime.close()
 
-    assert calls == ["desktop", "kimi", "codex", "executor", "manager"]
+    assert calls == [
+        "codex-quota",
+        "kimi-quota",
+        "web-quota",
+        "desktop",
+        "kimi",
+        "codex",
+        "executor",
+        "manager",
+    ]
     assert "private details" not in caplog.text
+    assert "Runtime cleanup failed stage=codex-quota" in caplog.text
     assert "Runtime cleanup failed stage=discovery" in caplog.text
 
 

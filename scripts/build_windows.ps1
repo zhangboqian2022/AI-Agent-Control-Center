@@ -16,8 +16,15 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed"
 }
 Copy-Item "build\native\aacc-spawn.exe" "dist\AACC\aacc-spawn.exe" -Force
-$rootFiles = Get-ChildItem "dist\AACC" | Select-Object -ExpandProperty Name
-if (@($rootFiles | Sort-Object) -join "," -ne "_internal,AACC.exe,aacc-spawn.exe") {
+$expectedRootEntries = @("_internal", "AACC.exe", "aacc-spawn.exe")
+$rootFiles = @(
+    Get-ChildItem -LiteralPath "dist\AACC" |
+        Select-Object -ExpandProperty Name
+)
+$rootDifference = @(
+    Compare-Object -ReferenceObject $expectedRootEntries -DifferenceObject $rootFiles
+)
+if ($rootDifference.Count -ne 0) {
     throw "unexpected Windows package root"
 }
 Write-Host "Built dist/AACC/AACC.exe"

@@ -340,3 +340,12 @@ def test_shutdown_listener_rejects_zero_registered_message() -> None:
 
     with pytest.raises(OSError, match="RegisterWindowMessage"):
         WindowsShutdownListener(win32_module=api).start(FakeQtApplication(), FakeWindow())
+
+
+def test_native_filter_rejects_wrong_event_type_and_null_message_pointer(qapp) -> None:
+    listener = WindowsShutdownListener(win32_module=FakeWin32ShutdownApi())
+    listener.start(qapp, FakeWindow())
+    assert listener._filter is not None
+
+    assert listener._filter.nativeEventFilter(b"other", 1) == (False, 0)
+    assert listener._filter.nativeEventFilter(b"windows_generic_MSG", 0) == (False, 0)
