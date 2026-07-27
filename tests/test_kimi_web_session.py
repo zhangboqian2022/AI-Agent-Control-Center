@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import inspect
 import json
 
@@ -45,6 +44,7 @@ class FakeView:
         self._settings = FakeSettings()
         self._url = QUrl()
         self.scripts = []
+        self.script_result = None
         self.cookies_deleted = False
         self.deleted = False
 
@@ -59,7 +59,7 @@ class FakeView:
 
     def runJavaScript(self, script, callback):
         self.scripts.append(script)
-        callback(None)
+        callback(self.script_result)
 
     def deleteAllCookies(self):
         self.cookies_deleted = True
@@ -158,16 +158,22 @@ def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
     assert "GetSubscriptionStats" in session.view.scripts[-1]
 
-    payload = {"kind": "quota", "stats": {"value": 1}, "subscription": {"value": 2}}
-    encoded = base64.b64encode(json.dumps(payload).encode()).decode()
-    session._on_title_changed(web_session.BRIDGE_PREFIX + encoded)
+    payload = {
+        "kind": "quota",
+        "stats": {"value": 1, "large": "x" * 100_000},
+        "subscription": {"value": 2},
+    }
+    session.view.script_result = json.dumps(payload)
+    session._on_title_changed(web_session.BRIDGE_PREFIX + "ready")
     assert login_states == [True]
-    assert quotas == [({"value": 1}, {"value": 2})]
+    assert quotas == [({"value": 1, "large": "x" * 100_000}, {"value": 2})]
+    assert web_session.BRIDGE_PAYLOAD_KEY in session.view.scripts[-1]
 
     session._handle_bridge({"kind": "unauthorized"})
     session._handle_bridge({"kind": "error", "message": "network"})
     session._handle_bridge("invalid")
-    session._on_title_changed(web_session.BRIDGE_PREFIX + "not-base64")
+    session.view.script_result = "{"
+    session._on_title_changed(web_session.BRIDGE_PREFIX + "ready")
     assert login_states[-1] is False
     assert errors == [
         "network",
