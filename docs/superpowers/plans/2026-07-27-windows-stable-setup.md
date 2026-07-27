@@ -899,6 +899,14 @@ staging/backup/swap implementation is part of 1.4.2. Because
 incomplete flag and `GetCustomSetupExitCode` changes the otherwise-successful
 exit to `9`.
 
+Before the actual install phase, `PrepareToInstall` calls the Win32
+`GetFileAttributesW` API on `{app}\_internal`. A root junction, symbolic link,
+other reparse point, non-directory entry, or unreadable attributes aborts
+before `[Files]` can traverse it. Product smoke replaces the real root with a
+junction to an external preserve marker, requires a non-zero Setup result and
+an unchanged external manifest, removes only the junction, then restores the
+real `_internal`.
+
 When the existing `{app}\AACC.exe` exists, `PrepareToInstall` and
 `InitializeUninstall` call only that executable with
 `--shutdown-for-update` through Inno `Exec(..., ewWaitUntilTerminated,
@@ -1124,7 +1132,9 @@ logs separately for diagnosis with `if: always()`. Setup, checksum, and ZIP
 candidates live under an isolated `build\candidate-validation` tree that is
 never included in diagnostics; only after strict verification are they copied
 to `build\verified-output`. A failed smoke or either failed runner must never
-publish a primary Setup artifact.
+publish a primary Setup artifact. Test-owned real product copies, including
+the temporary saved `AACC.exe`, also stay in that isolated tree; fixture
+executables use non-product names.
 
 - [ ] **Step 7: Push and inspect the hosted Windows result**
 

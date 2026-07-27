@@ -53,7 +53,11 @@ const
   WAIT_OBJECT_0 = 0;
   WAIT_TIMEOUT = 258;
   STARTF_USESHOWWINDOW = 1;
+  INVALID_FILE_ATTRIBUTES = $FFFFFFFF;
+  FILE_ATTRIBUTE_DIRECTORY = $10;
   FILE_ATTRIBUTE_REPARSE_POINT = $400;
+  ERROR_FILE_NOT_FOUND = 2;
+  ERROR_PATH_NOT_FOUND = 3;
   CleanupRetryCount = 3;
   CleanupRetryDelayMilliseconds = 250;
   InternalCleanupFailureExitCode = 9;
@@ -110,6 +114,8 @@ function TerminateProcess(hProcess: THandle; uExitCode: DWORD): BOOL;
   external 'TerminateProcess@kernel32.dll stdcall';
 function CloseHandle(hObject: THandle): BOOL;
   external 'CloseHandle@kernel32.dll stdcall';
+function WinGetFileAttributes(lpFileName: String): DWORD;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
 
 var
   InternalCleanupIncomplete: Boolean;
@@ -453,9 +459,47 @@ begin
   end;
 end;
 
+function ValidateInternalRootForInstall(var ErrorMessage: String): Boolean;
+var
+  InternalRoot: String;
+  Attributes: DWORD;
+  ErrorCode: DWORD;
+begin
+  Result := False;
+  ErrorMessage := '';
+  InternalRoot := ExpandConstant('{app}\_internal');
+  Attributes := WinGetFileAttributes(InternalRoot);
+  if Attributes = INVALID_FILE_ATTRIBUTES then
+  begin
+    ErrorCode := DLLGetLastError;
+    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end
+  else if ((Attributes and FILE_ATTRIBUTE_REPARSE_POINT) = 0) and
+          ((Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  ErrorMessage :=
+    'AACC 内部程序目录不安全；安装已在写入前停止。' + #13#10 +
+    'AACC internal payload root is unsafe; Setup stopped before writing.';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ErrorMessage: String;
 begin
   NeedsRestart := False;
+  if not ValidateInternalRootForInstall(ErrorMessage) then
+  begin
+    Result := ErrorMessage;
+    Exit;
+  end;
   if ShutdownExistingAACC(Result) then
     Result := '';
 end;

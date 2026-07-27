@@ -248,6 +248,10 @@ Installer contract:
 - `[InstallDelete]` is not used: it would remove files outside Inno's native
   per-file rollback journal. A generated exact `_internal` manifest instead
   removes stale entries after file commit with three bounded retries.
+- `PrepareToInstall` reads the exact `{app}\_internal` root attributes through
+  `GetFileAttributesW` and rejects every root reparse point before `[Files]`
+  can traverse it. The installer never deletes or enumerates a junction
+  target.
 - Manifest load/validation failure or an undeletable stale file, directory, or
   reparse entry makes Setup return non-zero. Post-commit cleanup makes no
   rollback claim; `GetCustomSetupExitCode` reports the incomplete state as
@@ -271,7 +275,9 @@ Installer contract:
   `&() %! []`; every invocation must create a non-empty file at the exact
   requested path.
 - Setup/checksum/ZIP candidates are isolated from all `if: always()`
-  diagnostics and become uploadable only after strict verification.
+  diagnostics and become uploadable only after strict verification. Saved
+  product executables used by smoke stay in the same non-uploaded candidate
+  tree; diagnostic fixtures cannot use product artifact names.
 
 The build script reads version `1.4.2` from `pyproject.toml` via
 `uv version --short`. The workflow uses both supported hosted Windows images,
