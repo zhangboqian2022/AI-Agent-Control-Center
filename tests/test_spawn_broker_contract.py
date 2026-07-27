@@ -15,7 +15,11 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     for linker_flag in ("/DYNAMICBASE", "/NXCOMPAT", "/HIGHENTROPYVA"):
         assert linker_flag in script
     assert "vswhere.exe" in script
-    assert "Visual Studio 2022" in script
+    assert "-latest -products *" in script
+    assert "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64" in script
+    assert "-property installationPath" in script
+    assert '-version "[17.0,18.0)"' not in script
+    assert "Visual Studio 2022" not in script
     assert "uv version --short" in script
     assert "dumpbin" in script.lower()
     for forbidden_dependency in ("VCRUNTIME", "MSVCP", "ucrtbase", "Python", "Qt"):

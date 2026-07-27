@@ -504,7 +504,8 @@ line to stderr.
 `build_spawn_broker.ps1`:
 
 1. reads version with `uv version --short`;
-2. locates `vswhere.exe` and the Visual Studio 2022 x64 toolchain;
+2. locates `vswhere.exe` and the latest installed Visual Studio x64 toolchain
+   with `Microsoft.VisualStudio.Component.VC.Tools.x86.x64`;
 3. renders the `.rc` file with product version and protocol 1;
 4. compiles with `/std:c++17 /O2 /MT /GS /guard:cf /W4 /WX /DUNICODE
    /D_UNICODE`;
