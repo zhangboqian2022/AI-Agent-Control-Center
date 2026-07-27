@@ -1440,6 +1440,9 @@ function Test-InstalledControlRefusal {
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $LegacyEvidence)) | Out-Null
     Remove-Item -LiteralPath $LegacyEvidence -Force -ErrorAction SilentlyContinue
     $env:AACC_LEGACY_EVIDENCE_FILE = $LegacyEvidence
+    $LifecycleEvidence = Join-Path $SmokeRoot `
+        "$Action\$Scenario\$SpecialLeaf\legacy-lifecycle-evidence.jsonl"
+    Remove-Item -LiteralPath $LifecycleEvidence -Force -ErrorAction SilentlyContinue
     $StopEventName = (
         "Local\AACC.LegacySmokeStop." + [guid]::NewGuid().ToString("N")
     )
@@ -1454,6 +1457,7 @@ function Test-InstalledControlRefusal {
     try {
         Assert-True $CreatedNew "legacy fixture stop event name collided"
         $env:AACC_LEGACY_STOP_EVENT = $StopEventName
+        $env:AACC_LEGACY_LIFECYCLE_FILE = $LifecycleEvidence
         try {
             $Legacy = Start-OwnedProcess -FilePath $InstalledAacc
         }
@@ -1462,8 +1466,50 @@ function Test-InstalledControlRefusal {
             # main fixture. Setup, Uninstall, and control children must not
             # inherit it.
             Remove-Item Env:AACC_LEGACY_STOP_EVENT -ErrorAction SilentlyContinue
+            Remove-Item Env:AACC_LEGACY_LIFECYCLE_FILE -ErrorAction SilentlyContinue
         }
-        Start-Sleep -Seconds 1
+        $ReadyRecord = $null
+        $ReadyDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ($null -eq $ReadyRecord -and [DateTime]::UtcNow -lt $ReadyDeadline) {
+            if (Test-Path -LiteralPath $LifecycleEvidence -PathType Leaf) {
+                foreach ($LifecycleLine in @(
+                    Get-Content -LiteralPath $LifecycleEvidence -Encoding UTF8
+                )) {
+                    if ([string]::IsNullOrWhiteSpace($LifecycleLine)) {
+                        continue
+                    }
+                    try {
+                        $CandidateRecord = $LifecycleLine | ConvertFrom-Json
+                    }
+                    catch {
+                        continue
+                    }
+                    if ($CandidateRecord.stage -ceq "ready") {
+                        $ReadyRecord = $CandidateRecord
+                        break
+                    }
+                }
+            }
+            if ($null -eq $ReadyRecord) {
+                if ($Legacy.Process.HasExited) {
+                    break
+                }
+                Start-Sleep -Milliseconds 50
+            }
+        }
+        Assert-True ($null -ne $ReadyRecord) `
+            "legacy fixture did not report its stop-event readiness"
+        $ReadyIdentity = [pscustomobject]@{
+            Id = [int]$ReadyRecord.pid
+            Path = [string]$ReadyRecord.image_path
+            CreationTimeUtc = [DateTime]::FromFileTimeUtc(
+                [int64]$ReadyRecord.creation_time
+            ).Ticks
+        }
+        Assert-True (
+            Test-ProcessIdentityExactMatch -ExpectedIdentity $Legacy.Identity `
+                -CurrentIdentity $ReadyIdentity
+        ) "legacy fixture ready identity differs from its captured process"
         Assert-True (-not $Legacy.Process.HasExited) "legacy fixture did not own its window"
         $Before = Get-FullStateManifest
         Write-SmokeEvidence -Category "$Action\$Scenario" -Name "before-manifest.json" `
@@ -1481,11 +1527,41 @@ function Test-InstalledControlRefusal {
                 -ExpectSuccess $false
         }
         $Stopwatch.Stop()
+        $CurrentIdentity = $null
+        $IdentityError = $null
+        try {
+            $CurrentIdentity = Get-ProcessIdentity -Id $Legacy.Identity.Id
+        }
+        catch {
+            $IdentityError = [ordered]@{
+                type = $_.Exception.GetType().FullName
+                hresult = $_.Exception.HResult
+            }
+        }
+        $ProcessHasExited = $Legacy.Process.HasExited
+        $ObservedExitCode = if ($ProcessHasExited) {
+            $Legacy.Process.ExitCode
+        }
+        else {
+            $null
+        }
+        $ExactIdentityAlive = Test-ProcessIdentityAlive -Identity $Legacy.Identity
+        Write-SmokeEvidence -Category "$Action\$Scenario" `
+            -Name "post-refusal-identity.json" -Value ([ordered]@{
+                captured = $Legacy.Identity
+                processHasExited = $ProcessHasExited
+                exitCode = $ObservedExitCode
+                exactIdentityAlive = $ExactIdentityAlive
+                current = $CurrentIdentity
+                error = $IdentityError
+                utc = [DateTime]::UtcNow.ToString("o")
+                tick = [Environment]::TickCount64
+            })
         $After = Get-FullStateManifest
         Write-SmokeEvidence -Category "$Action\$Scenario" -Name "after-manifest.json" `
             -Value $After
         Assert-True ($After -ceq $Before) "$Action refusal mutated installed state"
-        Assert-True (Test-ProcessIdentityAlive -Identity $Legacy.Identity) `
+        Assert-True $ExactIdentityAlive `
             "$Action refusal terminated the legacy main process"
         if ($Capability) {
             Wait-LiteralPath -Path $LegacyEvidence -TimeoutSeconds 5
@@ -1537,6 +1613,7 @@ function Test-InstalledControlRefusal {
     }
     finally {
         Remove-Item Env:AACC_LEGACY_STOP_EVENT -ErrorAction SilentlyContinue
+        Remove-Item Env:AACC_LEGACY_LIFECYCLE_FILE -ErrorAction SilentlyContinue
         try {
             if ($null -ne $Legacy) {
                 [void]$StopEvent.Set()

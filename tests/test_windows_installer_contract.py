@@ -163,8 +163,26 @@ def test_windows_legacy_fixture_uses_a_harness_only_graceful_stop_event() -> Non
     fixture = (ROOT / "tests" / "windows" / "fake_legacy_aacc.cpp").read_text(encoding="utf-8")
 
     assert "AACC_LEGACY_STOP_EVENT" in fixture
+    assert "AACC_LEGACY_LIFECYCLE_FILE" in fixture
     assert "OpenEventW(SYNCHRONIZE, FALSE" in fixture
     assert "MsgWaitForMultipleObjects(" in fixture
+    for stage in (
+        "entry",
+        "stop-event-name-unavailable",
+        "stop-env-read",
+        "stop-event-open-failed",
+        "stop-event-open-ok",
+        "ready",
+        "wait-failed",
+        "stop-signaled",
+        "message-quit",
+        "exit-zero",
+    ):
+        assert f'L"{stage}"' in fixture
+    assert "GetCurrentThreadId()" in fixture
+    assert "GetTickCount64()" in fixture
+    assert '\\"image_path\\":\\"' in fixture
+    assert '\\"creation_time\\":' in fixture
     assert "WM_CLOSE" in fixture
     assert fixture.index("--shutdown-for-update") < fixture.index("OpenEventW(SYNCHRONIZE, FALSE")
 
@@ -176,11 +194,19 @@ def test_windows_legacy_fixture_uses_a_harness_only_graceful_stop_event() -> Non
     assert "[ref]$CreatedNew" in refusal
     assert "Assert-True $CreatedNew" in refusal
     assert "$env:AACC_LEGACY_STOP_EVENT = $StopEventName" in refusal
+    assert "$env:AACC_LEGACY_LIFECYCLE_FILE = $LifecycleEvidence" in refusal
     set_environment = refusal.index("$env:AACC_LEGACY_STOP_EVENT = $StopEventName")
     start = refusal.index("$Legacy = Start-OwnedProcess")
     clear_environment = refusal.index("Remove-Item Env:AACC_LEGACY_STOP_EVENT")
+    ready = refusal.index('"legacy fixture did not report its stop-event readiness"')
     invoke_setup = refusal.index("Invoke-Setup")
-    assert set_environment < start < clear_environment < invoke_setup
+    assert set_environment < start < clear_environment < ready < invoke_setup
+    assert "[DateTime]::FromFileTimeUtc(" in refusal
+    assert "Test-ProcessIdentityExactMatch -ExpectedIdentity $Legacy.Identity" in refusal
+    assert '"post-refusal-identity.json"' in refusal
+    post_refusal = refusal.index('"post-refusal-identity.json"')
+    refusal_alive = refusal.index('"$Action refusal terminated the legacy main process"')
+    assert invoke_setup < post_refusal < refusal_alive
     signal = refusal.index("$StopEvent.Set()")
     exited = refusal.index("Assert-ProcessExitedByDeadline -Identity $Legacy.Identity")
     exit_code = refusal.index("$Legacy.Process.ExitCode -eq 0")
