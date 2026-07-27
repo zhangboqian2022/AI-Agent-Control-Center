@@ -200,6 +200,7 @@ def test_documentation_download_links_match_latest_published_release() -> None:
 def test_windows_spec_exists_and_excludes_quartz() -> None:
     spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
     assert "console=False" in spec
+    assert "disable_windowed_traceback=True" in spec
     assert "Quartz" in spec  # 出现在 excludes
     assert "BUNDLE" not in spec
     assert "styles.qss" in spec

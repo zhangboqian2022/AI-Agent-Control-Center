@@ -7,6 +7,35 @@ from aacc.discovery_service import (
     KimiDesktopDiscoveryService,
     KimiDiscoveryService,
 )
+from aacc.file_security import FileProtectionError
+
+
+class FakeApplication:
+    pass
+
+
+def test_security_failure_shows_sanitized_dialog_and_returns_nonzero(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(app_module, "_create_qapplication", FakeApplication)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.QMessageBox,
+        "critical",
+        lambda _parent, title, text: shown.append((title, text)),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "build_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileProtectionError(r"token=C:\\secret")),
+    )
+
+    result = app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path)
+
+    assert result == 1
+    assert shown
+    assert "token" not in shown[0][1]
+    assert str(tmp_path / "logs" / "app.log") in shown[0][1]
 
 
 def test_build_runtime_creates_default_config_database_and_four_tasks(tmp_path: Path) -> None:

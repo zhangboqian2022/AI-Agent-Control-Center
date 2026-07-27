@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import uvicorn
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 import aacc
 from aacc.accessibility import is_accessibility_trusted, open_accessibility_settings
@@ -30,6 +31,7 @@ from aacc.discovery_service import (
     KimiDesktopDiscoveryService,
     KimiDiscoveryService,
 )
+from aacc.file_security import FileProtectionError
 from aacc.gui import MainWindow
 from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
@@ -40,6 +42,8 @@ from aacc.models import AppConfig
 from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
 from aacc.task_manager import TaskManager
+
+_logger = logging.getLogger("aacc.app")
 
 
 @dataclass
@@ -175,21 +179,43 @@ def _hotkey_actions(window: MainWindow) -> dict[str, object]:
     return actions
 
 
+def _create_qapplication() -> QApplication:
+    existing = QApplication.instance()
+    app = existing if isinstance(existing, QApplication) else QApplication(sys.argv)
+    app.setApplicationName("AACC")
+    app.setOrganizationName("AACC")
+    app.setQuitOnLastWindowClosed(False)
+    return app
+
+
+def _show_startup_security_error(data_dir: Path, error: FileProtectionError) -> int:
+    category = type(error).__name__
+    _logger.critical("Startup credential protection failed: %s", category)
+    QMessageBox.critical(
+        None,
+        "AACC 启动失败 / Startup failed",
+        "AACC 无法保护本机凭据文件，因此没有保存新的凭据。\n"
+        "AACC could not protect its local credential file, so no new "
+        "credential was saved.\n\n"
+        f"日志 / Log: {data_dir / 'logs' / 'app.log'}\n"
+        f"诊断 / Diagnostic: STARTUP-ACL-{category}",
+    )
+    return 1
+
+
 def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
     initialize_native_webview()
+    qt_app = _create_qapplication()
     trusted = is_accessibility_trusted()
-    runtime = build_runtime(
-        config_path,
-        database_path,
-        accessibility_trusted=is_accessibility_trusted,
-    )
-
-    existing_app = QApplication.instance()
-    qt_app = existing_app if isinstance(existing_app, QApplication) else QApplication(sys.argv)
-    qt_app.setApplicationName("AACC")
-    qt_app.setOrganizationName("AACC")
-    qt_app.setQuitOnLastWindowClosed(False)
+    try:
+        runtime = build_runtime(
+            config_path,
+            database_path,
+            accessibility_trusted=is_accessibility_trusted,
+        )
+    except FileProtectionError as error:
+        return _show_startup_security_error(data_dir, error)
     window = MainWindow(
         runtime.manager,
         runtime.automation_executor,
