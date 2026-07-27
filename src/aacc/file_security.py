@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -28,7 +29,7 @@ def protect_file(
 ) -> None:
     if platform != "win32":
         if descriptor is not None:
-            os.fchmod(descriptor, 0o600)
+            cast(Any, os).fchmod(descriptor, 0o600)
         else:
             os.chmod(path, 0o600)
         return

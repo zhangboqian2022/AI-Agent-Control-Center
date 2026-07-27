@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from aacc import win32
@@ -59,3 +61,10 @@ def test_find_window_by_title_requires_windows(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(win32, "user32", None)
     with pytest.raises(OSError, match="requires Windows"):
         win32.find_window_by_title("x")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires real user32")
+def test_real_enum_windows_read_only_path_returns_valid_handle_or_none() -> None:
+    handle = win32.find_window_by_title("")
+
+    assert handle is None or handle > 0
