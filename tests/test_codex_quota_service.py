@@ -62,6 +62,12 @@ def test_refresh_before_start_emits_snapshot(qapp):
     assert reader.calls == 1
 
 
+def test_default_poll_interval_is_one_minute():
+    service = CodexQuotaService(FakeReader([SNAPSHOT]))
+
+    assert service._interval == 60.0
+
+
 def test_reader_error_does_not_kill_poll_thread(qapp):
     reader = FakeReader([OSError("token=private-token-sentinel"), SNAPSHOT])
     service = CodexQuotaService(reader, interval_seconds=0.2)

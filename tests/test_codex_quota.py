@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 from aacc.codex_quota import (
     CodexQuotaReader,
+    CodexQuotaSnapshot,
     CodexQuotaStatus,
+    CompositeCodexQuotaReader,
     parse_rate_limits,
 )
 
@@ -160,3 +162,66 @@ def test_reader_without_valid_metadata_returns_unknown(tmp_path):
 
     assert snapshot.status is CodexQuotaStatus.UNKNOWN
     assert snapshot.weekly is None
+
+
+class StubReader:
+    def __init__(self, snapshot: CodexQuotaSnapshot) -> None:
+        self.snapshot = snapshot
+        self.calls = 0
+
+    def read_latest(self) -> CodexQuotaSnapshot:
+        self.calls += 1
+        return self.snapshot
+
+
+def _unknown_snapshot() -> CodexQuotaSnapshot:
+    return CodexQuotaSnapshot(
+        weekly=None,
+        observed_at=None,
+        status=CodexQuotaStatus.UNKNOWN,
+    )
+
+
+def test_composite_reader_prefers_live_snapshot():
+    live_snapshot = parse_rate_limits(
+        token_count(primary=(9.0, 10080), secondary=None),
+        now=NOW,
+    )
+    local_snapshot = parse_rate_limits(
+        token_count(primary=(64.0, 10080), secondary=None),
+        now=NOW,
+    )
+    live = StubReader(live_snapshot)
+    local = StubReader(local_snapshot)
+
+    result = CompositeCodexQuotaReader(live, local).read_latest()
+
+    assert result.weekly is not None
+    assert result.weekly.used_percent == 9
+    assert live.calls == 1
+    assert local.calls == 0
+
+
+def test_composite_reader_falls_back_when_live_is_unknown():
+    local_snapshot = parse_rate_limits(
+        token_count(primary=(64.0, 10080), secondary=None),
+        now=NOW,
+    )
+    live = StubReader(_unknown_snapshot())
+    local = StubReader(local_snapshot)
+
+    result = CompositeCodexQuotaReader(live, local).read_latest()
+
+    assert result.weekly is not None
+    assert result.weekly.used_percent == 64
+    assert live.calls == 1
+    assert local.calls == 1
+
+
+def test_composite_reader_without_live_source_uses_local_fallback():
+    local = StubReader(_unknown_snapshot())
+
+    result = CompositeCodexQuotaReader(None, local).read_latest()
+
+    assert result.status is CodexQuotaStatus.UNKNOWN
+    assert local.calls == 1

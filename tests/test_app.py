@@ -174,3 +174,41 @@ def test_build_runtime_default_factory_honors_codex_quota_enabled(
         assert runtime.codex_quota_service is None
     finally:
         runtime.close()
+
+
+def test_default_codex_quota_factory_composes_live_and_local_readers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from aacc.codex_app_server import CodexAppServerReader
+    from aacc.codex_quota import CodexQuotaReader, CompositeCodexQuotaReader
+
+    executable = tmp_path / "codex"
+    executable.write_text("", encoding="utf-8")
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda: executable)
+
+    service = app_module._default_codex_quota_service_factory(
+        app_module.load_config(tmp_path / "config.yaml")
+    )
+
+    assert service is not None
+    assert isinstance(service._reader, CompositeCodexQuotaReader)
+    assert isinstance(service._reader._primary, CodexAppServerReader)
+    assert isinstance(service._reader._fallback, CodexQuotaReader)
+
+
+def test_default_codex_quota_factory_keeps_local_reader_without_executable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from aacc.codex_quota import CompositeCodexQuotaReader
+
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda: None)
+
+    service = app_module._default_codex_quota_service_factory(
+        app_module.load_config(tmp_path / "config.yaml")
+    )
+
+    assert service is not None
+    assert isinstance(service._reader, CompositeCodexQuotaReader)
+    assert service._reader._primary is None
