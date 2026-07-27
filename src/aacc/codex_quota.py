@@ -130,6 +130,66 @@ def parse_rate_limits(
     )
 
 
+def _app_server_weekly_window(value: object, *, now: datetime) -> CodexQuotaWindow | None:
+    if not isinstance(value, dict):
+        return None
+    minutes = _number(value.get("windowDurationMins"))
+    if minutes != WEEKLY_WINDOW_MINUTES:
+        return None
+    used = _number(value.get("usedPercent"))
+    if used is None or used < 0 or used > 100:
+        return None
+    resets_at = _timestamp(value.get("resetsAt"))
+    if resets_at is None or resets_at <= now:
+        return None
+    return CodexQuotaWindow(
+        used_percent=round(used),
+        window_minutes=WEEKLY_WINDOW_MINUTES,
+        resets_at=resets_at,
+    )
+
+
+def parse_app_server_rate_limits(
+    data: object,
+    *,
+    now: datetime,
+) -> CodexQuotaSnapshot:
+    """Parse the read-only account/rateLimits/read result."""
+
+    if not isinstance(data, dict):
+        return _unknown()
+    rate_limits: object = data.get("rateLimits")
+    by_limit_id = data.get("rateLimitsByLimitId")
+    if isinstance(by_limit_id, dict) and isinstance(by_limit_id.get("codex"), dict):
+        rate_limits = by_limit_id["codex"]
+    if not isinstance(rate_limits, dict):
+        return _unknown()
+    weekly = next(
+        (
+            parsed
+            for key in ("primary", "secondary")
+            if (
+                parsed := _app_server_weekly_window(
+                    rate_limits.get(key),
+                    now=now,
+                )
+            )
+            is not None
+        ),
+        None,
+    )
+    if weekly is None:
+        return _unknown()
+    plan = rate_limits.get("planType")
+    plan_type = plan[:32] if isinstance(plan, str) and plan else None
+    return CodexQuotaSnapshot(
+        weekly=weekly,
+        observed_at=now,
+        status=CodexQuotaStatus.OK,
+        plan_type=plan_type,
+    )
+
+
 class CodexQuotaReader:
     """Reads only bounded, structured rate-limit metadata from Codex sessions."""
 
