@@ -209,6 +209,7 @@ function New-BrokerTestProcess {
     $StartInfo.RedirectStandardInput = $true
     $StartInfo.RedirectStandardOutput = $true
     $StartInfo.RedirectStandardError = $true
+    $StartInfo.StandardInputEncoding = New-Object System.Text.UTF8Encoding($false)
     $StartInfo.EnvironmentVariables["AACC_BROKER_CODEX_TARGET"] = (
         "C:\malicious inherited target\not-codex.cmd"
     )
