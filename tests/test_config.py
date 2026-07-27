@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import aacc.config as config_module
 from aacc.config import (
     create_default_config,
     default_config,
@@ -14,6 +15,7 @@ from aacc.config import (
     rotate_api_token,
     save_config,
 )
+from aacc.file_security import FileProtectionError
 
 
 @pytest.mark.skipif(
@@ -146,6 +148,34 @@ def test_atomic_save_keeps_original_if_replace_fails(
     assert not list(tmp_path.glob(".config.yaml.*"))
 
 
+def test_save_config_does_not_replace_target_when_protection_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("original", encoding="utf-8")
+    replace_calls: list[tuple[Path, Path]] = []
+
+    def fail_protection(*_args: object, **_kwargs: object) -> None:
+        raise FileProtectionError("denied")
+
+    monkeypatch.setattr(config_module, "protect_file", fail_protection)
+    monkeypatch.setattr(
+        os,
+        "replace",
+        lambda source, target: replace_calls.append((Path(source), Path(target))),
+    )
+
+    with pytest.raises(FileProtectionError, match="denied"):
+        save_config(path, default_config())
+
+    assert replace_calls == []
+    assert path.read_text(encoding="utf-8") == "original"
+    assert "CRITICAL" in caplog.text
+    assert default_config().app.api.token not in caplog.text
+
+
 @pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
 )
@@ -207,6 +237,7 @@ def test_save_config_skips_directory_fsync_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(config_module, "protect_file", lambda *_args, **_kwargs: None)
     path = tmp_path / "config.yaml"
     config = default_config()
 
@@ -220,9 +251,15 @@ def test_save_config_skips_directory_fsync_on_windows(
 def test_save_config_skips_fchmod_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # os.fchmod does not exist on Windows; simulate that to prove the
-    # win32 path never calls it (Windows ACLs already restrict the file).
+    # os.fchmod does not exist on Windows; the Windows path must use the
+    # shared ACL helper instead.
     monkeypatch.setattr(sys, "platform", "win32")
+    protected: list[Path] = []
+    monkeypatch.setattr(
+        config_module,
+        "protect_file",
+        lambda path, **_kwargs: protected.append(Path(path)),
+    )
 
     def raise_attribute_error(_descriptor: int, _mode: int) -> None:
         raise AttributeError("simulating windows")
@@ -236,3 +273,5 @@ def test_save_config_skips_fchmod_on_windows(
     persisted = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert persisted["app"]["api"]["token"] == config.app.api.token
     assert len(persisted["tasks"]) == 4
+    assert len(protected) == 1
+    assert protected[0].name.startswith(".config.yaml.")
