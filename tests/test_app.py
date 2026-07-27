@@ -400,6 +400,72 @@ def test_build_runtime_creates_quota_service_when_enabled(tmp_path: Path) -> Non
         runtime.close()
 
 
+def test_build_runtime_links_web_cycle_to_kimi_code_fallback(tmp_path: Path) -> None:
+    class FakeCodeQuotaService:
+        def __init__(self) -> None:
+            self.external_values: list[bool] = []
+            self.refreshes = 0
+
+        def set_externally_scheduled(self, enabled: bool) -> None:
+            self.external_values.append(enabled)
+
+        def refresh_now(self) -> None:
+            self.refreshes += 1
+
+        def stop(self) -> None:
+            pass
+
+    class FakeWebQuotaService:
+        def __init__(self) -> None:
+            self.fallback = None
+
+        def set_fallback_refresh(self, callback) -> None:
+            self.fallback = callback
+
+        def stop(self) -> None:
+            pass
+
+    code = FakeCodeQuotaService()
+    web = FakeWebQuotaService()
+    runtime = build_runtime(
+        tmp_path / "config.yaml",
+        tmp_path / "aacc.db",
+        quota_service_factory=lambda _dir: code,  # type: ignore[arg-type,return-value]
+        kimi_web_quota_service_factory=lambda _dir: web,  # type: ignore[arg-type,return-value]
+    )
+    try:
+        assert code.external_values == [True]
+        assert web.fallback is not None
+        web.fallback()
+        assert code.refreshes == 1
+    finally:
+        runtime.close()
+
+
+def test_build_runtime_leaves_code_polling_independent_without_web(tmp_path: Path) -> None:
+    class FakeCodeQuotaService:
+        def __init__(self) -> None:
+            self.external_values: list[bool] = []
+
+        def set_externally_scheduled(self, enabled: bool) -> None:
+            self.external_values.append(enabled)
+
+        def stop(self) -> None:
+            pass
+
+    code = FakeCodeQuotaService()
+    runtime = build_runtime(
+        tmp_path / "config.yaml",
+        tmp_path / "aacc.db",
+        quota_service_factory=lambda _dir: code,  # type: ignore[arg-type,return-value]
+        kimi_web_quota_service_factory=lambda _dir: None,
+    )
+    try:
+        assert code.external_values == []
+    finally:
+        runtime.close()
+
+
 def test_build_runtime_skips_quota_service_when_disabled(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     database_path = tmp_path / "aacc.db"

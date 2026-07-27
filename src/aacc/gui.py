@@ -1581,8 +1581,6 @@ class MainWindow(QWidget):
                 self.kimi_web_quota_service.open_login(self)
                 return
             self.kimi_web_quota_service.refresh_now()
-            if self.quota_service is not None and self.quota_service.state() == STATE_AUTHORIZED:
-                self.quota_service.refresh_now()
             return
         if self.quota_service is None:
             return

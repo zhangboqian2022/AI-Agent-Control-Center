@@ -186,18 +186,33 @@ def parse_membership_quota(
 def merge_kimi_quota(
     web: KimiQuota | None,
     code: KimiQuota | None,
+    *,
+    now: datetime | None = None,
+    fallback_max_age_seconds: float = 330.0,
 ) -> KimiQuota:
     """Prefer coherent web data and use Kimi Code only for its two windows."""
 
+    reference_time = now or (web.fetched_at if web is not None else None) or datetime.now(UTC)
+    code_is_fresh = False
+    if code is not None and code.fetched_at is not None:
+        age_seconds = (reference_time - code.fetched_at).total_seconds()
+        code_is_fresh = 0 <= age_seconds <= fallback_max_age_seconds
+    fallback = code if code_is_fresh else None
     five_hour = (
-        web.five_hour if web and web.five_hour is not None else (code.five_hour if code else None)
+        web.five_hour
+        if web and web.five_hour is not None
+        else (fallback.five_hour if fallback else None)
     )
-    weekly = web.weekly if web and web.weekly is not None else (code.weekly if code else None)
+    weekly = (
+        web.weekly if web and web.weekly is not None else (fallback.weekly if fallback else None)
+    )
     monthly = web.monthly if web else None
     known = sum(item is not None for item in (five_hour, weekly, monthly))
     status = QuotaStatus.OK if known == 3 else QuotaStatus.PARTIAL if known else QuotaStatus.UNKNOWN
     fetched_candidates = [
-        item.fetched_at for item in (web, code) if item is not None and item.fetched_at is not None
+        item.fetched_at
+        for item in (web, fallback)
+        if item is not None and item.fetched_at is not None
     ]
     fetched_at = max(fetched_candidates) if fetched_candidates else None
     membership_level = (

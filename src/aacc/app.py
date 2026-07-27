@@ -203,6 +203,11 @@ def build_runtime(
     kimi_web_quota_factory = kimi_web_quota_service_factory or (
         lambda config_dir: _default_kimi_web_quota_service_factory(config_dir, config)
     )
+    quota_service = factory(config_path.parent)
+    kimi_web_quota_service = kimi_web_quota_factory(config_path.parent)
+    if quota_service is not None and kimi_web_quota_service is not None:
+        quota_service.set_externally_scheduled(True)
+        kimi_web_quota_service.set_fallback_refresh(quota_service.refresh_now)
     return Runtime(
         config_path=config_path,
         config=config,
@@ -213,8 +218,8 @@ def build_runtime(
         kimi_discovery=KimiDiscoveryService(manager),
         kimi_desktop_discovery=KimiDesktopDiscoveryService(manager),
         codex_quota_service=codex_quota_factory(),
-        quota_service=factory(config_path.parent),
-        kimi_web_quota_service=kimi_web_quota_factory(config_path.parent),
+        quota_service=quota_service,
+        kimi_web_quota_service=kimi_web_quota_service,
     )
 
 

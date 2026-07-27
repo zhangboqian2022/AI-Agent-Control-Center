@@ -68,6 +68,7 @@ class QuotaService(QObject):
         *,
         version: str,
         interval_seconds: float = 300.0,
+        externally_scheduled: bool = False,
         client_factory: Callable[[], httpx.Client] = httpx.Client,
         parent: QObject | None = None,
     ) -> None:
@@ -76,6 +77,7 @@ class QuotaService(QObject):
         self._version = version
         self._device_id = load_or_create_device_id(config_dir)
         self._interval = max(0.2, interval_seconds)
+        self._externally_scheduled = externally_scheduled
         self._client_factory = client_factory
         self._state_lock = threading.RLock()
         self._credentials = CredentialStore(config_dir)
@@ -89,6 +91,7 @@ class QuotaService(QObject):
         self._last_fetch_monotonic = 0.0
         self._logger = logging.getLogger("aacc.quota")
         self._thread = threading.Thread(target=self._run, name="aacc-kimi-quota", daemon=True)
+        self._started = False
 
     # ---------- public API (any thread) ----------
 
@@ -97,6 +100,7 @@ class QuotaService(QObject):
             return self._state
 
     def start(self) -> None:
+        self._started = True
         self._thread.start()
 
     def stop(self) -> None:
@@ -106,7 +110,12 @@ class QuotaService(QObject):
                 self._oauth_cancel_event.set()
         self._wake.set()
         if self._thread.is_alive():
-            self._thread.join(timeout=self._interval + 2)
+            self._thread.join(timeout=2.0)
+
+    def set_externally_scheduled(self, enabled: bool) -> None:
+        if self._started:
+            raise RuntimeError("external scheduling must be configured before start")
+        self._externally_scheduled = enabled
 
     def refresh_now(self) -> None:
         self._wake.set()
@@ -203,6 +212,14 @@ class QuotaService(QObject):
                 return  # application shutting down
 
     def _run(self) -> None:
+        if self._externally_scheduled:
+            while not self._stop.is_set():
+                self._wake.wait()
+                self._wake.clear()
+                if self._stop.is_set():
+                    break
+                self._poll_guarded()
+            return
         while not self._stop.is_set():
             self._poll_guarded()
             self._wake.wait(self._interval)

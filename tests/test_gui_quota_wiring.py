@@ -139,6 +139,20 @@ def test_web_quota_login_and_unified_logout_delegate_to_both_services(qtbot, tmp
     assert code_logouts == [True]
 
 
+def test_manual_web_refresh_uses_only_the_coordinated_web_cycle(qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    window, code, _ = make_window(qtbot, tmp_path, web_quota_service=web)
+    code_refreshes: list[bool] = []
+    code.refresh_now = lambda: code_refreshes.append(True)  # type: ignore[method-assign]
+    code._state = STATE_AUTHORIZED
+    window._kimi_web_authorized = True
+
+    window._on_quota_bar_clicked()
+
+    assert web.refreshes == 1
+    assert code_refreshes == []
+
+
 def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp_path):
     from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
 
@@ -157,6 +171,7 @@ def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp
             membership_level=None,
             booster=None,
             status=QuotaStatus.PARTIAL,
+            fetched_at=reset,
         )
     )
     web_service.quota_updated.emit(
@@ -167,6 +182,7 @@ def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp
             membership_level="ALLEGRO",
             booster=None,
             status=QuotaStatus.PARTIAL,
+            fetched_at=reset,
         )
     )
 

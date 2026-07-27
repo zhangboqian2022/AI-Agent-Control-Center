@@ -36,7 +36,22 @@ class FakeSession(QObject):
 
 def test_web_quota_service_starts_one_five_minute_timer(qapp, tmp_path: Path):
     session = FakeSession()
+    refresh_order: list[str] = []
+    original_refresh = session.refresh
+
+    def track_web_refresh() -> None:
+        refresh_order.append("web")
+        original_refresh()
+
+    session.refresh = track_web_refresh  # type: ignore[method-assign]
     service = KimiWebQuotaService(tmp_path, session=session)
+    fallback_refreshes: list[bool] = []
+
+    def refresh_fallback() -> None:
+        refresh_order.append("code")
+        fallback_refreshes.append(True)
+
+    service.set_fallback_refresh(refresh_fallback)
 
     service.start()
 
@@ -44,6 +59,14 @@ def test_web_quota_service_starts_one_five_minute_timer(qapp, tmp_path: Path):
     assert service.timer.interval() == 300_000
     assert service.timer.isActive()
     assert session.refreshes == 1
+    assert fallback_refreshes == [True]
+    assert refresh_order == ["code", "web"]
+
+    service.timer.timeout.emit()
+
+    assert session.refreshes == 2
+    assert fallback_refreshes == [True, True]
+    assert refresh_order == ["code", "web", "code", "web"]
     service.stop()
 
 
