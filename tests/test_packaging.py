@@ -85,6 +85,9 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
     assert "CFBundleVersion" in script
     assert "--exclude-module mypy" in script
     assert "--hidden-import Quartz" in script
+    assert "--hidden-import PySide6.QtWebView" in script
+    assert '--additional-hooks-dir "$project_root/hooks"' in script
+    assert "QtWebEngine" not in script
 
 
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
@@ -286,6 +289,18 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "300 分钟" not in content
         assert "shasum -a 256 AACC-1.4.1.dmg" in content
         assert "xattr -cr /Applications/AACC.app" in content
+
+
+def test_specs_bundle_native_qt_webview_for_kimi_membership_login() -> None:
+    for name in ("AACC.spec", "AACC-windows.spec"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert "PySide6.QtWebView" in text
+        assert "QtWebEngine" not in text
+        assert "hooks" in text
+
+    hook = (ROOT / "hooks" / "hook-PySide6.QtWebView.py").read_text(encoding="utf-8")
+    assert "collect_module" in hook
+    assert "webengine" in hook.lower()
 
 
 def test_readme_first_screen_and_windows_checklists_are_cross_platform() -> None:

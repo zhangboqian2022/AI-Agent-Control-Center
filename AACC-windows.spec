@@ -8,8 +8,11 @@ a = Analysis(
     pathex=[os.path.join(ROOT, 'src')],
     binaries=[],
     datas=[(os.path.join(ROOT, 'src', 'aacc', 'styles.qss'), 'aacc')],
-    hiddenimports=['aacc.adapters'],
-    hookspath=[],
+    hiddenimports=[
+        'aacc.adapters',
+        'PySide6.QtWebView',
+    ],
+    hookspath=[os.path.join(ROOT, 'hooks')],
     hooksconfig={},
     runtime_hooks=[],
     excludes=['mypy', 'pytest', 'Quartz'],

@@ -4,13 +4,14 @@ from datetime import UTC, datetime, timedelta
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLabel, QProgressBar
 
 from aacc.codex_quota import (
     CodexQuotaSnapshot,
     CodexQuotaStatus,
     CodexQuotaWindow,
 )
-from aacc.gui import CodexQuotaBar, format_quota_reset
+from aacc.gui import CodexQuotaBar, format_quota_reset, load_stylesheet
 
 NOW = datetime(2026, 7, 24, 14, 0, tzinfo=UTC)
 
@@ -92,3 +93,26 @@ def test_codex_metric_labels_do_not_overlap_at_default_panel_width(qapp):
         percent_right = percent_label.mapTo(bar, percent_label.rect().topRight()).x()
         reset_left = reset_label.mapTo(bar, reset_label.rect().topLeft()).x()
         assert percent_right < reset_left
+
+
+def test_codex_quota_metrics_are_large_enough_to_read(qapp):
+    bar = CodexQuotaBar()
+    bar.setStyleSheet(load_stylesheet())
+    bar.show_quota(snapshot(18))
+    bar.show()
+    qapp.processEvents()
+
+    percent = bar.findChild(QLabel, "quotaPercent")
+    reset = bar.findChild(QLabel, "quotaReset")
+    progress = bar.findChild(QProgressBar, "quotaProgress")
+
+    assert percent is not None
+    assert percent.font().pixelSize() >= 11
+    assert percent.minimumWidth() >= 36
+    assert reset is not None
+    assert reset.font().pixelSize() >= 10
+    assert progress is not None
+    assert progress.height() == 7
+    assert bar.summary_label.minimumWidth() >= bar.summary_label.fontMetrics().horizontalAdvance(
+        "Codex 额度"
+    )

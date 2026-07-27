@@ -33,6 +33,7 @@ from aacc.discovery_service import (
 from aacc.gui import MainWindow
 from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
+from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
 from aacc.persistence import StateStore
@@ -52,12 +53,15 @@ class Runtime:
     kimi_desktop_discovery: KimiDesktopDiscoveryService
     codex_quota_service: CodexQuotaService | None = None
     quota_service: QuotaService | None = None
+    kimi_web_quota_service: KimiWebQuotaService | None = None
 
     def close(self) -> None:
         if self.codex_quota_service is not None:
             self.codex_quota_service.stop()
         if self.quota_service is not None:
             self.quota_service.stop()
+        if self.kimi_web_quota_service is not None:
+            self.kimi_web_quota_service.stop()
         self.kimi_desktop_discovery.stop()
         self.kimi_discovery.stop()
         self.discovery.stop()
@@ -69,6 +73,14 @@ def _default_quota_service_factory(config_dir: Path, config: AppConfig) -> Quota
     if not config.app.kimi_quota_enabled:
         return None
     return QuotaService(config_dir, version=aacc.__version__)
+
+
+def _default_kimi_web_quota_service_factory(
+    config_dir: Path, config: AppConfig
+) -> KimiWebQuotaService | None:
+    if not config.app.kimi_quota_enabled:
+        return None
+    return KimiWebQuotaService(config_dir)
 
 
 def _default_codex_quota_service_factory(
@@ -91,6 +103,7 @@ def build_runtime(
     *,
     accessibility_trusted: Callable[[], bool] = lambda: True,
     quota_service_factory: Callable[[Path], QuotaService | None] | None = None,
+    kimi_web_quota_service_factory: (Callable[[Path], KimiWebQuotaService | None] | None) = None,
     codex_quota_service_factory: Callable[[], CodexQuotaService | None] | None = None,
 ) -> Runtime:
     config = load_config(config_path)
@@ -104,6 +117,9 @@ def build_runtime(
     codex_quota_factory = codex_quota_service_factory or (
         lambda: _default_codex_quota_service_factory(config)
     )
+    kimi_web_quota_factory = kimi_web_quota_service_factory or (
+        lambda config_dir: _default_kimi_web_quota_service_factory(config_dir, config)
+    )
     return Runtime(
         config_path=config_path,
         config=config,
@@ -115,6 +131,7 @@ def build_runtime(
         kimi_desktop_discovery=KimiDesktopDiscoveryService(manager),
         codex_quota_service=codex_quota_factory(),
         quota_service=factory(config_path.parent),
+        kimi_web_quota_service=kimi_web_quota_factory(config_path.parent),
     )
 
 
@@ -191,6 +208,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         set_kimi_desktop_monitoring_preferences=runtime.kimi_desktop_discovery.set_monitoring_preferences,
         rotate_api_token_callback=lambda: rotate_api_token(runtime.config_path, runtime.config),
         quota_service=runtime.quota_service,
+        kimi_web_quota_service=runtime.kimi_web_quota_service,
         codex_quota_service=runtime.codex_quota_service,
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
@@ -210,6 +228,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
     runtime.kimi_desktop_discovery.start()
     if runtime.quota_service is not None:
         runtime.quota_service.start()
+    if runtime.kimi_web_quota_service is not None:
+        runtime.kimi_web_quota_service.start()
     if runtime.codex_quota_service is not None:
         runtime.codex_quota_service.start()
 

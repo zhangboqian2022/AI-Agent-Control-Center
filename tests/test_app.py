@@ -127,6 +127,7 @@ def test_build_runtime_skips_quota_service_when_disabled(tmp_path: Path) -> None
 def test_build_runtime_default_factory_honors_kimi_quota_enabled(tmp_path: Path) -> None:
     import yaml
 
+    from aacc.kimi_web_quota_service import KimiWebQuotaService
     from aacc.quota_service import QuotaService
 
     config_path = tmp_path / "config.yaml"
@@ -136,6 +137,7 @@ def test_build_runtime_default_factory_honors_kimi_quota_enabled(tmp_path: Path)
     runtime = build_runtime(config_path, database_path)
     try:
         assert isinstance(runtime.quota_service, QuotaService)
+        assert isinstance(runtime.kimi_web_quota_service, KimiWebQuotaService)
     finally:
         runtime.close()
 
@@ -146,6 +148,7 @@ def test_build_runtime_default_factory_honors_kimi_quota_enabled(tmp_path: Path)
     runtime = build_runtime(config_path, tmp_path / "aacc-disabled.db")
     try:
         assert runtime.quota_service is None
+        assert runtime.kimi_web_quota_service is None
     finally:
         runtime.close()
 

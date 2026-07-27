@@ -16,6 +16,13 @@ from aacc.quota_service import (
     QuotaService,
 )
 
+
+def test_default_kimi_code_fallback_poll_interval_is_five_minutes(qapp, tmp_path):
+    service = QuotaService(tmp_path, version="test")
+
+    assert service._interval == 300.0
+
+
 VALID_TOKEN = {
     "access_token": "at",
     "refresh_token": "rt",

@@ -10,11 +10,16 @@ Windows 真机与多用户权限验证完成后，才能把本草案转为正式
 - Codex 额度条只保留一行 `WEEK`。AACC 优先通过本机已安装 Codex 的只读
   `account/rateLimits/read` app-server 方法读取当前账户周额度，因此无需先启动
   Codex 任务；方法不可用时回退到有界的本机会话元数据。
-- Kimi 按 `5H`、`WEEK`、`MONTH` 三行显示。月额度来自官方
-  `/coding/v1/usages` 响应的 `totalQuota`；空对象或缺失值诚实显示 `--`，
-  不从订阅日期或其他窗口推断。
+- Kimi 按 `5H`、`WEEK`、`MONTH` 三行显示。AACC 新增独立的 Kimi 官网会员
+  登录视图：首次由用户直接在官网登录，此后系统原生 WebView 会话只缓存在
+  AACC 本地，直到用户在 AACC 中退出登录。AACC 每五分钟同时刷新官网的三个
+  窗口，并仅在官网窗口暂缺时用 Kimi Code 的 `5H` / `WEEK` 补位；不再把
+  `/coding/v1/usages` 的空 `totalQuota` 当作月额度来源。
 - 每行把百分比、进度条和本地绝对重置时间分列显示。数字与日期在默认面板宽度
-  下不会互相遮挡；Codex 不显示五小时窗口。
+  下不会互相遮挡，并增大额度摘要、百分比和重置时间字号；Codex 不显示五小时
+  窗口。
+- Kimi Code 与官网会员刷新都是只读额度元数据请求，不提交模型推理任务，因此
+  不消耗模型 Token 或额度。
 
 ### Windows 与 CI 加固
 
@@ -46,10 +51,16 @@ Windows 真机与多用户权限验证完成后，才能把本草案转为正式
 - Codex keeps one `WEEK` row. AACC first uses the installed Codex app-server's
   read-only `account/rateLimits/read` method, so no Codex task must be started;
   bounded local session metadata remains the fallback.
-- Kimi renders `5H`, `WEEK`, and `MONTH`. The monthly row maps only the official
-  `/coding/v1/usages` `totalQuota` object; missing or empty data stays `--`.
+- Kimi renders `5H`, `WEEK`, and `MONTH`. A new AACC-owned native web view lets
+  the user sign in directly on Kimi's site once and keeps that session local to
+  AACC until explicit logout. Every five minutes AACC refreshes all three web
+  membership windows together; Kimi Code can fill only a temporarily missing
+  `5H` or `WEEK`, never `MONTH`.
 - Percentage, progress, and absolute local reset time occupy separate columns
-  without overlap at the default panel width. No Codex five-hour row exists.
+  with larger, more legible text and no overlap at the default panel width. No
+  Codex five-hour row exists.
+- Both refresh paths read quota metadata without submitting a model inference
+  request, so polling does not consume model tokens or quota.
 
 ### Windows and CI hardening
 
@@ -66,14 +77,14 @@ Windows 真机与多用户权限验证完成后，才能把本草案转为正式
 
 ## Automated verification
 
-- 2026-07-27 本机自动验证：`528 passed, 4 skipped`；Ruff check 与 format
-  全部通过；macOS 与 `--platform win32` 两种 mypy strict 视图均为 39 个源码
-  文件零错误。
+- 2026-07-27 本机自动验证：`544 passed, 4 skipped`；Ruff check 与 format
+  全部通过；mypy strict 为 42 个源码文件零错误。
 - changed-line coverage 为 94%（门槛 90%）；锁定依赖审计覆盖 75 个依赖，
   未发现已知漏洞。
 - macOS `dist/AACC.app` 构建成功，Info.plist 版本为 `1.4.2`，
-  `codesign --verify --deep --strict` 通过。420×640 离屏截图已人工检查，
-  额度数字、进度条与完整重置日期无重叠。
+  `codesign --verify --deep --strict` 通过。原生 WKWebView 插件已打包，
+  QtWebEngine 未进入 115 MB 应用包，8 秒启动冒烟通过。420×640 离屏截图已
+  人工检查，额度数字、进度条与完整重置日期无重叠。
 - 本机只读 Codex probe 找到已安装可执行文件，在没有启动 Codex 任务的情况下
   返回 `status=ok`、周额度 14%、重置时间 `2026-08-02T00:40:57+00:00`、
   方案 `prolite`。
@@ -90,5 +101,7 @@ Windows 真机与多用户权限验证完成后，才能把本草案转为正式
   machine.
 - [ ] Confirm a separate unprivileged Windows account cannot read either
   sensitive file.
+- [ ] Sign in to a real Kimi membership account from AACC and confirm `5H`,
+  `WEEK`, and `MONTH` refresh together and survive an app restart.
 - [ ] Attach the completed checklist evidence to the release PR or notes.
 - [ ] Only then create tag and release `v1.4.2`.

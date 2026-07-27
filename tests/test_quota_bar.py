@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
 
-from aacc.gui import QuotaBar, format_quota_reset
+from PySide6.QtWidgets import QLabel, QProgressBar
+
+from aacc.gui import QuotaBar, format_quota_reset, load_stylesheet
 from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail, QuotaStatus
 
 
@@ -165,6 +167,23 @@ def test_kimi_metric_labels_do_not_overlap_at_default_panel_width(qapp):
         percent_right = percent_label.mapTo(bar, percent_label.rect().topRight()).x()
         reset_left = reset_label.mapTo(bar, reset_label.rect().topLeft()).x()
         assert percent_right < reset_left
+
+
+def test_kimi_quota_metrics_are_large_enough_to_read(qapp):
+    bar = QuotaBar()
+    bar.setStyleSheet(load_stylesheet())
+    bar.show_quota(make_quota())
+    bar.show()
+    qapp.processEvents()
+
+    percent_labels = bar.findChildren(QLabel, "quotaPercent")
+    reset_labels = bar.findChildren(QLabel, "quotaReset")
+    progress_bars = bar.findChildren(QProgressBar, "quotaProgress")
+
+    assert all(label.font().pixelSize() >= 11 for label in percent_labels)
+    assert all(label.minimumWidth() >= 36 for label in percent_labels)
+    assert all(label.font().pixelSize() >= 10 for label in reset_labels)
+    assert all(progress.height() == 7 for progress in progress_bars)
 
 
 def test_clicked_signal(qapp):

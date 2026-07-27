@@ -23,8 +23,10 @@ uv run pyinstaller \
   --name AACC \
   --osx-bundle-identifier com.aacc.controlcenter \
   --paths "$project_root/src" \
+  --additional-hooks-dir "$project_root/hooks" \
   --hidden-import Quartz \
   --hidden-import aacc.adapters \
+  --hidden-import PySide6.QtWebView \
   --add-data "$project_root/src/aacc/styles.qss:aacc" \
   --exclude-module mypy \
   --exclude-module pytest \

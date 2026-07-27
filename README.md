@@ -19,6 +19,7 @@ AACC is a floating cross-platform panel for monitoring local AI coding-agent tas
 - **Adaptive desktop footprint.** The panel grows or shrinks with monitored tasks and switches to internal scrolling at 80% of the current screen's available height.
 - **Timely private summaries.** Codex metadata is checked every five seconds and reduced to fixed labels such as “editing code” or “running tests,” without displaying raw payload content.
 - **Quota resets at a glance.** Codex shows its 10080-minute `WEEK` window; Kimi shows `5H`, `WEEK`, and `MONTH`. Every available reset is an absolute local date and time inside the row, and missing data stays `--`.
+- **Cached Kimi membership quota.** Sign in directly on Kimi's website inside AACC to refresh `5H`, `WEEK`, and `MONTH` together every five minutes. AACC stores the isolated web session, never the account password; the Kimi Code usage endpoint remains a `5H`/`WEEK` fallback. Quota lookups are metadata requests and do not consume model tokens.
 - **Local-first by design.** AACC reads only the local task metadata needed for status detection and never uploads task content.
 - **Reliable status boundaries.** Codex session `task_started` and `task_complete` events take priority over file activity to avoid stale “running” indicators.
 - **Visible discovery health.** Repeated Codex metadata errors show a recoverable warning banner with sanitized diagnostics instead of silently freezing task state.
