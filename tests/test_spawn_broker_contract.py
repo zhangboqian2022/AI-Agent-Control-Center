@@ -33,8 +33,10 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
         assert root in toolchain
     for tool in ("cl.exe", "link.exe", "rc.exe", "dumpbin.exe"):
         assert tool in script and tool in toolchain
-    assert script.index("uv run python -c") < script.index("Set-AaccToolchainEnvironment")
-    assert script.count("uv run python -c") == 1
+    assert "[string]$TestPythonPath" in script
+    assert 'Join-Path $Root ".venv\\Scripts\\python.exe"' in script
+    assert "uv run python -c" not in script
+    assert script.index("TestPythonPath") < script.index("Set-AaccToolchainEnvironment")
     assert '-version "[17.0,18.0)"' not in script
     assert "Visual Studio 2022" not in script
     assert "uv version --short" in script
@@ -159,6 +161,8 @@ def test_spawn_broker_windows_integration() -> None:
             "Bypass",
             "-File",
             str(ROOT / "scripts" / "build_spawn_broker.ps1"),
+            "-TestPythonPath",
+            sys.executable,
         ],
         cwd=ROOT,
         check=False,
