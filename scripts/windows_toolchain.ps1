@@ -2,18 +2,49 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function ConvertTo-AaccLocalPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw "path is empty" }
+    foreach ($character in $Path.ToCharArray()) {
+        if ([int][char]$character -ge 0 -and [int][char]$character -le 31) {
+            throw "path contains a control character"
+        }
+    }
+    if ($Path.StartsWith("\\") -or $Path.StartsWith("\\?\") -or $Path.StartsWith("\\.\")) {
+        throw "path is not a local drive path"
+    }
+    if ($Path -notmatch '^[A-Za-z]:[\\/]') { throw "path is not drive rooted" }
+    try { $fullPath = [System.IO.Path]::GetFullPath($Path) } catch { throw "path cannot be normalized" }
+    if ($fullPath -notmatch '^[A-Za-z]:\\') { throw "path is not a local drive path" }
+    $root = [System.IO.Path]::GetPathRoot($fullPath)
+    if (-not $fullPath.Equals($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $fullPath = $fullPath.TrimEnd([char[]]@([char]'\', [char]'/'))
+    }
+    return $fullPath
+}
+
 function ConvertTo-AaccVsCandidates {
     param([Parameter(Mandatory = $true)][string]$Json)
 
     try {
-        $instances = @(ConvertFrom-Json -InputObject $Json -ErrorAction Stop)
+        $baseResult = ConvertFrom-Json -InputObject $Json -ErrorAction Stop
     } catch {
         throw "vswhere returned invalid JSON"
     }
 
+    $instances = New-Object System.Collections.ArrayList
+    if ($null -ne $baseResult) {
+        if ($baseResult -is [System.Array]) {
+            foreach ($instance in $baseResult) { [void]$instances.Add($instance) }
+        } else {
+            [void]$instances.Add($baseResult)
+        }
+    }
+
     $parsed = @()
     foreach ($instance in $instances) {
-        $installationPath = ([string]$instance.installationPath).Trim()
+        try { $installationPath = ConvertTo-AaccLocalPath -Path ([string]$instance.installationPath) } catch { continue }
         $versionText = ([string]$instance.installationVersion).Trim()
         [version]$installationVersion = $null
         if (
@@ -29,15 +60,14 @@ function ConvertTo-AaccVsCandidates {
         }
     }
 
-    $seenPaths = @{}
+    $seenPaths = New-Object 'System.Collections.Generic.HashSet[string]' -ArgumentList ([System.StringComparer]::OrdinalIgnoreCase)
     $candidates = @()
     foreach (
         $candidate in @(
             $parsed | Sort-Object -Property @{ Expression = { $_.InstallationVersion }; Descending = $true }
         )
     ) {
-        if (-not $seenPaths.ContainsKey($candidate.InstallationPath)) {
-            $seenPaths[$candidate.InstallationPath] = $true
+        if ($seenPaths.Add($candidate.InstallationPath)) {
             $candidates += $candidate
         }
     }
@@ -47,36 +77,59 @@ function ConvertTo-AaccVsCandidates {
     return $candidates
 }
 
+function Invoke-AaccProcessCapture {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$Arguments,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = $Arguments
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { throw "process could not be started" }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $timeoutMilliseconds = $TimeoutSeconds * 1000
+        if (-not $process.WaitForExit($timeoutMilliseconds)) {
+            try { if (-not $process.HasExited) { $process.Kill() } } catch {}
+            $null = $process.WaitForExit(5000)
+            $null = $stdoutTask.Wait(5000)
+            $null = $stderrTask.Wait(5000)
+            return [pscustomobject]@{ ExitCode = -1; StdOut = ""; StdErr = ""; TimedOut = $true }
+        }
+        $readTasks = [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)
+        if (-not [System.Threading.Tasks.Task]::WaitAll($readTasks, $timeoutMilliseconds)) {
+            throw "process output read timed out"
+        }
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdoutTask.Result
+            StdErr = $stderrTask.Result
+            TimedOut = $false
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
 function Invoke-AaccVsWhereProcess {
     param(
         [Parameter(Mandatory = $true)][string]$VsWherePath,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds
     )
 
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $VsWherePath
-    $startInfo.Arguments = "-all -prerelease -products * -format json -utf8"
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    if (-not $process.Start()) {
-        throw "vswhere could not be started"
-    }
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        $process.Kill()
-        $process.WaitForExit()
-        return [pscustomobject]@{ ExitCode = -1; StdOut = ""; TimedOut = $true }
-    }
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $null = $process.StandardError.ReadToEnd()
-    return [pscustomobject]@{
-        ExitCode = $process.ExitCode
-        StdOut = $stdout
-        TimedOut = $false
-    }
+    return Invoke-AaccProcessCapture -FilePath $VsWherePath `
+        -Arguments "-all -prerelease -products * -format json -utf8" -TimeoutSeconds $TimeoutSeconds
 }
 
 function Get-AaccVsWhereCandidates {
@@ -176,7 +229,10 @@ function Find-AaccToolPath {
 }
 
 function Get-AaccToolPaths {
-    param([Parameter(Mandatory = $true)][hashtable]$Environment)
+    param(
+        [Parameter(Mandatory = $true)]$Candidate,
+        [Parameter(Mandatory = $true)][hashtable]$Environment
+    )
 
     if (
         $Environment["VSCMD_ARG_TGT_ARCH"] -ine "x64" -or
@@ -184,10 +240,15 @@ function Get-AaccToolPaths {
     ) {
         throw "candidate environment is not x64"
     }
-    $vcToolsRoot = [string]$Environment["VCToolsInstallDir"]
-    $windowsSdkRoot = [string]$Environment["WindowsSdkDir"]
-    if ([string]::IsNullOrWhiteSpace($vcToolsRoot) -or [string]::IsNullOrWhiteSpace($windowsSdkRoot)) {
+    try {
+        $candidateRoot = ConvertTo-AaccLocalPath -Path ([string]$Candidate.InstallationPath)
+        $vcToolsRoot = ConvertTo-AaccLocalPath -Path ([string]$Environment["VCToolsInstallDir"])
+        $windowsSdkRoot = ConvertTo-AaccLocalPath -Path ([string]$Environment["WindowsSdkDir"])
+    } catch {
         throw "candidate environment lacks SDK roots"
+    }
+    if (-not (Test-AaccPathWithin -Path $vcToolsRoot -Root $candidateRoot)) {
+        throw "VCToolsInstallDir is outside the candidate installation"
     }
 
     $tools = [ordered]@{}
@@ -227,7 +288,7 @@ function Select-AaccMsvcToolchain {
             continue
         }
         try {
-            $tools = Get-AaccToolPaths -Environment $environmentResult.Environment
+            $tools = Get-AaccToolPaths -Candidate $candidate -Environment $environmentResult.Environment
         } catch {
             Write-Host "AACC_MSVC_CANDIDATE version=$($candidate.InstallationVersionText) reason=tool-validation-failed"
             continue

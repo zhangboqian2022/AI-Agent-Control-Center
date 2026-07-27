@@ -504,11 +504,14 @@ line to stderr.
 `build_spawn_broker.ps1`:
 
 1. reads version with `uv version --short`;
-2. enumerates all `vswhere` instances as UTF-8 JSON with a timeout, sorts and
-   de-duplicates them by installation version, then initializes each x64
+2. enumerates all `vswhere` instances as UTF-8 JSON through bounded async
+   stdout/stderr reads, explicitly expands the PowerShell 5.1 JSON result,
+   rejects non-local candidate paths, sorts and de-duplicates candidates by
+   normalized path and installation version, then initializes each x64
    developer environment in isolation; it selects only a candidate whose
-   parsed `cl.exe`, `link.exe`, and `dumpbin.exe` are below `VCToolsInstallDir`
-   and whose `rc.exe` is below `WindowsSdkDir`;
+   `VCToolsInstallDir` is beneath that candidate and whose parsed `cl.exe`,
+   `link.exe`, and `dumpbin.exe` are beneath it, while `rc.exe` is beneath a
+   local `WindowsSdkDir`;
 3. renders the `.rc` file with product version and protocol 1;
 4. compiles with `/std:c++17 /O2 /MT /GS /guard:cf /W4 /WX /DUNICODE
    /D_UNICODE`;

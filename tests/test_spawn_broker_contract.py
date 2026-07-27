@@ -21,13 +21,20 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     assert "-all -prerelease -products * -format json -utf8" in toolchain
     assert "-latest" not in toolchain
     assert "-requires" not in toolchain
-    assert "WaitForExit($TimeoutSeconds * 1000)" in toolchain
+    assert "WaitForExit($timeoutMilliseconds)" in toolchain
+    assert "ReadToEndAsync" in toolchain
+    assert "StandardOutputEncoding" in toolchain
+    assert "ConvertTo-AaccLocalPath" in toolchain
+    assert "OrdinalIgnoreCase" in toolchain
+    assert "Get-AaccToolPaths -Candidate $candidate" in toolchain
     for variable in ("VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH"):
         assert variable in toolchain
     for root in ("VCToolsInstallDir", "WindowsSdkDir"):
         assert root in toolchain
     for tool in ("cl.exe", "link.exe", "rc.exe", "dumpbin.exe"):
         assert tool in script and tool in toolchain
+    assert script.index("uv run python -c") < script.index("Set-AaccToolchainEnvironment")
+    assert script.count("uv run python -c") == 1
     assert '-version "[17.0,18.0)"' not in script
     assert "Visual Studio 2022" not in script
     assert "uv version --short" in script
