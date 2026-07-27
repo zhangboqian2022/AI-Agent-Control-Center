@@ -151,6 +151,7 @@ def test_inno_setup_preflights_every_packaged_replacement_before_writing() -> No
     )[0]
     assert "FindFirst(" not in target_preflight
     assert "FindNext(" not in target_preflight
+    assert not re.search(r"(?m)^\s*#\d", code)
 
 
 def test_windows_smoke_accepts_empty_process_argument_arrays() -> None:
