@@ -1,8 +1,11 @@
-# Windows Smoke Verification Checklist — AACC
+# Windows 10/11 Manual Verification Checklist — AACC 1.4.2
 
-Record only what is actually observed; unchecked items are not compatibility claims.
+Record only what is actually observed. Unchecked items are not compatibility
+claims. Hosted GitHub Actions on Windows Server 2022/2025 verifies builds and
+automated product smoke, but it does **not** replace this consumer Windows
+10/11 checklist or the separate-account denial test.
 
-Environment: Windows 10+, Python 3.12+, uv.
+Candidate: `AACC-1.4.2-Setup.exe`
 
 Verifier:
 
@@ -10,28 +13,56 @@ Date and time:
 
 Machine model:
 
-Windows edition, version, and build:
+Windows edition (`Windows 10` or `Windows 11`), version, and build:
 
-Commit:
+Account type (must be non-administrator for the primary pass):
 
-- [ ] **Build**: `scripts\build_windows.ps1` completes and produces `dist\AACC\AACC.exe`
-- [ ] **Launch**: double-click `AACC.exe`, choose **More info → Run anyway** at the SmartScreen prompt; the panel appears and stays in the tray
-- [ ] **Discovery**: running kimi / codex sessions are discovered automatically with status lights
-- [ ] **Card focus**: the "Switch to task" context action focuses the target terminal window (window-title matching)
-- [ ] **Key injection**: allowlisted keys (Enter / Esc / arrows / Ctrl+C / 1 / 2) reach the target window
-- [ ] **Text injection**: injected text arrives correctly in the target window
-- [ ] **Voice**: Win+H voice input works in the target window
-- [ ] **Hotkeys**: global hotkeys summon the panel (on keyboards where F13–F20 need an Fn-layer mapping, confirm after mapping)
-- [ ] **Tray**: the panel restores from the tray after minimize/hide
-- [ ] **Quota bar**: the Kimi quota bar renders correctly (after completing one device authorization)
-- [ ] **Settings page**: settings (always-on-top, API credential reset, etc.) work and persist
-- [ ] **Codex live quota without a task**: with no active or recently started Codex task, click the Codex strip and verify that exactly one `WEEK` row shows a real percentage
-- [ ] **Visible absolute resets and Kimi order**: Codex shows its local reset date/time in the row; Kimi shows `5H`, `WEEK`, `MONTH` in that order, every available reset is visible in its row, and an unavailable month is `--`, never `0%`
-- [ ] **Sensitive-file ACLs**: after saving settings and completing Kimi authorization, run `icacls` on both `config.yaml` and `kimi-credentials.json`; inheritance is removed and explicit full-control grants are limited to the current user SID, Local System, and local Administrators
-- [ ] **Separate-user denial**: sign in as another unprivileged local account and confirm the operating system denies reading both `config.yaml` and `kimi-credentials.json`
+Commit and candidate SHA-256:
+
+- [ ] **Checksum and SmartScreen**: the Setup SHA-256 matches
+  `AACC-1.4.2-Setup.exe.sha256`; launching the unsigned candidate shows the
+  expected Unknown publisher/SmartScreen path, and **More info → Run anyway**
+  opens Setup.
+- [ ] **Per-user install**: Setup does not request administrator elevation and
+  installs under `%LocalAppData%\Programs\AACC`.
+- [ ] **Shortcuts and startup**: the Start Menu shortcut exists; the desktop
+  shortcut follows the selected option; no startup/login item was added.
+- [ ] **First launch and tray**: the installed AACC panel opens, remains
+  responsive, stays in the tray, and restores after hide/minimize.
+- [ ] **Discovery and focus**: real running Kimi/Codex sessions are discovered
+  with status lights, and **Switch to task** focuses the intended terminal
+  window by title.
+- [ ] **Input controls**: allowlisted keys and text reach only the focused
+  target; Win+H voice input and configured F13–F20 global hotkeys work.
+- [ ] **Quota rows**: without starting a Codex task, refresh and verify one real
+  Codex `WEEK` row. Kimi shows `5H`, `WEEK`, `MONTH` in that order after real
+  membership login; each available row shows a complete local reset date/time,
+  and unavailable data is `--`, never `0%`.
+- [ ] **Settings and cached session**: always-on-top and API credential reset
+  persist; the Kimi web session survives an AACC restart without storing or
+  displaying the account password.
+- [ ] **Native DACL**: after AACC creates its files, inspect `config.yaml`,
+  `aacc.db`, `aacc.db-wal`, `aacc.db-shm` when present, and
+  `kimi-credentials.json`. Each file has inheritance disabled and exactly one
+  full-control allow entry for the current user, Local System, and built-in
+  Administrators, with no other allow, deny, or inherited ACE.
+- [ ] **Separate-user denial**: sign in as a separate unprivileged local
+  account and confirm the operating system denies reading every sensitive file
+  above.
+- [ ] **Upgrade and graceful shutdown**: while AACC is running, rerun the same
+  Setup. It closes AACC gracefully, upgrades in place, restarts normally, and
+  preserves settings, history, and the cached Kimi session.
+- [ ] **Uninstall and preserved AppData**: uninstall removes the program,
+  shortcuts, and uninstall entry but preserves `%APPDATA%\AACC`. Reinstall
+  starts normally with the preserved data; explicit Kimi logout removes the
+  cached membership session.
+- [ ] **Long-running stability**: leave AACC running for at least 30 minutes
+  while tasks and quotas refresh; no crash, raw traceback, orphaned Codex
+  broker tree, or sustained UI hang appears.
 
 Evidence / notes:
 
 ```text
-Record commands, observed results, screenshots/log locations, and any deviations here.
+Record commands, observed results, screenshots/log locations, and deviations.
+Attach this completed evidence to the release PR or release notes.
 ```

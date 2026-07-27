@@ -9,14 +9,19 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from datetime import UTC, datetime, timedelta
+import time
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["TZ"] = "Asia/Shanghai"
+if hasattr(time, "tzset"):
+    time.tzset()
 
-from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QObject, QSettings, Signal  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFrame, QLabel  # noqa: E402
 
+from aacc import gui as gui_module  # noqa: E402
 from aacc.automation import MacAutomation  # noqa: E402
 from aacc.automation_executor import AutomationExecutor  # noqa: E402
 from aacc.codex_quota import (  # noqa: E402
@@ -27,14 +32,48 @@ from aacc.codex_quota import (  # noqa: E402
 from aacc.codex_quota_service import CodexQuotaService  # noqa: E402
 from aacc.config import default_config  # noqa: E402
 from aacc.gui import MainWindow  # noqa: E402
-from aacc.kimi_oauth import save_credentials  # noqa: E402
 from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail  # noqa: E402
 from aacc.models import AgentConfig, TaskConfig, TaskState, TerminalConfig  # noqa: E402
 from aacc.persistence import StateStore  # noqa: E402
-from aacc.quota_service import QuotaService  # noqa: E402
 from aacc.task_manager import TaskManager  # noqa: E402
 
 OUTPUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("docs/images/panel-overview.png")
+DEMO_NOW = datetime(2026, 7, 27, 8, 0, tzinfo=UTC)
+CODEX_WEEK = 17
+KIMI_5H = 30
+KIMI_WEEK = 72
+KIMI_MONTH = 31
+
+
+class _DemoDateTime(datetime):
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> datetime:
+        if tz is None:
+            return DEMO_NOW.replace(tzinfo=None)
+        return DEMO_NOW.astimezone(tz)
+
+
+class _DemoKimiWebQuotaService(QObject):
+    quota_updated = Signal(object)
+    login_state_changed = Signal(bool)
+    error_occurred = Signal(str)
+
+    def open_login(self, _parent: object = None) -> None:
+        return
+
+    def refresh_now(self) -> None:
+        return
+
+    def logout(self) -> None:
+        return
+
+
+def _assert_label_fits(label: QLabel) -> None:
+    assert "…" not in label.text()
+    text_width = label.fontMetrics().horizontalAdvance(label.text())
+    assert text_width <= label.contentsRect().width(), (
+        f"{label.objectName()} needs {text_width}px, has {label.contentsRect().width()}px"
+    )
 
 
 def _task(
@@ -58,7 +97,7 @@ def _task(
         terminal=TerminalConfig(type="mac_app", app_bundle_id="com.example.app"),
     )
     state = TaskState.new(task_id, status, message=message, source="demo")
-    started = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    started = DEMO_NOW - timedelta(minutes=minutes_ago)
     updates: dict[str, object] = {"updated_at": started}
     if state.started_at is not None:
         updates["started_at"] = started
@@ -78,25 +117,25 @@ def _task(
 def _demo_quota() -> KimiQuota:
     return KimiQuota(
         weekly=QuotaDetail(
-            used=64,
+            used=KIMI_WEEK,
             limit=100,
-            remaining=36,
-            reset_at=datetime.now(UTC) + timedelta(days=3, hours=2),
-            percentage=64,
+            remaining=100 - KIMI_WEEK,
+            reset_at=DEMO_NOW + timedelta(days=3, hours=2),
+            percentage=KIMI_WEEK,
         ),
         five_hour=QuotaDetail(
-            used=30,
+            used=KIMI_5H,
             limit=100,
-            remaining=70,
-            reset_at=datetime.now(UTC) + timedelta(hours=2, minutes=40),
-            percentage=30,
+            remaining=100 - KIMI_5H,
+            reset_at=DEMO_NOW + timedelta(hours=2, minutes=40),
+            percentage=KIMI_5H,
         ),
         monthly=QuotaDetail(
-            used=36,
+            used=KIMI_MONTH,
             limit=100,
-            remaining=64,
-            reset_at=datetime.now(UTC) + timedelta(days=28),
-            percentage=36,
+            remaining=100 - KIMI_MONTH,
+            reset_at=DEMO_NOW + timedelta(days=28),
+            percentage=KIMI_MONTH,
         ),
         membership_level="LEVEL_ADVANCED",
         booster=BoosterWallet(status="STATUS_ACTIVE", is_enabled=True, balance_yuan=3.15),
@@ -104,24 +143,21 @@ def _demo_quota() -> KimiQuota:
 
 
 def main() -> int:
+    gui_module.datetime = _DemoDateTime
     app = QApplication(sys.argv)
     tmp = Path(tempfile.mkdtemp())
     config = default_config()
     store = StateStore(tmp / "demo.db")
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    # Fake authorized quota service so the QuotaBar renders populated; the
-    # demo quota is pushed via the service's own signal below.
-    quota_config_dir = tmp / "quota"
-    save_credentials(quota_config_dir, {"auth_method": "api_key", "api_key": "sk-demo"})
-    quota_service = QuotaService(quota_config_dir, version="demo", interval_seconds=3600)
+    kimi_web_quota_service = _DemoKimiWebQuotaService()
     codex_snapshot = CodexQuotaSnapshot(
         weekly=CodexQuotaWindow(
-            used_percent=9,
+            used_percent=CODEX_WEEK,
             window_minutes=10_080,
-            resets_at=datetime.now(UTC) + timedelta(days=6),
+            resets_at=DEMO_NOW + timedelta(days=6),
         ),
-        observed_at=datetime.now(UTC),
+        observed_at=DEMO_NOW,
         status=CodexQuotaStatus.OK,
         plan_type="prolite",
     )
@@ -136,32 +172,30 @@ def main() -> int:
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
         settings=QSettings(str(tmp / "s.ini"), QSettings.Format.IniFormat),
-        quota_service=quota_service,
+        kimi_web_quota_service=kimi_web_quota_service,  # type: ignore[arg-type]
         codex_quota_service=codex_quota_service,
         open_url=lambda _url: None,
     )
+    # Keep the full title visible in the fixed-width documentation raster by
+    # tightening only the header gaps; all real widgets and text stay intact.
+    panel = window.findChild(QFrame, "panel")
+    if panel is not None and panel.layout() is not None:
+        header_layout = panel.layout().itemAt(0).layout()
+        if header_layout is not None:
+            header_layout.setSpacing(4)
+    title = window.findChild(QLabel, "title")
 
     demo = [
         _task(
-            "codex:demo-auth",
-            1,
-            "重构登录鉴权模块",
-            "codex_cli",
-            "Codex",
-            "RUNNING",
-            "正在修改代码",
-            minutes_ago=7.5,
-        ),
-        _task(
             "kimi:demo-payment",
-            2,
+            1,
             "修复支付回调重试",
             "kimi_code",
             "Kimi Code",
             "RUNNING",
             "正在运行",
             minutes_ago=3.2,
-            work_dir="/Users/dev/Desktop/codelight",
+            work_dir="C:/AACC-Demo/sample-project",
             usage={
                 "total_input_tokens": 48_200,
                 "output_tokens": 6_100,
@@ -171,7 +205,7 @@ def main() -> int:
         ),
         _task(
             "codex:demo-deps",
-            3,
+            2,
             "升级依赖并跑回归",
             "codex_cli",
             "Codex",
@@ -181,7 +215,7 @@ def main() -> int:
         ),
         _task(
             "kimi_desktop:demo-notes",
-            4,
+            3,
             "整理周会纪要",
             "kimi_desktop",
             "Kimi Desktop",
@@ -189,37 +223,35 @@ def main() -> int:
             "回合已完成",
             minutes_ago=25.0,
         ),
-        _task(
-            "kimi:demo-migrate",
-            5,
-            "数据迁移脚本",
-            "kimi_code",
-            "Kimi Code",
-            "ERROR",
-            "进程异常退出",
-            minutes_ago=41.0,
-            work_dir="/Users/dev/Desktop/servercheck",
-            usage={
-                "total_input_tokens": 12_300,
-                "output_tokens": 1_200,
-                "cache_read_pct": 68,
-                "speed_tps": 42,
-            },
-        ),
     ]
     for task_config, task_state in demo:
         manager.register(task_config, task_state)
-    window.set_codex_selected_ids({"demo-auth", "demo-deps"})
-    window.set_kimi_selected_ids({"demo-payment", "demo-migrate"})
+    window.set_codex_selected_ids({"demo-deps"})
+    window.set_kimi_selected_ids({"demo-payment"})
     window.set_kimi_desktop_selected_ids({"demo-notes"})
 
     window.show()
-    quota_service.quota_updated.emit(_demo_quota())
+    kimi_web_quota_service.login_state_changed.emit(True)
+    kimi_web_quota_service.quota_updated.emit(_demo_quota())
     codex_quota_service.quota_updated.emit(codex_snapshot)
-    window.resize(420, window.sizeHint().height())
+    window.resize(420, 577)
+    window.setFixedSize(420, 577)
     app.processEvents()
+    if title is not None:
+        _assert_label_fits(title)
+    for quota_bar in (window.codex_quota_bar, window.quota_bar):
+        if quota_bar is not None:
+            for percent_label, reset_label in quota_bar.metric_label_pairs():
+                _assert_label_fits(percent_label)
+                _assert_label_fits(reset_label)
+    for card in window.cards.values():
+        _assert_label_fits(card.name_label)
+        _assert_label_fits(card.message_label)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    if not window.grab().save(str(OUTPUT)):
+    screenshot = window.grab()
+    screenshot_size = (screenshot.width(), screenshot.height())
+    assert screenshot_size == (420, 577), f"unexpected screenshot size: {screenshot_size}"
+    if not screenshot.save(str(OUTPUT)):
         print("failed to save screenshot", file=sys.stderr)
         return 1
     print(f"saved {OUTPUT} ({window.width()}x{window.height()})")

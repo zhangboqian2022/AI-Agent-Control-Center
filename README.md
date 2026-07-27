@@ -8,6 +8,8 @@ AACC is a floating cross-platform panel for monitoring local AI coding-agent tas
 
 ![AACC panel with tasks in different states](docs/images/panel-overview.png)
 
+_Illustrative UI with synthetic demo data; no real account or task data._
+
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![License](https://img.shields.io/badge/license-MIT-blue) ![Local first](https://img.shields.io/badge/privacy-local--first-18a999)
 
 ## Highlights
@@ -65,17 +67,15 @@ To create a distributable image:
 ./scripts/build_dmg.sh
 ```
 
-### Windows
+### Windows 1.4.2 candidate
 
-Requirements: Windows 10+, Python 3.12+, and [uv](https://docs.astral.sh/uv/).
+The primary Windows download for 1.4.2 is `AACC-1.4.2-Setup.exe`, accompanied by `AACC-1.4.2-Setup.exe.sha256`. These assets are still release candidates: tag `v1.4.2` and the formal GitHub Release will be created only after the open Windows 10/11 manual gates are completed.
 
-```powershell
-git clone https://github.com/zhangboqian2022/AI-Agent-Control-Center.git
-cd AI-Agent-Control-Center
-.\scripts\build_windows.ps1
-```
+This per-user Setup installs for the current user without administrator elevation at `%LocalAppData%\Programs\AACC`. It always adds a Start Menu shortcut, offers an unchecked desktop shortcut, and adds no login item. Run the same Setup to upgrade in place; uninstall removes the program and shortcuts. Both upgrade and uninstall preserve `%APPDATA%\AACC`, including settings, history, and the cached Kimi web session, until you explicitly sign out in AACC or delete that directory.
 
-This produces a windowed single-folder bundle at `dist\AACC\AACC.exe`; run it directly. The Windows build is unsigned, so SmartScreen warns on first launch — verify the source, then choose **More info → Run anyway**.
+The Windows candidate is unsigned, so Windows may show an Unknown publisher or SmartScreen warning. Verify the published SHA-256 before choosing **More info → Run anyway**. Sensitive configuration, database, and credential files use a native protected DACL limited to the current user, Local System, and Administrators. Packaged Codex quota queries run through a fixed-purpose broker beside `AACC.exe`; the broker accepts only the read-only Codex app-server command and contains its process tree.
+
+Developers can still build the onedir payload from source with Python 3.12+, [uv](https://docs.astral.sh/uv/), and `.\scripts\build_windows.ps1`. The portable bundle is a CI/debugging artifact, not the primary user download.
 
 Capability comparison with the macOS build:
 

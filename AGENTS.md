@@ -4,9 +4,9 @@
 
 ## 项目概览
 
-AACC（AI Agent Control Center）：macOS 菜单栏面板应用，监控本机运行的
-Agent CLI 任务（Codex、Kimi Code），支持状态展示、窗口聚焦、按键/语音注入。
-Python 3.12+ / PySide6，src 布局，包名 `aacc`。
+AACC（AI Agent Control Center）：macOS 菜单栏 / Windows 托盘面板应用，
+监控本机运行的 Agent CLI 任务（Codex、Kimi Code），支持状态展示、窗口聚焦、
+按键/语音注入。Python 3.12+ / PySide6，src 布局，包名 `aacc`。
 
 ## 常用命令
 
@@ -22,6 +22,10 @@ Python 3.12+ / PySide6，src 布局，包名 `aacc`。
 scripts/build_app.sh
 # 安装到 ~/Applications 并启动（SKIP_BUILD=1 复用已有 dist 只重装 runtime）
 scripts/install.sh
+# Windows onedir + 原生 broker
+scripts\build_windows.ps1
+# Windows 当前用户 Setup（输出 AACC-<version>-Setup.exe + .sha256）
+scripts\build_windows_installer.ps1
 ```
 
 ## 架构要点
@@ -56,7 +60,30 @@ scripts/install.sh
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-26）
+## 当前进度（2026-07-27）
+
+- `codex/v1.4.2-quota-windows-hardening`：**1.4.2 Windows Setup 候选正在收尾，
+  尚未发布**。主 Windows 候选产物为 `AACC-1.4.2-Setup.exe`，当前用户、
+  无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面
+  快捷方式可选、不添加启动项，升级/卸载保留 `%APPDATA%\AACC`。
+- 已移除冻结运行时对 `whoami.exe`、`icacls.exe`、`taskkill.exe` 的依赖：
+  Windows 敏感目录/文件使用 pywin32 原生精确受保护 DACL（当前用户、System、
+  Administrators），Codex 只读 app-server 由旁置 `/MT` 静态
+  `aacc-spawn.exe` 与 Job Object 管理。SQLite database/WAL/SHM 也走同一保护
+  门面。
+- Setup 在升级/卸载前使用 `--shutdown-for-update` 请求 20 秒内优雅退出；
+  候选 CI 已加入 Windows Server 2022/2025 的冻结包启动、broker、安装、重装、
+  回滚、卸载、ACL 与进程清理产品冒烟。**最终候选提交的 hosted 全量结果尚待
+  记录，不能写成已通过。**
+- 额度最终布局：Codex 仅一行 `WEEK`；Kimi 为 `5H`、`WEEK`、`MONTH`，行内
+  显示百分比、进度条和完整本地重置日期时间。Kimi 会员网页会话在 AACC 本地
+  缓存到明确退出，并每五分钟一起刷新三窗口；额度元数据查询不消耗模型 Token。
+- 发版仍被人工门禁阻塞：真实 Windows 10/11 标准用户完整清单、另一无特权账户
+  对配置/凭据/数据库/WAL/SHM 的拒读、真实 Kimi/Codex、SmartScreen、托盘、
+  聚焦/热键和长时间运行。完成并附证据前不得创建 `v1.4.2` tag 或正式 Release。
+- 1.4.2 macOS DMG 仍是候选产物。已正式发布的 Latest 仍为 1.4.1。
+
+### 历史基线（2026-07-26）
 
 - `main`：**Windows 移植已合并（merge `a47196e`，未发版）**。另含
   `1eb8a58` 修复：取消的回合（turn.cancel 无 usage.record）与从未有回合
