@@ -504,9 +504,11 @@ line to stderr.
 `build_spawn_broker.ps1`:
 
 1. reads version with `uv version --short`;
-2. locates the latest installed Visual Studio with `vswhere.exe`, initializes
-   its x64 developer environment, and verifies `cl.exe`, `link.exe`, `rc.exe`,
-   and `dumpbin.exe` directly;
+2. enumerates all `vswhere` instances as UTF-8 JSON with a timeout, sorts and
+   de-duplicates them by installation version, then initializes each x64
+   developer environment in isolation; it selects only a candidate whose
+   parsed `cl.exe`, `link.exe`, and `dumpbin.exe` are below `VCToolsInstallDir`
+   and whose `rc.exe` is below `WindowsSdkDir`;
 3. renders the `.rc` file with product version and protocol 1;
 4. compiles with `/std:c++17 /O2 /MT /GS /guard:cf /W4 /WX /DUNICODE
    /D_UNICODE`;

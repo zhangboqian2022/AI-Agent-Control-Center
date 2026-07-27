@@ -9,16 +9,25 @@ ROOT = Path(__file__).parents[1]
 
 def test_windows_build_compiles_static_spawn_broker() -> None:
     script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
+    toolchain = (ROOT / "scripts" / "windows_toolchain.ps1").read_text(encoding="utf-8")
 
     for compiler_flag in ("/std:c++17", "/O2", "/MT", "/GS", "/guard:cf", "/W4", "/WX"):
         assert compiler_flag in script
     for linker_flag in ("/DYNAMICBASE", "/NXCOMPAT", "/HIGHENTROPYVA"):
         assert linker_flag in script
     assert "vswhere.exe" in script
-    assert "-latest -prerelease -products * -property installationPath" in script
-    assert "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64" not in script
+    assert "windows_toolchain.ps1" in script
+    assert "Get-AaccVsWhereCandidates" in script
+    assert "-all -prerelease -products * -format json -utf8" in toolchain
+    assert "-latest" not in toolchain
+    assert "-requires" not in toolchain
+    assert "WaitForExit($TimeoutSeconds * 1000)" in toolchain
+    for variable in ("VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH"):
+        assert variable in toolchain
+    for root in ("VCToolsInstallDir", "WindowsSdkDir"):
+        assert root in toolchain
     for tool in ("cl.exe", "link.exe", "rc.exe", "dumpbin.exe"):
-        assert f"Get-Command {tool} -ErrorAction Stop" in script
+        assert tool in script and tool in toolchain
     assert '-version "[17.0,18.0)"' not in script
     assert "Visual Studio 2022" not in script
     assert "uv version --short" in script
