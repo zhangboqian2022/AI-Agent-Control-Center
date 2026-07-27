@@ -651,6 +651,10 @@ class FakeWindow:
 class FakeQtApplication:
     def __init__(self) -> None:
         self.parented_timers: list[FakeTimer] = []
+        self.exit_codes: list[int] = []
+
+    def exit(self, code: int) -> None:
+        self.exit_codes.append(code)
 
 
 class FakeSignal:
@@ -736,6 +740,7 @@ def test_shutdown_event_quits_through_window_once(monkeypatch: pytest.MonkeyPatc
     app.parented_timers[0].fire()
 
     assert window.quit_calls == 1
+    assert app.exit_codes == [0]
     assert app.parented_timers[0].started is False
     assert api.closed_events == []
     listener.stop()
@@ -860,5 +865,6 @@ def test_shutdown_listener_cleanup_failures_cannot_block_fail_safe_quit(
     listener.stop()
     assert api.closed_events == [shutdown_event_name(201)]
     assert window.quit_calls == 1
+    assert app.exit_codes == [0]
     assert listener._timer is None
     assert listener._event is None
