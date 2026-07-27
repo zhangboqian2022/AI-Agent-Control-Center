@@ -155,7 +155,11 @@ def parse_membership_quota(
 
     # Only the balance object describes the quota-window reset. Subscription
     # and root-level billing dates can instead be annual renewal dates.
-    monthly_reset = _timestamp(_first(balance, "expireTime", "resetTime"))
+    monthly_reset = None
+    for reset_key in ("expireTime", "resetTime"):
+        monthly_reset = _timestamp(_first(balance, reset_key))
+        if monthly_reset is not None:
+            break
     if monthly is not None:
         monthly = QuotaDetail(
             used=monthly.used,
@@ -188,7 +192,7 @@ def merge_kimi_quota(
 ) -> KimiQuota:
     """Prefer coherent web data and use Kimi Code only for its two windows."""
 
-    reference_time = now or (web.fetched_at if web is not None else None) or datetime.now(UTC)
+    reference_time = now or datetime.now(UTC)
     code_is_fresh = False
     if code is not None and code.fetched_at is not None:
         age_seconds = (reference_time - code.fetched_at).total_seconds()

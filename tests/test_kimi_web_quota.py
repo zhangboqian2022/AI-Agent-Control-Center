@@ -136,6 +136,24 @@ def test_monthly_reset_does_not_fall_back_to_annual_billing_time():
     assert result.monthly.reset_at is None
 
 
+def test_monthly_reset_skips_invalid_expiry_and_accepts_valid_reset_time():
+    result = parse_membership_quota(
+        {
+            "subscriptionBalance": {
+                "amountUsedRatio": 0.31,
+                "expireTime": "not-a-timestamp",
+                "resetTime": "2026-08-20T13:28:47Z",
+            }
+        },
+        {},
+        now=NOW,
+    )
+
+    assert result.monthly is not None
+    assert result.monthly.percentage == 31
+    assert result.monthly.reset_at == datetime(2026, 8, 20, 13, 28, 47, tzinfo=UTC)
+
+
 @pytest.mark.parametrize("untrusted_key", ["resetAt", "expiresAt", "nextResetTime"])
 def test_monthly_reset_rejects_noncanonical_balance_fields(untrusted_key: str):
     result = parse_membership_quota(
@@ -223,7 +241,7 @@ def test_merge_rejects_code_fallback_older_than_330_seconds():
         fetched_at=NOW - timedelta(seconds=331),
     )
 
-    result = merge_kimi_quota(web, code)
+    result = merge_kimi_quota(web, code, now=NOW)
 
     assert result.five_hour is None
     assert result.weekly is None
@@ -251,7 +269,7 @@ def test_merge_accepts_code_fallback_exactly_330_seconds_old():
         booster=code_booster,
     )
 
-    result = merge_kimi_quota(web, code)
+    result = merge_kimi_quota(web, code, now=NOW)
 
     assert result.five_hour is code.five_hour
     assert result.weekly is code.weekly
@@ -280,8 +298,8 @@ def test_merge_rejects_code_fallback_without_timestamp_or_from_future():
         fetched_at=NOW + timedelta(seconds=1),
     )
 
-    missing_result = merge_kimi_quota(web, without_timestamp)
-    future_result = merge_kimi_quota(web, future)
+    missing_result = merge_kimi_quota(web, without_timestamp, now=NOW)
+    future_result = merge_kimi_quota(web, future, now=NOW)
 
     assert missing_result.five_hour is None
     assert missing_result.weekly is None
@@ -320,7 +338,70 @@ def test_merge_rejects_stale_or_unverifiable_code_metadata(
         booster=code_booster,
     )
 
-    result = merge_kimi_quota(web, code)
+    result = merge_kimi_quota(web, code, now=NOW)
 
     assert result.membership_level is None
     assert result.booster is None
+
+
+def test_merge_accepts_current_code_when_web_snapshot_is_old():
+    current = datetime.now(UTC)
+    web = quota(
+        five_hour=None,
+        weekly=None,
+        monthly=detail(31),
+        fetched_at=current - timedelta(minutes=10),
+    )
+    code = quota(
+        five_hour=detail(2),
+        weekly=detail(72),
+        monthly=detail(99),
+        fetched_at=current,
+    )
+
+    result = merge_kimi_quota(web, code)
+
+    assert result.five_hour is code.five_hour
+    assert result.weekly is code.weekly
+
+
+def test_merge_accepts_code_newer_than_web_when_both_are_current():
+    current = datetime.now(UTC)
+    web = quota(
+        five_hour=None,
+        weekly=None,
+        monthly=detail(31),
+        fetched_at=current - timedelta(seconds=5),
+    )
+    code = quota(
+        five_hour=detail(2),
+        weekly=detail(72),
+        monthly=detail(99),
+        fetched_at=current - timedelta(seconds=4),
+    )
+
+    result = merge_kimi_quota(web, code)
+
+    assert result.five_hour is code.five_hour
+    assert result.weekly is code.weekly
+
+
+def test_merge_rejects_code_when_web_and_code_are_equally_old():
+    old = datetime.now(UTC) - timedelta(minutes=10)
+    web = quota(
+        five_hour=None,
+        weekly=None,
+        monthly=detail(31),
+        fetched_at=old,
+    )
+    code = quota(
+        five_hour=detail(2),
+        weekly=detail(72),
+        monthly=detail(99),
+        fetched_at=old,
+    )
+
+    result = merge_kimi_quota(web, code)
+
+    assert result.five_hour is None
+    assert result.weekly is None

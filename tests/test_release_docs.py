@@ -202,3 +202,30 @@ def test_old_kimi_web_quota_design_is_explicitly_superseded() -> None:
     assert "nextBillingTime" not in design
     assert "native per-application WebView store" in design
     assert re.search(r"protected\s+reuse\s+decision", design)
+
+
+def test_superseded_kimi_plan_and_windows_setup_design_use_correct_session_boundary() -> None:
+    plan = _read("docs/superpowers/plans/2026-07-27-kimi-web-quota-readable-bars.md")
+    windows_design = _read("docs/superpowers/specs/2026-07-27-windows-stable-setup-design.md")
+
+    assert "Status: Superseded by" in plan
+    assert "2026-07-27-kimi-web-session-correction.md" in plan
+    assert "Do not execute this plan" in plan
+    assert "profile path is protected" not in plan
+    assert "clears cookies, HTTP cache, and persistent storage" not in plan
+    assert re.search(r"does not expose a configurable\s+profile path", plan)
+
+    normalized_design = " ".join(windows_design.split())
+    for term in (
+        "AACC-owned",
+        "protected reuse decision",
+        "Kimi Code OAuth credentials",
+        "native WebView store",
+        "no claim that Setup preserves or removes",
+    ):
+        assert term in normalized_design
+    assert "the cached Kimi login survive" not in normalized_design
+
+    readme = _read("README.md")
+    assert "stored separately and are not part of this web reuse gate" in readme
+    assert "Kimi Code OAuth credentials are unaffected" not in readme
