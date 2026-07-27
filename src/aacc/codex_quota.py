@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
 
 MAX_CODEX_QUOTA_TAIL_BYTES = 262_144
 MAX_CODEX_QUOTA_LINE_BYTES = 65_536
@@ -32,6 +33,10 @@ class CodexQuotaSnapshot:
     observed_at: datetime | None
     status: CodexQuotaStatus
     plan_type: str | None = None
+
+
+class CodexQuotaReaderLike(Protocol):
+    def read_latest(self) -> CodexQuotaSnapshot: ...
 
 
 def _unknown() -> CodexQuotaSnapshot:
@@ -252,3 +257,22 @@ class CodexQuotaReader:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
         return items
+
+
+class CompositeCodexQuotaReader:
+    """Prefer live account quota and retain bounded local metadata as fallback."""
+
+    def __init__(
+        self,
+        primary: CodexQuotaReaderLike | None,
+        fallback: CodexQuotaReaderLike,
+    ) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    def read_latest(self) -> CodexQuotaSnapshot:
+        if self._primary is not None:
+            live = self._primary.read_latest()
+            if live.status is CodexQuotaStatus.OK:
+                return live
+        return self._fallback.read_latest()

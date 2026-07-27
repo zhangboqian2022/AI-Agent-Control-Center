@@ -22,7 +22,7 @@ class CodexQuotaService(QObject):
         self,
         reader: CodexQuotaReaderLike,
         *,
-        interval_seconds: float = 10.0,
+        interval_seconds: float = 60.0,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)

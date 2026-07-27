@@ -16,7 +16,8 @@ from aacc.accessibility import is_accessibility_trusted, open_accessibility_sett
 from aacc.api import create_api
 from aacc.automation import create_automation
 from aacc.automation_executor import AutomationController, AutomationExecutor
-from aacc.codex_quota import CodexQuotaReader
+from aacc.codex_app_server import CodexAppServerReader, find_codex_executable
+from aacc.codex_quota import CodexQuotaReader, CompositeCodexQuotaReader
 from aacc.codex_quota_service import CodexQuotaService
 from aacc.config import load_config, rotate_api_token
 from aacc.constants import (
@@ -75,7 +76,12 @@ def _default_codex_quota_service_factory(
 ) -> CodexQuotaService | None:
     if not config.app.codex_quota_enabled:
         return None
-    reader = CodexQuotaReader(Path.home() / ".codex" / "sessions")
+    executable = find_codex_executable()
+    live_reader = CodexAppServerReader(executable) if executable is not None else None
+    reader = CompositeCodexQuotaReader(
+        live_reader,
+        CodexQuotaReader(Path.home() / ".codex" / "sessions"),
+    )
     return CodexQuotaService(reader)
 
 
