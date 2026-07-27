@@ -7,9 +7,48 @@ $OwnedProcessRegistry = New-Object System.Collections.ArrayList
 # CIM_DATETIME stores six fractional digits; one microsecond is ten .NET ticks.
 $CreationTickTolerance = 10
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class AaccSmokeNativeProcess
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool QueryFullProcessImageNameW(
+        IntPtr process,
+        uint flags,
+        StringBuilder imagePath,
+        ref uint imagePathLength
+    );
+}
+'@
+
 function Assert-True {
     param([Parameter(Mandatory = $true)][bool]$Condition, [string]$Message = "assertion failed")
     if (-not $Condition) { throw $Message }
+}
+
+function Get-ProcessImagePath {
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    $Capacity = 32768
+    $Buffer = New-Object System.Text.StringBuilder $Capacity
+    [uint32]$Length = $Capacity
+    if (-not [AaccSmokeNativeProcess]::QueryFullProcessImageNameW(
+        $Process.Handle,
+        [uint32]0,
+        $Buffer,
+        [ref]$Length
+    )) {
+        $ErrorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "QueryFullProcessImageNameW failed with Win32 error $ErrorCode"
+    }
+    $ImagePath = $Buffer.ToString()
+    if ([string]::IsNullOrWhiteSpace($ImagePath)) {
+        throw "QueryFullProcessImageNameW returned an empty image path"
+    }
+    return $ImagePath
 }
 
 function ConvertTo-ProcessArgument {
@@ -91,7 +130,7 @@ function Get-ProcessIdentity {
     try {
         return [pscustomobject]@{
             Id = $Process.Id
-            Path = $Process.MainModule.FileName
+            Path = Get-ProcessImagePath -Process $Process
             CreationTimeUtc = $Process.StartTime.ToUniversalTime().Ticks
         }
     }
@@ -1506,6 +1545,11 @@ function Test-InstalledControlRefusal {
                 [int64]$ReadyRecord.creation_time
             ).Ticks
         }
+        Write-SmokeEvidence -Category "$Action\$Scenario" `
+            -Name "ready-identity-compare.json" -Value ([ordered]@{
+                captured = $Legacy.Identity
+                reported = $ReadyIdentity
+            })
         Assert-True (
             Test-ProcessIdentityExactMatch -ExpectedIdentity $Legacy.Identity `
                 -CurrentIdentity $ReadyIdentity

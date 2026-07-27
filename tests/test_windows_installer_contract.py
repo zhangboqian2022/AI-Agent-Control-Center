@@ -115,12 +115,16 @@ def test_windows_smoke_accepts_empty_process_argument_arrays() -> None:
         assert "[AllowEmptyCollection()][string[]]$Arguments" in function
 
 
-def test_windows_smoke_reads_executable_path_from_the_process_module() -> None:
+def test_windows_smoke_reads_executable_path_from_the_owned_process_handle() -> None:
     text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
     function = text.split("function Get-ProcessIdentity", 1)[1].split("\n}", 1)[0]
 
-    assert "$Process.MainModule.FileName" in function
+    assert "Get-ProcessImagePath -Process $Process" in function
     assert "Path = $Process.Path" not in function
+    assert "$Process.MainModule.FileName" not in function
+    assert "QueryFullProcessImageNameW" in text
+    assert "$Process.Handle" in text
+    assert "[Runtime.InteropServices.Marshal]::GetLastWin32Error()" in text
 
 
 def test_windows_smoke_fixtures_use_only_command_line_unicode_definitions() -> None:
@@ -211,6 +215,12 @@ def test_windows_legacy_fixture_uses_a_harness_only_graceful_stop_event() -> Non
     assert set_environment < start < clear_environment < ready < invoke_setup
     assert "[DateTime]::FromFileTimeUtc(" in refusal
     assert "Test-ProcessIdentityExactMatch -ExpectedIdentity $Legacy.Identity" in refusal
+    assert '"ready-identity-compare.json"' in refusal
+    ready_compare = refusal.index('"ready-identity-compare.json"')
+    ready_assert = refusal.index(
+        '"legacy fixture ready identity differs from its captured process"'
+    )
+    assert ready_compare < ready_assert
     assert '"post-refusal-identity.json"' in refusal
     post_refusal = refusal.index('"post-refusal-identity.json"')
     refusal_alive = refusal.index('"$Action refusal terminated the legacy main process"')
