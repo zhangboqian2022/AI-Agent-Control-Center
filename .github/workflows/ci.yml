@@ -73,9 +73,12 @@ jobs:
           if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
           if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
           $listing = (uv run pyi-archive_viewer -r "dist\AACC\AACC.exe" | Out-String)
-          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker", "win32event")) {
+          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker")) {
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
+          $eventModules = @(Get-ChildItem -LiteralPath "dist\AACC" -Recurse -File -Filter "win32event*.pyd")
+          if ($eventModules.Count -ne 1) { throw "Expected exactly one win32event extension module" }
+          if ($eventModules[0].Length -le 0) { throw "win32event extension module is empty" }
       - name: Smoke frozen Windows product
         shell: powershell
         run: ./scripts/test_windows_package.ps1 -FrozenOnly
@@ -111,9 +114,12 @@ jobs:
           if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
           if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
           $listing = (uv run pyi-archive_viewer -r "dist\AACC\AACC.exe" | Out-String)
-          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker", "win32event")) {
+          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker")) {
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
+          $eventModules = @(Get-ChildItem -LiteralPath "dist\AACC" -Recurse -File -Filter "win32event*.pyd")
+          if ($eventModules.Count -ne 1) { throw "Expected exactly one win32event extension module" }
+          if ($eventModules[0].Length -le 0) { throw "win32event extension module is empty" }
       - name: Smoke frozen and installed Windows product
         shell: powershell
         run: ./scripts/test_windows_package.ps1
