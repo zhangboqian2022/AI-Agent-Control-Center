@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import json
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl, Signal
@@ -16,7 +16,9 @@ from aacc.file_security import protect_directory
 KIMI_MEMBERSHIP_URL = "https://www.kimi.com/membership/subscription"
 KIMI_ORIGIN_HOST = "www.kimi.com"
 BRIDGE_PREFIX = "AACC_KIMI_QUOTA:"
+BRIDGE_PAYLOAD_KEY = "__AACC_KIMI_QUOTA_PAYLOAD__"
 _webview_initialized = False
+_logger = logging.getLogger("aacc.kimi_web_session")
 
 
 def initialize_native_webview() -> None:
@@ -38,9 +40,10 @@ def membership_fetch_script() -> str:
     return f"""
 (() => {{
   const prefix = {json.dumps(BRIDGE_PREFIX)};
+  const payloadKey = {json.dumps(BRIDGE_PAYLOAD_KEY)};
   const emit = (payload) => {{
-    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-    document.title = prefix + encoded;
+    window[payloadKey] = JSON.stringify(payload);
+    document.title = prefix + 'ready:' + Date.now() + ':' + Math.random();
   }};
   const request = async (method) => {{
     let accessToken = localStorage.getItem('access_token');
@@ -157,6 +160,7 @@ class KimiWebSession(QObject):
         self.view.deleteLater()
 
     def _run_fetch(self) -> None:
+        _logger.info("Kimi web quota refresh started url=%s", self.view.url().toString())
         self.view.runJavaScript(membership_fetch_script(), lambda _result: None)
 
     def _on_loading_changed(self, info: QWebViewLoadingInfo) -> None:
@@ -178,11 +182,22 @@ class KimiWebSession(QObject):
     def _on_title_changed(self, title: str) -> None:
         if not title.startswith(BRIDGE_PREFIX):
             return
-        encoded = title.removeprefix(BRIDGE_PREFIX)
+        script = (
+            "(() => {"
+            f"const key = {json.dumps(BRIDGE_PAYLOAD_KEY)};"
+            "const value = window[key] || '';"
+            "delete window[key];"
+            "return value;"
+            "})()"
+        )
+        self.view.runJavaScript(script, self._on_bridge_result)
+
+    def _on_bridge_result(self, raw: object) -> None:
         try:
-            raw = base64.b64decode(encoded, validate=True).decode("utf-8")
+            if not isinstance(raw, str):
+                raise ValueError
             payload = json.loads(raw)
-        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        except (ValueError, json.JSONDecodeError):
             self._handle_bridge({"kind": "error", "message": "invalid membership response"})
             return
         self._handle_bridge(payload)
@@ -194,15 +209,27 @@ class KimiWebSession(QObject):
             return
         kind = payload.get("kind")
         if kind == "quota":
+            stats = payload.get("stats")
+            subscription = payload.get("subscription")
+            _logger.info(
+                "Kimi web quota refresh completed stats_keys=%s subscription_keys=%s",
+                sorted(stats) if isinstance(stats, dict) else [],
+                sorted(subscription) if isinstance(subscription, dict) else [],
+            )
             self.login_state_changed.emit(True)
-            self.quota_received.emit(payload.get("stats"), payload.get("subscription"))
+            self.quota_received.emit(stats, subscription)
             if self._login_dialog is not None:
                 self._login_dialog.accept()
             return
         if kind == "unauthorized":
+            _logger.warning(
+                "Kimi web quota refresh unauthorized message=%s",
+                payload.get("message"),
+            )
             self.login_state_changed.emit(False)
             return
         message = payload.get("message")
+        _logger.warning("Kimi web quota refresh failed message=%s", message)
         self.error_occurred.emit(
             message if isinstance(message, str) and message else "Kimi 会员额度刷新失败"
         )
