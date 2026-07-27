@@ -9,6 +9,8 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,23 +24,40 @@ jobs:
       - name: Format
         run: uv run ruff format --check src tests
       - name: Type check
-        if: matrix.os == 'macos-latest'
         run: uv run mypy src/aacc
       - name: Test
-        run: QT_QPA_PLATFORM=offscreen uv run pytest --cov=src/aacc --cov-report=xml -q
+        run: uv run pytest --cov=src/aacc --cov-report=xml -q
       - name: Changed-line coverage
         if: matrix.os == 'macos-latest'
         run: uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
       - name: Dependency vulnerability scan
-        if: matrix.os == 'macos-latest'
         run: |
-          uv export --locked --extra dev --no-emit-project \
-            --format requirements-txt --output-file pip-audit-requirements.txt
-          uv run pip-audit --requirement pip-audit-requirements.txt \
-            --no-deps --disable-pip --format=json --output=pip-audit.json
+          uv export --locked --extra dev --no-emit-project --format requirements-txt --output-file pip-audit-requirements.txt
+          uv run pip-audit --requirement pip-audit-requirements.txt --no-deps --disable-pip --format=json --output=pip-audit-${{ matrix.os }}.json
+          uv run python -c "from pathlib import Path; assert Path('pip-audit-${{ matrix.os }}.json').stat().st_size > 0"
       - name: Upload vulnerability report
-        if: always() && matrix.os == 'macos-latest'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pip-audit-report
-          path: pip-audit.json
+          name: pip-audit-${{ matrix.os }}
+          path: pip-audit-${{ matrix.os }}.json
+          if-no-files-found: error
+      - name: Build macOS app
+        if: matrix.os == 'macos-latest'
+        run: scripts/build_app.sh
+      - name: Assert macOS app
+        if: matrix.os == 'macos-latest'
+        run: test -d dist/AACC.app
+      - name: Build Windows app
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Assert Windows executable and modules
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\AACC\AACC.exe")) { throw "AACC.exe missing" }
+          $listing = (uv run pyi-archive_viewer -r "dist\AACC\AACC.exe" | Out-String)
+          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows")) {
+            if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
+          }
