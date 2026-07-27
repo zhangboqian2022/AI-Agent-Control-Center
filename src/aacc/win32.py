@@ -15,11 +15,13 @@ from collections.abc import Callable
 from ctypes import wintypes
 from typing import Any, cast
 
-# Assigned only inside the win32 branch so the module imports everywhere and
-# mypy (targeting this host platform) never sees ctypes.windll.
+# Assigned only inside the win32 branch so the module imports everywhere.
+# WinDLL(use_last_error=True) gives every wrapper a reliable GetLastError value.
 user32: Any = None
+kernel32: Any = None
 if sys.platform == "win32":  # pragma: no cover - requires Windows
-    user32 = ctypes.windll.user32
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 SW_RESTORE = 9
 VK_CONTROL = 0x11
@@ -29,6 +31,20 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 WM_HOTKEY = 0x0312
 MOD_NOREPEAT = 0x4000
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+SYNCHRONIZE = 0x00100000
+WAIT_OBJECT_0 = 0x00000000
+WAIT_TIMEOUT = 0x00000102
+WAIT_FAILED = 0xFFFFFFFF
+MAX_PROCESS_IMAGE_PATH = 32_768
+
+
+class Win32CallError(OSError):
+    """Win32 wrapper failure with a stable numeric code for safe decisions."""
+
+    def __init__(self, operation: str, winerror_code: int) -> None:
+        super().__init__(winerror_code, f"{operation} failed")
+        self.winerror_code = winerror_code
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -82,6 +98,55 @@ def _require_user32() -> Any:
     return user32
 
 
+def _require_kernel32() -> Any:
+    if kernel32 is None:
+        raise OSError("aacc.win32 requires Windows")
+    return kernel32
+
+
+def _raise_winerror(operation: str) -> None:
+    error_code = getattr(ctypes, "get_last_error", lambda: 0)()
+    raise Win32CallError(operation, error_code)
+
+
+if user32 is not None:  # pragma: no cover - requires Windows
+    user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterWindowMessageW.restype = wintypes.UINT
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.PostMessageW.argtypes = [
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    ]
+    user32.PostMessageW.restype = wintypes.BOOL
+
+if kernel32 is not None:  # pragma: no cover - requires Windows
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+
 def find_window_by_title(substring: str) -> int | None:
     """First visible top-level window whose title contains the substring."""
     u32 = _require_user32()
@@ -101,6 +166,99 @@ def find_window_by_title(substring: str) -> int | None:
 
     u32.EnumWindows(_callback, 0)
     return found[0] if found else None
+
+
+def find_exact_windows(title: str) -> tuple[int, ...]:
+    """Enumerate every top-level window with an exact title, including hidden ones."""
+    u32 = _require_user32()
+    found: list[int] = []
+
+    @_WNDENUMPROC
+    def _callback(hwnd: int, _lparam: int) -> bool:
+        length = u32.GetWindowTextLengthW(hwnd)
+        if length == len(title):
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            u32.GetWindowTextW(hwnd, buffer, length + 1)
+            if buffer.value == title:
+                found.append(int(hwnd))
+        return True
+
+    if not u32.EnumWindows(_callback, 0):
+        _raise_winerror("EnumWindows")
+    return tuple(found)
+
+
+def register_window_message(name: str) -> int:
+    u32 = _require_user32()
+    message = int(u32.RegisterWindowMessageW(name))
+    if message == 0:
+        _raise_winerror("RegisterWindowMessageW")
+    return message
+
+
+def window_process_id(hwnd: int) -> int:
+    u32 = _require_user32()
+    pid = wintypes.DWORD()
+    thread_id = u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if not thread_id or not pid.value:
+        _raise_winerror("GetWindowThreadProcessId")
+    return int(pid.value)
+
+
+def post_message(hwnd: int, message: int) -> None:
+    u32 = _require_user32()
+    if not u32.PostMessageW(hwnd, message, 0, 0):
+        _raise_winerror("PostMessageW")
+
+
+class VerifiedProcessHandle:
+    """One stable process object used for image verification and exit waiting."""
+
+    def __init__(self, handle: int, *, kernel32_module: Any | None = None) -> None:
+        self._kernel32 = _require_kernel32() if kernel32_module is None else kernel32_module
+        self._handle = handle
+        self._closed = False
+
+    def __enter__(self) -> VerifiedProcessHandle:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def image_name(self) -> str:
+        buffer = ctypes.create_unicode_buffer(MAX_PROCESS_IMAGE_PATH)
+        length = wintypes.DWORD(len(buffer))
+        if not self._kernel32.QueryFullProcessImageNameW(
+            self._handle, 0, buffer, ctypes.byref(length)
+        ):
+            _raise_winerror("QueryFullProcessImageNameW")
+        return buffer.value[: length.value]
+
+    def wait_for_exit(self, timeout_ms: int) -> bool:
+        result = int(self._kernel32.WaitForSingleObject(self._handle, timeout_ms))
+        if result == WAIT_OBJECT_0:
+            return True
+        if result == WAIT_TIMEOUT:
+            return False
+        if result == WAIT_FAILED:
+            _raise_winerror("WaitForSingleObject")
+        raise OSError(f"WaitForSingleObject returned unexpected status {result}")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if not self._kernel32.CloseHandle(self._handle):
+            _raise_winerror("CloseHandle")
+
+
+def open_verified_process(pid: int) -> VerifiedProcessHandle:
+    k32 = _require_kernel32()
+    access = PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+    handle = k32.OpenProcess(access, False, pid)
+    if not handle:
+        _raise_winerror("OpenProcess")
+    return VerifiedProcessHandle(int(handle), kernel32_module=k32)
 
 
 def focus_window(hwnd: int) -> bool:

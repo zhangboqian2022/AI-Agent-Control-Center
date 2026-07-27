@@ -1,4 +1,8 @@
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 import aacc.app as app_module
 from aacc.app import build_runtime
@@ -14,10 +18,216 @@ class FakeApplication:
     pass
 
 
+def _runtime_for_application_test(events: list[str]) -> SimpleNamespace:
+    class Service:
+        catalog: dict[str, object] = {}
+        auto_active_ids: set[str] = set()
+        retained_ids: set[str] = set()
+        muted_ids: set[str] = set()
+        health = None
+
+        def set_monitoring_preferences(self, *_args: object) -> None:
+            pass
+
+        def subscribe_health(self, *_args: object) -> None:
+            pass
+
+        def start(self) -> None:
+            events.append("service-start")
+
+    return SimpleNamespace(
+        manager=SimpleNamespace(),
+        automation_executor=SimpleNamespace(),
+        discovery=Service(),
+        kimi_discovery=Service(),
+        kimi_desktop_discovery=Service(),
+        quota_service=None,
+        kimi_web_quota_service=None,
+        codex_quota_service=None,
+        config=SimpleNamespace(
+            tasks=[],
+            hotkeys={},
+            app=SimpleNamespace(api=SimpleNamespace(enabled=False)),
+        ),
+        config_path=Path("config.yaml"),
+        close=lambda: events.append("runtime-close"),
+    )
+
+
+def _patch_application_shell(monkeypatch: object, events: list[str], runtime: object) -> None:
+    class Signal:
+        def connect(self, callback) -> None:
+            events.append("cleanup-connected")
+
+    class Application:
+        aboutToQuit = Signal()
+
+        def exec(self) -> int:
+            events.append("exec")
+            return 0
+
+    class Timer:
+        timeout = Signal()
+
+        def __init__(self, *_args: object) -> None:
+            pass
+
+        def setInterval(self, _interval: int) -> None:  # noqa: N802
+            pass
+
+        def start(self) -> None:
+            pass
+
+        @staticmethod
+        def singleShot(_delay: int, _callback) -> None:  # noqa: N802
+            pass
+
+    class Window:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.config = runtime.config  # type: ignore[attr-defined]
+            self.selected_task_id = None
+            self.external_action = SimpleNamespace(emit=lambda *_args: None)
+
+        def winId(self) -> int:  # noqa: N802
+            return 88
+
+        def show(self) -> None:
+            events.append("window-show")
+
+    monkeypatch.setattr(app_module, "configure_logging", lambda *_args: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "_create_qapplication", Application)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "build_runtime", lambda *_args, **_kwargs: runtime)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "MainWindow", Window)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "QTimer", Timer)  # type: ignore[attr-defined]
+
+
+def test_windows_listener_is_installed_before_hotkeys_and_survives_hotkey_failure(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+    _patch_application_shell(monkeypatch, events, runtime)
+
+    class Listener:
+        def start(self, _app, _window) -> None:
+            events.append("listener-start")
+
+        def stop(self) -> None:
+            events.append("listener-stop")
+
+    class FailingHotkeys:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            events.append("hotkeys-created")
+
+        def start(self) -> bool:
+            events.append("hotkeys-failed")
+            return False
+
+        def stop(self) -> None:
+            events.append("hotkeys-stop")
+
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "WindowsShutdownListener", Listener)  # type: ignore[attr-defined]
+    monkeypatch.setitem(  # type: ignore[attr-defined]
+        sys.modules,
+        "aacc.hotkeys_windows",
+        SimpleNamespace(WindowsGlobalHotkeys=FailingHotkeys),
+    )
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("listener-start") < events.index("window-show")
+    assert events.index("listener-start") < events.index("hotkeys-created")
+    assert "hotkeys-failed" in events
+    assert events.index("listener-stop") < events.index("hotkeys-stop")
+    assert events.index("hotkeys-stop") < events.index("runtime-close")
+
+
+def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_runtime(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    shown: list[str] = []
+    runtime = _runtime_for_application_test(events)
+    _patch_application_shell(monkeypatch, events, runtime)
+
+    class FailingListener:
+        def start(self, _app, _window) -> None:
+            raise OSError(r"secret=C:\private")
+
+        def stop(self) -> None:
+            events.append("listener-stop")
+            raise RuntimeError("private stop failure")
+
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "WindowsShutdownListener", FailingListener)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.QMessageBox,
+        "critical",
+        lambda _parent, _title, text: shown.append(text),
+    )
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 1
+    )
+    assert events == ["listener-stop", "runtime-close"]
+    assert shown and "secret" not in shown[0] and "STARTUP-SHUTDOWN-OSError" in shown[0]
+
+
+def test_windows_shutdown_control_command_runs_before_paths_or_guard(
+    monkeypatch: object,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module.sys, "argv", ["AACC.exe", "--shutdown-for-update"])  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "request_shutdown_for_update",
+        lambda: calls.append("shutdown") or 9,
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "resolve_database_path",
+        lambda: (_ for _ in ()).throw(AssertionError("paths must not resolve")),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "InstanceGuard",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("guard must not start")),
+    )
+
+    assert app_module.main() == 9
+    assert calls == ["shutdown"]
+
+
+def test_windows_shutdown_control_command_requires_exact_arguments(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.sys,
+        "argv",
+        ["AACC.exe", "--shutdown-for-update", "extra"],
+    )
+    monkeypatch.setenv("AACC_CONFIG_PATH", str(tmp_path / "config.yaml"))  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "InstanceGuard",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("normal startup reached")),
+    )
+
+    with pytest.raises(RuntimeError, match="normal startup reached"):
+        app_module.main()
+
+
 def test_security_failure_shows_sanitized_dialog_and_returns_nonzero(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "_create_qapplication", FakeApplication)  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module.QMessageBox,
@@ -55,6 +265,40 @@ def test_runtime_includes_kimi_desktop_discovery(tmp_path: Path) -> None:
     runtime = build_runtime(tmp_path / "config.yaml", tmp_path / "aacc.db")
     assert isinstance(runtime.kimi_desktop_discovery, KimiDesktopDiscoveryService)
     runtime.close()
+
+
+def test_runtime_close_reaches_manager_after_earlier_stop_failure(caplog) -> None:
+    calls: list[str] = []
+
+    class Component:
+        def __init__(self, name: str, *, fail: bool = False) -> None:
+            self.name = name
+            self.fail = fail
+
+        def stop(self) -> None:
+            calls.append(self.name)
+            if self.fail:
+                raise RuntimeError("private details")
+
+        def close(self) -> None:
+            self.stop()
+
+    runtime = app_module.Runtime(
+        config_path=Path("config.yaml"),
+        config=SimpleNamespace(),  # type: ignore[arg-type]
+        manager=Component("manager"),  # type: ignore[arg-type]
+        automation=SimpleNamespace(),  # type: ignore[arg-type]
+        automation_executor=Component("executor"),  # type: ignore[arg-type]
+        discovery=Component("codex", fail=True),  # type: ignore[arg-type]
+        kimi_discovery=Component("kimi"),  # type: ignore[arg-type]
+        kimi_desktop_discovery=Component("desktop"),  # type: ignore[arg-type]
+    )
+
+    runtime.close()
+
+    assert calls == ["desktop", "kimi", "codex", "executor", "manager"]
+    assert "private details" not in caplog.text
+    assert "Runtime cleanup failed stage=discovery" in caplog.text
 
 
 def test_second_launch_activates_existing_instance_without_runtime(
