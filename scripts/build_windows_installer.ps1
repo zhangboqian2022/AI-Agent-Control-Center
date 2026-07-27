@@ -55,15 +55,59 @@ function Assert-IsccVersion {
     }
 
     $VersionInfo = $Item.VersionInfo
-    if ($VersionInfo.FileMajorPart -ne 6 -or
-        $VersionInfo.FileMinorPart -ne 7 -or
-        $VersionInfo.FileBuildPart -ne 1 -or
+    Write-Host (
+        "AACC_ISCC_FIXED_VERSION file={0}.{1}.{2}.{3} product={4}.{5}.{6}.{7}" -f
+        $VersionInfo.FileMajorPart,
+        $VersionInfo.FileMinorPart,
+        $VersionInfo.FileBuildPart,
+        $VersionInfo.FilePrivatePart,
+        $VersionInfo.ProductMajorPart,
+        $VersionInfo.ProductMinorPart,
+        $VersionInfo.ProductBuildPart,
+        $VersionInfo.ProductPrivatePart
+    )
+    # Official ISCC.exe intentionally carries zeroed fixed PE version fields.
+    # Validate the real compiler engine below instead of inventing metadata.
+    if ($VersionInfo.FileMajorPart -ne 0 -or
+        $VersionInfo.FileMinorPart -ne 0 -or
+        $VersionInfo.FileBuildPart -ne 0 -or
         $VersionInfo.FilePrivatePart -ne 0 -or
-        $VersionInfo.ProductMajorPart -ne 6 -or
-        $VersionInfo.ProductMinorPart -ne 7 -or
-        $VersionInfo.ProductBuildPart -ne 1 -or
+        $VersionInfo.ProductMajorPart -ne 0 -or
+        $VersionInfo.ProductMinorPart -ne 0 -or
+        $VersionInfo.ProductBuildPart -ne 0 -or
         $VersionInfo.ProductPrivatePart -ne 0) {
         throw "ISCC version validation failed"
+    }
+
+    $ProbePath = Join-Path $ManifestBuildRoot "iscc-version-probe.iss"
+    $ProbeText = @"
+[Setup]
+AppName=AACC Inno Version Probe
+AppVersion=0
+DefaultDirName={tmp}\AACCInnoVersionProbe
+Uninstallable=no
+"@
+    [System.IO.File]::WriteAllText(
+        $ProbePath,
+        $ProbeText,
+        [System.Text.UTF8Encoding]::new($false, $true)
+    )
+    try {
+        $ProbeOutput = @(
+            & $Path "/O-" $ProbePath 2>&1 |
+                ForEach-Object { [string]$_ }
+        )
+        $ProbeExitCode = $LASTEXITCODE
+    }
+    finally {
+        Remove-Item -LiteralPath $ProbePath -Force -ErrorAction SilentlyContinue
+    }
+    $ExpectedEngineLine = "Compiler engine version: Inno Setup $InnoVersion"
+    $EngineMatches = @(
+        $ProbeOutput | Where-Object { $_.Trim() -ceq $ExpectedEngineLine }
+    )
+    if ($ProbeExitCode -ne 0 -or $EngineMatches.Count -ne 1) {
+        throw "ISCC version probe failed"
     }
 }
 
