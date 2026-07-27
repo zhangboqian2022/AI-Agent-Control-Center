@@ -332,13 +332,16 @@ diagnostic category and sanitized numeric Windows error.
 
 ### Frozen and installed product checks
 
-CI uses an isolated `AACC_CONFIG_PATH` and `AACC_DATABASE_PATH`.
+Frozen checks use isolated `AACC_CONFIG_PATH` and `AACC_DATABASE_PATH`.
+Installed checks instead isolate the user profile and exercise AACC's real
+default `%APPDATA%\AACC` structure.
 
 1. Build the onedir application and broker.
 2. Start the real frozen `AACC.exe`.
 3. Wait for config, database, and log creation.
 4. Require the process to remain alive for at least 20 seconds.
-5. Verify the exact file and directory ACL using the test process, not AACC.
+5. Verify protected DACLs down to exact SID, ACE type/count, full-control
+   mask, inheritance and propagation flags using the test process, not AACC.
 6. Point Codex discovery to a controlled `fake-codex.cmd`.
 7. Complete a real JSON-RPC initialize/rate-limits exchange through the
    broker.
@@ -350,18 +353,28 @@ CI uses an isolated `AACC_CONFIG_PATH` and `AACC_DATABASE_PATH`.
     and the absence of a default desktop shortcut.
 13. Repeat frozen first launch, ACL, broker, Codex, and graceful-shutdown
     checks from the installed directory.
-14. Create an AppData preservation marker and perform an in-place reinstall.
-15. Verify the marker, configuration, and cached data survive.
-16. Silent-uninstall while AACC is running.
-17. Verify graceful exit, removal of the two executables, `_internal`,
+14. Cover a stopped and running legacy portable that does not understand the
+    shutdown protocol; Setup must never hang or mutate on refusal.
+15. Snapshot the complete install/registry/shortcut/AppData state, lock a
+    payload, and prove a failed reinstall restores it byte-for-byte.
+16. Release the lock, reinstall while AACC is running, and verify stale
+    payload removal plus configuration/cached-data preservation.
+17. Silent-uninstall while AACC is running; separately prove shutdown failure
+    aborts without mutation.
+18. Verify graceful exit, removal of the two executables, `_internal`,
     shortcuts, and uninstall registration.
-18. Verify `%APPDATA%\AACC` and the marker remain.
-19. Generate and upload Setup, SHA-256, portable debug ZIP, audit reports, and
-    installation/uninstallation logs.
+19. Verify `%APPDATA%\AACC` and the marker remain.
+20. After both Windows matrix legs pass, a dependent artifact job revalidates
+    strict checksum/ZIP structure before uploading Setup, SHA-256, portable
+    debug ZIP, audit reports, and installation/uninstallation logs.
 
 Any frozen first-launch exit, ACL mismatch, broker dependency mismatch,
 orphan descendant, failed graceful shutdown, stale program payload, or missing
 artifact blocks merging into `main`.
+
+Hosted Windows Server evidence is labelled as such. It does not replace the
+Windows 10/11 consumer, standard-user, second-account, SmartScreen, or real
+Codex/Kimi manual release gates below.
 
 ## Manual Release Gates
 

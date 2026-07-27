@@ -955,6 +955,8 @@ git commit -m "feat: add per-user Windows setup"
 - Create: `tests/windows/fake_codex_server.py`
 - Create: `tests/windows/fake-codex.cmd`
 - Create: `tests/windows/fake_codex_timeout.py`
+- Create: `tests/windows/fake_legacy_aacc.cpp`
+- Create: `tests/windows/lock_payload.cpp`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `tests/test_packaging.py`
 
@@ -968,7 +970,8 @@ git commit -m "feat: add per-user Windows setup"
 ```python
 def test_ci_runs_real_windows_product_smoke():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-    assert "windows-2025" in workflow
+    assert "windows-2022" in workflow
+    assert "windows-2025-vs2026" in workflow
     assert "scripts/test_windows_package.ps1" in workflow
     assert "AACC-*-Setup.exe" in workflow
     assert "windows-smoke" in workflow
@@ -983,7 +986,10 @@ def test_ci_runs_real_windows_product_smoke():
 
 - [ ] **Step 3: Implement frozen first-launch orchestration**
 
-PowerShell creates an isolated directory and environment:
+PowerShell creates an isolated directory and environment whose name is built
+from character codes and includes Unicode, spaces, `&()`, `%`, `!`, and
+brackets. Use literal-path APIs throughout. Cover frozen config/database,
+fake Codex, Setup copy, `/LOG=`, PID, checksum, and ZIP paths:
 
 ```powershell
 $env:AACC_CONFIG_PATH = Join-Path $SmokeRoot "frozen\AACC\config.yaml"
@@ -996,18 +1002,30 @@ Start `dist\AACC\AACC.exe`, wait up to 30 seconds for config, database, log,
 and fake-Codex marker, then require the process to remain alive for another
 20 seconds.
 
-Use PowerShell/.NET ACL APIs to require a protected DACL whose explicit allow
-SIDs are exactly current user, `S-1-5-18`, and `S-1-5-32-544`.
+Use PowerShell/.NET ACL APIs to require a protected DACL with no deny or
+inherited ACEs, exactly one full-control Allow ACE for current user,
+`S-1-5-18`, and `S-1-5-32-544`, and no other SID. File ACEs have no
+inheritance flags; directory ACEs have the exact container/object inheritance
+and propagation contract. Validate the protected directory, config, database,
+and a credentials fixture created through the application path.
 
 Invoke `AACC.exe --shutdown-for-update`, require exit 0, and require the main
 PID to exit within 20 seconds.
 
 - [ ] **Step 4: Implement timeout and orphan-tree checks**
 
-The timeout fake writes root/child/grandchild PIDs, then blocks. After the
-reader timeout, poll every PID for up to 10 seconds and fail if any remains.
-Repeat the normal probe 20 times and ensure no `aacc-spawn`, fake Python, cmd,
-or Codex processes remain.
+The timeout fake writes root/child/grandchild PID, full image path, and
+creation-time identities, then blocks. After the reader timeout, poll those
+exact identities for up to 10 seconds and fail if any remains; never assert
+that all global `cmd.exe` or Python processes disappeared. Compare
+`aacc-spawn.exe` against a baseline PID/path set. Repeat the normal probe 20
+times and prove each owned tree is gone after the probe, AACC exit, reinstall,
+and uninstall.
+
+Every external Setup, uninstaller, fixture, and AACC control process has an
+outer harness deadline. Product logic never force-kills AACC. After a harness
+deadline, cleanup may terminate only test-owned processes and must still fail
+the smoke.
 
 - [ ] **Step 5: Implement silent install/reinstall/uninstall checks**
 
@@ -1020,8 +1038,11 @@ Install:
 ```
 
 Assert installed executables, `_internal`, HKCU uninstall entry, Start Menu
-shortcut, and no default desktop shortcut. Repeat first launch, ACL, fake
-Codex, timeout, and graceful shutdown from the installed path.
+shortcut, and no default desktop shortcut. Also require no HKLM uninstall
+entry, no Program Files payload, and clean pre-install state. Repeat first
+launch, exact ACL, fake Codex, timeout, and graceful shutdown from the
+installed path using the isolated default `%APPDATA%\AACC` structure rather
+than redirecting installed config/database to arbitrary paths.
 
 Write `%APPDATA%\AACC\preserve-me.txt`, reinstall the same Setup while AACC is
 running, and require graceful shutdown plus preserved marker/config.
@@ -1032,19 +1053,38 @@ while AppData and the marker remain.
 
 Exercise install, reinstall, and uninstall failure paths. A shutdown timeout
 or non-zero control result must abort before payload/registry/data mutation.
-Inject a copy failure by locking a replaceable payload during reinstall;
-require non-zero Setup exit, restoration of the previous executable, broker,
-and representative `_internal` hashes, successful restart of the old AACC,
-and unchanged `%APPDATA%\AACC`. If Inno does not restore files removed by
-`[InstallDelete]`, replace that approach with an explicit
-staging/backup/swap rollback before release.
+Add a compiled legacy-AACC fixture that owns the exact window title but
+ignores `--shutdown-for-update`. Cover an unregistered old portable while
+stopped, while running, and a same-name executable without the shutdown-v1
+capability. Setup must complete safely or return non-zero within the outer
+deadline and must never hang or mutate on refusal.
+
+Before fault injection, snapshot the complete `{app}` tree as relative path,
+size, and SHA-256 plus uninstall registry, shortcut, and AppData manifests.
+Add `_internal\rollback-sentinel.bin`, then use an independent native locker
+with `FileShare.None` to lock a replaceable payload and signal readiness.
+Require non-zero Setup exit, exact restoration of every manifest entry,
+continued presence of the rollback sentinel, no staging/backup residue or
+pending-reboot replacement, successful restart/broker exchange/shutdown of
+the old payload, and unchanged `%APPDATA%\AACC`. Release the lock and perform
+a successful reinstall; the sentinel must then be removed. If Inno does not
+restore files removed by `[InstallDelete]`, replace that approach with an
+explicit staging/backup/swap rollback before release.
+
+For install-over-legacy, reinstall, and uninstall, separately inject control
+timeout and non-zero results. After every refusal compare the complete
+payload, HKCU registry, shortcuts, and AppData snapshots. A successful
+uninstall is not complete until the uninstaller clone exits, self-removes,
+and the directory/registry/shortcuts are gone within a deadline.
 
 - [ ] **Step 6: Pin and extend the hosted workflow**
 
-Both `windows-2022` and `windows-2025-vs2026` continue compiling the broker
-and PyInstaller onedir. Set `AACC_SKIP_INSTALLER=1` on `windows-2022`; only
-`windows-2025-vs2026` bootstraps hash-pinned Inno 6.7.1, builds the primary
-Setup, and runs the full installed-product smoke:
+Both `windows-2022` and `windows-2025-vs2026` compile the broker and
+PyInstaller onedir and run frozen first-launch, exact ACL, broker exchange,
+timeout, and owned-process-tree cleanup. Set `AACC_SKIP_INSTALLER=1` on
+`windows-2022`; only `windows-2025-vs2026` bootstraps hash-pinned Inno 6.7.1,
+builds the primary Setup, and runs fresh install, running reinstall, failure
+rollback, and running uninstall:
 
 ```yaml
 - name: Build Windows app and Setup
@@ -1058,11 +1098,16 @@ Setup, and runs the full installed-product smoke:
   run: ./scripts/test_windows_package.ps1
 ```
 
-Only after the smoke succeeds, revalidate the Setup checksum and exact
-portable ZIP root structure, then upload Setup, SHA-256, and portable debug
-ZIP with `if-no-files-found: error`. Upload broker dependency output,
-ACL/audit reports, and smoke logs separately for diagnosis; a failed smoke
-must never publish a primary Setup artifact.
+After both matrix legs succeed, a separate final artifact job downloads the
+verified outputs. It revalidates the Setup checksum as lowercase 64 hex, two
+spaces, exact filename, LF, and no BOM. It rejects ZIP absolute paths, `..`,
+extra top-level entries, or a root other than `AACC/` containing exactly
+`AACC.exe`, `aacc-spawn.exe`, and `_internal`, then compares critical hashes
+with the built onedir. Only this job uploads Setup, SHA-256, and portable debug
+ZIP with `if-no-files-found: error`; it must not use `always()` or `failure()`.
+Upload broker dependency output, ACL/audit reports, installer logs, and smoke
+logs separately for diagnosis with `if: always()`. A failed smoke or either
+failed runner must never publish a primary Setup artifact.
 
 - [ ] **Step 7: Push and inspect the hosted Windows result**
 
@@ -1070,10 +1115,12 @@ Required evidence:
 
 - source suite and real native ACL pass;
 - broker build/import allowlist passes;
-- frozen and installed first launches survive;
+- both runner frozen launches and the installed first launch survive;
 - fake Codex exchange and process-tree cleanup pass;
-- reinstall and uninstall pass;
+- legacy refusal is bounded; reinstall, rollback, and uninstall pass;
 - Setup and SHA-256 artifacts are non-empty.
+- the run is labelled hosted Windows Server evidence, not Windows 10/11
+  consumer or separate-account validation.
 
 - [ ] **Step 8: Commit**
 
