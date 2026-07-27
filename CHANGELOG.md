@@ -2,6 +2,16 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.2 — release candidate (not released)
+
+[Bilingual candidate notes](docs/release-notes-1.4.2.md)
+
+- [Quota] Render Codex as one larger `WEEK` row and Kimi as `5H`, `WEEK`, and `MONTH`, with full local reset date/time in each available row. Refresh Kimi’s cached membership session every five minutes without consuming model tokens.
+- [Windows] Add the per-user, non-elevated `AACC-1.4.2-Setup.exe`; it installs under `%LocalAppData%\Programs\AACC`, supports graceful in-place upgrade/uninstall, and preserves `%APPDATA%\AACC`.
+- [Security] Replace `whoami.exe`/`icacls.exe` file protection with exact native protected DACLs. Route packaged Codex read-only app-server processes through a fixed-purpose static broker and remove `taskkill.exe`.
+- [Delivery] Add Windows Server 2022/2025 frozen/install/reinstall/rollback/uninstall smoke gates and keep the 1.4.2 macOS DMG as a candidate artifact.
+- [Release gate] `v1.4.2` and formal assets remain blocked on the real Windows 10/11 checklist and separate unprivileged-account denial test.
+
 ## 1.4.1 — 2026-07-24
 
 [Bilingual release notes](docs/release-notes-1.4.1.md)

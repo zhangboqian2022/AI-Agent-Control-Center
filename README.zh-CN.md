@@ -8,6 +8,8 @@ AACC 是一个本机优先的跨平台悬浮面板，用于查看你选择监控
 
 ![AACC 面板：不同状态的任务卡片](docs/images/panel-overview.png)
 
+_使用合成演示数据生成的界面示意图，不含真实账户或任务数据。_
+
 ![平台](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![许可证](https://img.shields.io/badge/license-MIT-blue) ![本机优先](https://img.shields.io/badge/privacy-local--first-18a999)
 
 ## 核心能力
@@ -65,17 +67,15 @@ cd AI-Agent-Control-Center
 ./scripts/build_dmg.sh
 ```
 
-### Windows
+### Windows 1.4.2 候选版
 
-要求 Windows 10+、Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)。
+1.4.2 的 Windows 主下载文件是 `AACC-1.4.2-Setup.exe`，并配套 `AACC-1.4.2-Setup.exe.sha256`。两者目前仍是候选产物：只有 Windows 10/11 人工门禁全部完成后，才会创建 `v1.4.2` tag 与正式 GitHub Release。
 
-```powershell
-git clone https://github.com/zhangboqian2022/AI-Agent-Control-Center.git
-cd AI-Agent-Control-Center
-.\scripts\build_windows.ps1
-```
+Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC`，其中包括设置、历史和缓存的 Kimi 网页会话；只有在 AACC 内主动退出登录或手工删除该目录后才会清除。
 
-构建产物为 windowed 单目录 `dist\AACC\AACC.exe`，直接运行即可。Windows 版未做代码签名，首次运行会出现 SmartScreen 提示——核对来源后选择“更多信息 → 仍要运行”。
+Windows 候选版尚未签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对已发布的 SHA-256，再选择“更多信息 → 仍要运行”。敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。
+
+开发者仍可使用 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和 `.\scripts\build_windows.ps1` 从源码生成 onedir 载荷。portable 包只用于 CI/调试，不是面向普通用户的主下载。
 
 与 macOS 版的能力对照：
 

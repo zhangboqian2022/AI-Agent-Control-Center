@@ -18,11 +18,21 @@ If Codex metadata polling repeatedly fails, a yellow banner appears without disc
 
 ## Codex weekly quota
 
-The Codex quota strip reads only the structured `rate_limits` object from bounded tails of recent local session files. It accepts a fresh 10080-minute weekly window and intentionally ignores legacy shorter windows, so there is no five-hour Codex field. AACC does not authenticate to Codex, call a private quota endpoint, or retain prompt/response content. Missing, expired, or changed metadata is shown as unavailable instead of zero usage. Click the strip to rescan.
+The Codex quota strip first starts the locally installed Codex `app-server` and calls only its read-only `account/rateLimits/read` method with the account already configured in Codex. It does not submit a prompt, start a task, or initiate login. If that path is unavailable, AACC falls back to the structured `rate_limits` object from bounded tails of recent local session files. It accepts only a future 10080-minute weekly window and intentionally ignores legacy shorter windows, so there is no five-hour Codex field. Missing, expired, or changed metadata is shown as unavailable instead of zero usage. Click the strip to refresh.
 
-## DMG installation
+Kimi shows `5H`, `WEEK`, and `MONTH`. Sign in to the Kimi membership website inside AACC to cache an isolated web session and refresh all three rows together every five minutes. Kimi Code can fill a temporarily missing `5H` or `WEEK`, but never invents `MONTH`. Quota lookups are metadata-only requests and consume no model tokens.
 
-Run `./scripts/build_dmg.sh` to create `AACC-1.4.1.dmg` on the desktop. Open it and drag `AACC.app` to Applications. This build is signed with a local self-signed certificate and is not notarized. Compare `shasum -a 256 AACC-1.4.1.dmg` with the published `.sha256` asset before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.
+## macOS DMG
+
+The published stable installer remains `AACC-1.4.1.dmg`. Building the current 1.4.2 source with `./scripts/build_dmg.sh` creates a versioned 1.4.2 DMG candidate; it is not a formal Release asset until the 1.4.2 gates close. Open the matching DMG and drag `AACC.app` to Applications. The local build is self-signed and not notarized. Compare `shasum -a 256 <file>.dmg` with its matching `.sha256` before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.
+
+## Windows Setup candidate
+
+The primary Windows 1.4.2 candidate is `AACC-1.4.2-Setup.exe`; ordinary users do not need Python or `uv`. Verify `AACC-1.4.2-Setup.exe.sha256`, then run Setup. It is a per-user installation without administrator elevation and defaults to `%LocalAppData%\Programs\AACC`. Setup creates a Start Menu shortcut, offers an unchecked desktop shortcut, and does not add a startup entry.
+
+Running the same Setup upgrades the existing per-user copy after a bounded graceful shutdown. Uninstall removes the installed program, Start Menu entry, optional desktop shortcut, and uninstall registration. Upgrade and uninstall preserve `%APPDATA%\AACC`, including configuration, task history, database, and the cached Kimi membership session. Use AACC’s explicit Kimi logout to remove the cached session.
+
+The 1.4.2 candidate is unsigned. Windows may show Unknown publisher or SmartScreen; verify the checksum before choosing **More info → Run anyway**. Sensitive configuration, credential, database, WAL, and SHM files receive an exact native protected DACL for only the current user, Local System, and Administrators. The packaged Codex read-only query uses a fixed-purpose broker beside `AACC.exe` so the app never shells out to `icacls.exe`, `whoami.exe`, or `taskkill.exe`.
 
 ## Terminal and iTerm2 binding
 
