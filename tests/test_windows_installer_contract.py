@@ -152,10 +152,42 @@ def test_windows_smoke_restores_terminated_fixture_with_a_bounded_retry() -> Non
     refusal = script.split("function Test-InstalledControlRefusal", 1)[1].split(
         "function Compile-WindowsFixtures", 1
     )[0]
-    stop = refusal.index("Stop-OwnedProcessIdentity -Identity $Legacy.Identity")
+    stopped = refusal.index("Assert-ProcessExitedByDeadline -Identity $Legacy.Identity")
     restore = refusal.index("Restore-LiteralFileAfterProcessExit")
-    assert stop < restore
+    assert stopped < restore
     assert "-Identity $Legacy.Identity" in refusal[restore:]
+
+
+def test_windows_legacy_fixture_uses_a_harness_only_graceful_stop_event() -> None:
+    script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+    fixture = (ROOT / "tests" / "windows" / "fake_legacy_aacc.cpp").read_text(encoding="utf-8")
+
+    assert "AACC_LEGACY_STOP_EVENT" in fixture
+    assert "OpenEventW(SYNCHRONIZE, FALSE" in fixture
+    assert "MsgWaitForMultipleObjects(" in fixture
+    assert "WM_CLOSE" in fixture
+    assert fixture.index("--shutdown-for-update") < fixture.index("OpenEventW(SYNCHRONIZE, FALSE")
+
+    refusal = script.split("function Test-InstalledControlRefusal", 1)[1].split(
+        "function Compile-WindowsFixtures", 1
+    )[0]
+    assert "[System.Threading.EventWaitHandle]::new(" in refusal
+    assert '"Local\\AACC.LegacySmokeStop."' in refusal
+    assert "[ref]$CreatedNew" in refusal
+    assert "Assert-True $CreatedNew" in refusal
+    assert "$env:AACC_LEGACY_STOP_EVENT = $StopEventName" in refusal
+    set_environment = refusal.index("$env:AACC_LEGACY_STOP_EVENT = $StopEventName")
+    start = refusal.index("$Legacy = Start-OwnedProcess")
+    clear_environment = refusal.index("Remove-Item Env:AACC_LEGACY_STOP_EVENT")
+    invoke_setup = refusal.index("Invoke-Setup")
+    assert set_environment < start < clear_environment < invoke_setup
+    signal = refusal.index("$StopEvent.Set()")
+    exited = refusal.index("Assert-ProcessExitedByDeadline -Identity $Legacy.Identity")
+    exit_code = refusal.index("$Legacy.Process.ExitCode -eq 0")
+    restore = refusal.index("Restore-LiteralFileAfterProcessExit")
+    assert signal < exited < exit_code < restore
+    assert "$StopEvent.Dispose()" in refusal
+    assert "Stop-OwnedProcessIdentity -Identity $Legacy.Identity" not in refusal
 
 
 def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:

@@ -130,10 +130,53 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int) {
     }
     ShowWindow(window, SW_HIDE);
 
+    wchar_t stop_event_name[256] = {};
+    constexpr DWORD stop_event_name_capacity =
+        static_cast<DWORD>(sizeof(stop_event_name) / sizeof(stop_event_name[0]));
+    const DWORD stop_event_name_length = GetEnvironmentVariableW(
+        L"AACC_LEGACY_STOP_EVENT",
+        stop_event_name,
+        stop_event_name_capacity);
+    if (stop_event_name_length == 0 ||
+        stop_event_name_length >= stop_event_name_capacity) {
+        DestroyWindow(window);
+        return 72;
+    }
+    HANDLE stop_event = OpenEventW(SYNCHRONIZE, FALSE, stop_event_name);
+    if (stop_event == nullptr) {
+        DestroyWindow(window);
+        return 72;
+    }
+
     MSG message = {};
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
+    bool running = true;
+    while (running) {
+        const DWORD wait_result = MsgWaitForMultipleObjects(
+            1,
+            &stop_event,
+            FALSE,
+            INFINITE,
+            QS_ALLINPUT);
+        if (wait_result == WAIT_OBJECT_0) {
+            break;
+        }
+        if (wait_result != WAIT_OBJECT_0 + 1) {
+            CloseHandle(stop_event);
+            DestroyWindow(window);
+            return 72;
+        }
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
+            if (message.message == WM_QUIT) {
+                running = false;
+                break;
+            }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    CloseHandle(stop_event);
+    if (IsWindow(window) != FALSE) {
+        DestroyWindow(window);
     }
     return 0;
 }
