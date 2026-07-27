@@ -183,6 +183,7 @@ def test_untrusted_guidance_is_shown_after_core_services_start(
     events: list[str] = []
     runtime = _runtime_for_application_test(events)
     _patch_application_shell(monkeypatch, events, runtime, trusted=False)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
 
     assert (
         app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
@@ -230,6 +231,7 @@ def test_web_start_shutdown_does_not_show_later_guidance_or_restart_components(
         stop=lambda: events.append("codex-quota-stop"),
     )
     _patch_application_shell(monkeypatch, events, runtime, trusted=False)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "GlobalHotkeys", Hotkeys)  # type: ignore[attr-defined]
 
     assert (
