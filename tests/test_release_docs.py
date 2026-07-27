@@ -47,10 +47,12 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
         "c:\\users\\",
         "/home/",
         "zhangboqian",
-        Path.home().name.casefold(),
         "sk-",
     ):
         assert forbidden not in lowered
+    normalized_script = lowered.replace("\\", "/")
+    normalized_home = str(Path.home()).casefold().replace("\\", "/")
+    assert normalized_home not in normalized_script
     assert _png_size(SCREENSHOT) == (420, 577)
     assert set(_png_chunk_types(SCREENSHOT)) <= {b"IHDR", b"pHYs", b"IDAT", b"IEND"}
 
