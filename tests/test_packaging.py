@@ -316,9 +316,16 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
         "aacc.automation_windows",
         "aacc.hotkeys_windows",
         "aacc.windows_broker",
-        "win32event",
     ):
         assert module in workflow
+    assert (
+        workflow.count(
+            'Get-ChildItem -LiteralPath "dist\\AACC" -Recurse -File -Filter "win32event*.pyd"'
+        )
+        == 2
+    )
+    assert workflow.count("$eventModules.Count -ne 1") == 2
+    assert workflow.count("$eventModules[0].Length -le 0") == 2
     assert 'Compress-Archive -Path "dist\\AACC"' in workflow
     assert "AACC-*-windows-x64-windows-2025-vs2026.zip" in workflow
     assert "Package and strictly verify primary artifacts" in workflow
