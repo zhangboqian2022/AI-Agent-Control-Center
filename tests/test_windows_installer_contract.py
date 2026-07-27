@@ -146,6 +146,8 @@ def test_inno_setup_cleans_only_manifest_extras_after_commit() -> None:
 
     assert "internal-manifest-v1.txt" in code
     assert "LoadStringsFromFile" in code
+    assert "ManifestFilePath: String" in code
+    assert "LoadStringsFromFile(ManifestFilePath, Manifest)" in code
     assert "CleanupInternalExtras" in code
     assert "CurStep = ssPostInstall" in code
     assert "DeleteFile(" in code
