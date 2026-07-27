@@ -340,7 +340,7 @@ begin
         FullPath := AddBackslash(RootPath) + ChildRelative;
         if (FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then
         begin
-          if (FindRec.Attributes and faDirectory) <> 0 then
+          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
           begin
             { Remove only the junction/reparse directory entry. Never recurse
               into a target that is outside the installed payload. }
@@ -356,7 +356,7 @@ begin
             Result := False;
           end;
         end
-        else if (FindRec.Attributes and faDirectory) <> 0 then
+        else if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
         begin
           if not CleanupInternalExtras(RootPath, ChildRelative, Manifest) then
             Result := False;
