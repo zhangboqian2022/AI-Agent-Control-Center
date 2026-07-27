@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 from PySide6.QtCore import QObject, Signal
 
+from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.quota_service import STATE_AUTHORIZED, STATE_UNAUTHORIZED, QuotaService
 
 pytest.importorskip("pytestqt")
@@ -31,6 +33,26 @@ class FakeWebQuotaService(QObject):
 
     def logout(self) -> None:
         self.logouts += 1
+
+
+class PersistFailureSession(QObject):
+    login_state_changed = Signal(bool)
+    quota_received = Signal(object, object)
+    error_occurred = Signal(str)
+
+    def refresh(self) -> None:
+        pass
+
+    def open_login(self, parent=None) -> None:
+        del parent
+
+    def logout(self) -> bool:
+        self.error_occurred.emit("password=web-session-secret")
+        self.login_state_changed.emit(False)
+        return False
+
+    def close(self) -> None:
+        pass
 
 
 def make_window(
@@ -137,6 +159,106 @@ def test_web_quota_login_and_unified_logout_delegate_to_both_services(qtbot, tmp
     assert web.logins == 1
     assert web.logouts == 1
     assert code_logouts == [True]
+
+
+def test_logout_disables_web_reuse_before_code_logout_failure(qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    window, code, _ = make_window(qtbot, tmp_path, web_quota_service=web)
+    calls: list[str] = []
+
+    def web_logout() -> None:
+        calls.append("web")
+
+    def code_logout() -> None:
+        calls.append("code")
+        raise PermissionError("password=do-not-log")
+
+    web.logout = web_logout  # type: ignore[method-assign]
+    code.logout = code_logout  # type: ignore[method-assign]
+
+    window.kimi_logout()
+
+    assert calls == ["web", "code"]
+    assert window.quota_bar is not None
+    assert "do-not-log" not in window.quota_bar.toolTip()
+    assert "退出登录未完全完成" in window.quota_bar.toolTip()
+
+
+def test_logout_attempts_code_cleanup_when_web_logout_fails(qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    window, code, _ = make_window(qtbot, tmp_path, web_quota_service=web)
+    calls: list[str] = []
+
+    def web_logout() -> None:
+        calls.append("web")
+        raise RuntimeError("access_token=do-not-log")
+
+    def code_logout() -> None:
+        calls.append("code")
+
+    web.logout = web_logout  # type: ignore[method-assign]
+    code.logout = code_logout  # type: ignore[method-assign]
+
+    window.kimi_logout()
+
+    assert calls == ["web", "code"]
+    assert window.quota_bar is not None
+    assert "do-not-log" not in window.quota_bar.toolTip()
+
+
+def test_logout_reports_one_fixed_error_after_both_cleanup_paths_fail(caplog, qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    window, code, _ = make_window(qtbot, tmp_path, web_quota_service=web)
+    calls: list[str] = []
+
+    def web_logout() -> None:
+        calls.append("web")
+        raise RuntimeError("Authorization: Bearer web-secret")
+
+    def code_logout() -> None:
+        calls.append("code")
+        raise PermissionError("token=code-secret")
+
+    web.logout = web_logout  # type: ignore[method-assign]
+    code.logout = code_logout  # type: ignore[method-assign]
+    window._latest_kimi_code_quota = object()  # type: ignore[assignment]
+    window._latest_kimi_web_quota = object()  # type: ignore[assignment]
+    window._kimi_web_authorized = True
+
+    with caplog.at_level(logging.ERROR, logger="aacc.gui"):
+        window.kimi_logout()
+
+    assert calls == ["web", "code"]
+    assert window._latest_kimi_code_quota is None
+    assert window._latest_kimi_web_quota is None
+    assert window._kimi_web_authorized is False
+    assert window.quota_bar is not None
+    tooltip = window.quota_bar.toolTip()
+    assert tooltip.count("退出登录未完全完成") == 1
+    assert "web-secret" not in tooltip
+    assert "code-secret" not in tooltip
+    assert "web-secret" not in caplog.text
+    assert "code-secret" not in caplog.text
+
+
+def test_persist_failure_signal_chain_keeps_final_logout_warning(qtbot, tmp_path):
+    session = PersistFailureSession()
+    web = KimiWebQuotaService(tmp_path / "web", session=session)
+    window, code, _ = make_window(qtbot, tmp_path, web_quota_service=web)
+    code_logouts: list[bool] = []
+    code.logout = lambda: code_logouts.append(True)  # type: ignore[method-assign]
+    propagated_errors: list[str] = []
+    web.error_occurred.connect(propagated_errors.append)
+
+    window.kimi_logout()
+
+    assert code_logouts == [True]
+    assert web.last_quota is None
+    assert propagated_errors == ["password=[REDACTED]"]
+    assert window.quota_bar is not None
+    tooltip = window.quota_bar.toolTip()
+    assert "Kimi 退出登录未完全完成" in tooltip
+    assert "web-session-secret" not in tooltip
 
 
 def test_manual_web_refresh_uses_only_the_coordinated_web_cycle(qtbot, tmp_path):

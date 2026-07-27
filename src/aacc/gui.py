@@ -1674,15 +1674,28 @@ class MainWindow(QWidget):
             self.kimi_web_quota_service.open_login(self)
 
     def kimi_logout(self) -> None:
-        if self.quota_service is not None:
-            self.quota_service.logout()
+        logout_failed = False
         if self.kimi_web_quota_service is not None:
-            self.kimi_web_quota_service.logout()
+            try:
+                web_logout_succeeded = self.kimi_web_quota_service.logout()
+                if web_logout_succeeded is False:
+                    logout_failed = True
+            except Exception:  # noqa: BLE001 - the other logout path must still run
+                logout_failed = True
+                _logger.error("Kimi logout cleanup failed source=web")
+        if self.quota_service is not None:
+            try:
+                self.quota_service.logout()
+            except Exception:  # noqa: BLE001 - the other logout path already ran
+                logout_failed = True
+                _logger.error("Kimi logout cleanup failed source=code")
         self._latest_kimi_code_quota = None
         self._latest_kimi_web_quota = None
         self._kimi_web_authorized = False
         if self.quota_bar is not None:
             self.quota_bar.show_unauthorized()
+        if logout_failed:
+            self._on_quota_error("Kimi 退出登录未完全完成")
 
     def set_compact(self, compact: bool) -> None:
         self.compact_mode = compact

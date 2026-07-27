@@ -27,7 +27,7 @@ class _WebSessionLike(Protocol):
 
     def open_login(self, parent: QWidget | None = None) -> None: ...
 
-    def logout(self) -> None: ...
+    def logout(self) -> bool | None: ...
 
     def close(self) -> None: ...
 
@@ -86,10 +86,14 @@ class KimiWebQuotaService(QObject):
     def open_login(self, parent: QWidget | None = None) -> None:
         self._ensure_session().open_login(parent)
 
-    def logout(self) -> None:
-        if self._session is not None:
-            self._session.logout()
-        self.last_quota = None
+    def logout(self) -> bool:
+        result: bool | None = True
+        try:
+            if self._session is not None:
+                result = self._session.logout()
+        finally:
+            self.last_quota = None
+        return result is not False
 
     def _on_quota_received(self, stats: object, subscription: object) -> None:
         quota = parse_membership_quota(stats, subscription, now=self._now())
