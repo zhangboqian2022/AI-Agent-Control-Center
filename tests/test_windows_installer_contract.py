@@ -115,6 +115,19 @@ def test_windows_smoke_accepts_empty_process_argument_arrays() -> None:
         assert "[AllowEmptyCollection()][string[]]$Arguments" in function
 
 
+def test_windows_smoke_fixtures_use_only_command_line_unicode_definitions() -> None:
+    script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+
+    assert "/DUNICODE /D_UNICODE" in script
+    for relative_path in (
+        "tests/windows/fake_legacy_aacc.cpp",
+        "tests/windows/lock_payload.cpp",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "#define UNICODE" not in source
+        assert "#define _UNICODE" not in source
+
+
 def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
     text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     lowered = text.lower()
