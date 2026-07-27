@@ -32,9 +32,10 @@ WizardStyle=modern
 Name: "desktopicon"; Description: "创建桌面快捷方式 / Create a desktop shortcut"; GroupDescription: "其他选项 / Additional options:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\build\installer\internal-manifest-v1.txt"; DestName: "aacc-preflight-manifest-v1.txt"; Flags: dontcopy noencryption
 Source: "..\dist\AACC\AACC.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\AACC\aacc-spawn.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\build\installer\internal-manifest-v1.txt"; DestDir: "{app}\uninstall"; Flags: ignoreversion
 Source: "shutdown-v1.capability"; DestDir: "{app}\uninstall"; Flags: ignoreversion
 
@@ -54,8 +55,17 @@ const
   WAIT_TIMEOUT = 258;
   STARTF_USESHOWWINDOW = 1;
   INVALID_FILE_ATTRIBUTES = $FFFFFFFF;
+  INVALID_HANDLE_VALUE = $FFFFFFFF;
   ERROR_FILE_NOT_FOUND = 2;
   ERROR_PATH_NOT_FOUND = 3;
+  GENERIC_READ = $80000000;
+  GENERIC_WRITE = $40000000;
+  DELETE_ACCESS = $00010000;
+  OPEN_EXISTING = 3;
+  FILE_ATTRIBUTE_NORMAL = $80;
+  FILE_FLAG_BACKUP_SEMANTICS = $02000000;
+  PreflightRetryCount = 5;
+  PreflightRetryDelayMilliseconds = 1000;
   CleanupRetryCount = 3;
   CleanupRetryDelayMilliseconds = 250;
   InternalCleanupFailureExitCode = 9;
@@ -114,6 +124,16 @@ function CloseHandle(hObject: THandle): BOOL;
   external 'CloseHandle@kernel32.dll stdcall';
 function WinGetFileAttributes(lpFileName: String): DWORD;
   external 'GetFileAttributesW@kernel32.dll stdcall';
+function WinCreateFile(
+  lpFileName: String;
+  dwDesiredAccess: DWORD;
+  dwShareMode: DWORD;
+  lpSecurityAttributes: LongWord;
+  dwCreationDisposition: DWORD;
+  dwFlagsAndAttributes: DWORD;
+  hTemplateFile: THandle
+): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
 
 var
   InternalCleanupIncomplete: Boolean;
@@ -270,6 +290,288 @@ begin
         Exit;
     end;
   end;
+  Result := True;
+end;
+
+function PreflightFailureMessage: String;
+begin
+  Result :=
+    'AACC 的现有程序文件正在使用或不可安全替换。请完全退出 AACC，然后重试。' +
+    #13#10 +
+    'Existing AACC program files are in use or cannot be replaced safely. ' +
+    'Exit AACC completely and retry.';
+end;
+
+function ValidateExistingManagedDirectory(const Path: String): Boolean;
+var
+  Attributes: DWORD;
+  ErrorCode: DWORD;
+begin
+  Result := False;
+  Attributes := WinGetFileAttributes(Path);
+  if Attributes = INVALID_FILE_ATTRIBUTES then
+  begin
+    ErrorCode := DLLGetLastError;
+    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+      Result := True;
+    Exit;
+  end;
+  Result :=
+    ((Attributes and FILE_ATTRIBUTE_REPARSE_POINT) = 0) and
+    ((Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0);
+end;
+
+function ValidateExistingTargetFile(const Path: String): Boolean;
+var
+  Attributes: DWORD;
+  ErrorCode: DWORD;
+  Attempt: Integer;
+  FileHandle: THandle;
+begin
+  Result := False;
+  Attributes := WinGetFileAttributes(Path);
+  if Attributes = INVALID_FILE_ATTRIBUTES then
+  begin
+    ErrorCode := DLLGetLastError;
+    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+      Result := True;
+    Exit;
+  end;
+  if ((Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0) or
+     ((Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) then
+    Exit;
+  for Attempt := 1 to PreflightRetryCount do
+  begin
+    FileHandle := WinCreateFile(
+      Path,
+      GENERIC_READ or GENERIC_WRITE or DELETE_ACCESS,
+      0,
+      0,
+      OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL,
+      0
+    );
+    if FileHandle <> INVALID_HANDLE_VALUE then
+    begin
+      CloseHandle(FileHandle);
+      Result := True;
+      Exit;
+    end;
+    ErrorCode := DLLGetLastError;
+    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    begin
+      Result := True;
+      Exit;
+    end;
+    if Attempt < PreflightRetryCount then
+      Sleep(PreflightRetryDelayMilliseconds);
+  end;
+end;
+
+function ValidateExistingTargetDirectory(const Path: String): Boolean;
+var
+  Attributes: DWORD;
+  ErrorCode: DWORD;
+  Attempt: Integer;
+  DirectoryHandle: THandle;
+begin
+  Result := False;
+  Attributes := WinGetFileAttributes(Path);
+  if Attributes = INVALID_FILE_ATTRIBUTES then
+  begin
+    ErrorCode := DLLGetLastError;
+    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+      Result := True;
+    Exit;
+  end;
+  if ((Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0) or
+     ((Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0) then
+    Exit;
+  for Attempt := 1 to PreflightRetryCount do
+  begin
+    DirectoryHandle := WinCreateFile(
+      Path,
+      GENERIC_READ or DELETE_ACCESS,
+      0,
+      0,
+      OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS,
+      0
+    );
+    if DirectoryHandle <> INVALID_HANDLE_VALUE then
+    begin
+      CloseHandle(DirectoryHandle);
+      Result := True;
+      Exit;
+    end;
+    ErrorCode := DLLGetLastError;
+    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    begin
+      Result := True;
+      Exit;
+    end;
+    if Attempt < PreflightRetryCount then
+      Sleep(PreflightRetryDelayMilliseconds);
+  end;
+end;
+
+function ValidateInternalTargetParents(
+  const RootPath: String;
+  RelativePath: String
+): Boolean;
+var
+  SeparatorIndex: Integer;
+  ParentPath: String;
+  Segment: String;
+begin
+  Result := False;
+  ParentPath := RootPath;
+  SeparatorIndex := Pos('/', RelativePath);
+  while SeparatorIndex > 0 do
+  begin
+    Segment := Copy(RelativePath, 1, SeparatorIndex - 1);
+    if Segment = '' then
+      Exit;
+    ParentPath := AddBackslash(ParentPath) + Segment;
+    if not ValidateExistingManagedDirectory(ParentPath) then
+      Exit;
+    Delete(RelativePath, 1, SeparatorIndex);
+    SeparatorIndex := Pos('/', RelativePath);
+  end;
+  Result := True;
+end;
+
+function ValidateInternalManifestTargets(
+  const Manifest: TArrayOfString;
+  const RootPath: String
+): Boolean;
+var
+  Index: Integer;
+  RelativePath: String;
+  FullPath: String;
+  IsDirectory: Boolean;
+begin
+  Result := False;
+  for Index := 0 to GetArrayLength(Manifest) - 1 do
+  begin
+    IsDirectory := Copy(Manifest[Index], 1, 2) = 'D ';
+    RelativePath := Copy(
+      Manifest[Index],
+      3,
+      Length(Manifest[Index]) - 2
+    );
+    if IsDirectory then
+      Delete(RelativePath, Length(RelativePath), 1);
+    if not ValidateInternalTargetParents(RootPath, RelativePath) then
+      Exit;
+    StringChangeEx(RelativePath, '/', '\', True);
+    FullPath := AddBackslash(RootPath) + RelativePath;
+    if IsDirectory then
+    begin
+      if not ValidateExistingTargetDirectory(FullPath) then
+        Exit;
+    end
+    else if not ValidateExistingTargetFile(FullPath) then
+      Exit;
+  end;
+  Result := True;
+end;
+
+function ValidateExistingUninstallerTargets(const RootPath: String): Boolean;
+var
+  Index: Integer;
+  BaseName: String;
+begin
+  Result := False;
+  for Index := 0 to 999 do
+  begin
+    BaseName := AddBackslash(RootPath) + Format('unins%.3d', [Index]);
+    if not ValidateExistingTargetFile(BaseName + '.exe') or
+       not ValidateExistingTargetFile(BaseName + '.dat') then
+      Exit;
+  end;
+  Result := True;
+end;
+
+function ValidatePackagedTargetsForInstall(var ErrorMessage: String): Boolean;
+var
+  Manifest: TArrayOfString;
+  ManifestFilePath: String;
+  InstalledManifest: TArrayOfString;
+  InstalledManifestPath: String;
+  InternalRoot: String;
+begin
+  Result := False;
+  ErrorMessage := PreflightFailureMessage;
+  try
+    ExtractTemporaryFile('aacc-preflight-manifest-v1.txt');
+  except
+    Log('AACC_PREFLIGHT result=manifest-unavailable');
+    Exit;
+  end;
+  ManifestFilePath :=
+    ExpandConstant('{tmp}\aacc-preflight-manifest-v1.txt');
+  if not LoadStringsFromFile(ManifestFilePath, Manifest) then
+  begin
+    Log('AACC_PREFLIGHT result=manifest-unavailable');
+    Exit;
+  end;
+  if not ValidateInternalManifest(Manifest) then
+  begin
+    Log('AACC_PREFLIGHT result=manifest-invalid');
+    Exit;
+  end;
+  InternalRoot := ExpandConstant('{app}\_internal');
+  InstalledManifestPath :=
+    ExpandConstant('{app}\uninstall\internal-manifest-v1.txt');
+  if not ValidateExistingTargetDirectory(ExpandConstant('{app}')) or
+     not ValidateExistingTargetDirectory(ExpandConstant('{app}\uninstall')) or
+     not ValidateExistingTargetDirectory(InternalRoot) or
+     not ValidateExistingUninstallerTargets(
+       ExpandConstant('{app}\uninstall')
+     ) or
+     not ValidateExistingTargetFile(ExpandConstant('{app}\AACC.exe')) or
+     not ValidateExistingTargetFile(ExpandConstant('{app}\aacc-spawn.exe')) or
+     not ValidateExistingTargetFile(InstalledManifestPath) or
+     not ValidateExistingTargetFile(
+       ExpandConstant('{app}\uninstall\shutdown-v1.capability')
+     ) or
+     not ValidateExistingTargetFile(
+       ExpandConstant('{autoprograms}\AACC.lnk')
+     ) or
+     not ValidateExistingTargetFile(
+       ExpandConstant('{autodesktop}\AACC.lnk')
+     ) or
+     not ValidateInternalManifestTargets(Manifest, InternalRoot) then
+  begin
+    Log('AACC_PREFLIGHT result=target-unavailable');
+    Exit;
+  end;
+  if DirExists(InternalRoot) then
+  begin
+    if not LoadStringsFromFile(InstalledManifestPath, InstalledManifest) then
+    begin
+      Log('AACC_PREFLIGHT result=installed-manifest-unavailable');
+      Exit;
+    end;
+    if not ValidateInternalManifest(InstalledManifest) then
+    begin
+      Log('AACC_PREFLIGHT result=installed-manifest-invalid');
+      Exit;
+    end;
+    if not ValidateInternalManifestTargets(InstalledManifest, InternalRoot) then
+    begin
+      Log('AACC_PREFLIGHT result=target-unavailable');
+      Exit;
+    end;
+  end;
+  Log('AACC_PREFLIGHT result=completed');
+  ErrorMessage := '';
   Result := True;
 end;
 
@@ -459,12 +761,21 @@ end;
 
 function ValidateInternalRootForInstall(var ErrorMessage: String): Boolean;
 var
+  InstallRoot: String;
   InternalRoot: String;
   Attributes: DWORD;
   ErrorCode: DWORD;
 begin
   Result := False;
   ErrorMessage := '';
+  InstallRoot := ExpandConstant('{app}');
+  if not ValidateExistingManagedDirectory(InstallRoot) then
+  begin
+    ErrorMessage :=
+      'AACC 程序目录不安全；安装已在写入前停止。' + #13#10 +
+      'AACC program root is unsafe; Setup stopped before writing.';
+    Exit;
+  end;
   InternalRoot := ExpandConstant('{app}\_internal');
   Attributes := WinGetFileAttributes(InternalRoot);
   if Attributes = INVALID_FILE_ATTRIBUTES then
@@ -498,8 +809,17 @@ begin
     Result := ErrorMessage;
     Exit;
   end;
-  if ShutdownExistingAACC(Result) then
-    Result := '';
+  if not ShutdownExistingAACC(ErrorMessage) then
+  begin
+    Result := ErrorMessage;
+    Exit;
+  end;
+  if not ValidatePackagedTargetsForInstall(ErrorMessage) then
+  begin
+    Result := ErrorMessage;
+    Exit;
+  end;
+  Result := '';
 end;
 
 function InitializeUninstall: Boolean;

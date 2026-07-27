@@ -254,18 +254,32 @@ Installer contract:
 - `CloseApplications=no` and `RestartApplications=no`; Inno Restart Manager
   never closes or restarts AACC on the installer's behalf.
 - Upgrade calls `--shutdown-for-update` with an exact 25-second control
-  timeout, then lets Inno replace `_internal` before the two root executables.
-- `[InstallDelete]` is not used: it would remove files outside Inno's native
-  per-file rollback journal. A generated exact `_internal` manifest instead
-  removes stale entries after file commit with three bounded retries.
-- `PrepareToInstall` reads the exact `{app}\_internal` root attributes through
-  `GetFileAttributesW` and rejects every root reparse point before `[Files]`
-  can traverse it. The installer never deletes or enumerates a junction
-  target.
+  timeout. The two root executables are then ordered before `_internal`.
+- `[InstallDelete]` is not used because destructive pre-install deletion is
+  not recoverable. A generated exact `_internal` manifest instead removes
+  stale entries after file commit with three bounded retries.
+- `PrepareToInstall` validates `{app}` and `{app}\_internal`, performs graceful
+  shutdown, extracts and validates the new package manifest, validates the
+  installed manifest, then exclusively opens every existing root target and
+  every old or new managed `_internal` file with
+  `GENERIC_READ | GENERIC_WRITE | DELETE` and share mode zero. Existing locks,
+  unreadable targets, or reparse points on any managed parent/target stop Setup
+  before `[Files]` writes anything. A missing or invalid installed manifest
+  also fails closed when an existing `_internal` tree is present. Because Inno
+  can select `unins000` through `unins999`, preflight checks every existing
+  `.exe`/`.dat` pair without relying on directory enumeration. Manifest
+  directories are also opened with `DELETE`, share mode zero, and
+  `FILE_FLAG_BACKUP_SEMANTICS` so an old-only directory lock is detected before
+  post-commit cleanup. Existing Start Menu and desktop shortcuts are checked
+  before Inno's later `[Icons]` phase as well.
 - Manifest load/validation failure or an undeletable stale file, directory, or
   reparse entry makes Setup return non-zero. Post-commit cleanup makes no
   rollback claim; `GetCustomSetupExitCode` reports the incomplete state as
   exit `9`, and no explicit staging/backup/swap implementation is claimed.
+- The preflight is intentionally fail-closed but has an unavoidable time-of-
+  check/time-of-use window. Version 1.4.2 does not claim transactional upgrade,
+  power-loss recovery, or byte restoration after a new late lock; strict
+  atomic upgrade remains a later staging/backup/swap design.
 - It never recursively deletes `{app}` during upgrade.
 - Uninstall uses the same graceful shutdown path and removes the installed
   program, shortcuts, and uninstall registration.
@@ -278,10 +292,12 @@ Installer contract:
   publisher/SmartScreen warning.
 - Silent smoke adds `/NOCLOSEAPPLICATIONS`,
   `/NOFORCECLOSEAPPLICATIONS`, and `/NORESTARTAPPLICATIONS`. Shutdown failure
-  aborts before mutation; a locked-file reinstall fault must prove that the
-  prior payload is restored and still starts. An independent observer must
-  first see a chosen metadata file change from known old bytes to packaged
-  bytes, and the installer log provides auxiliary rollback evidence.
+  aborts before mutation. Separate locks on `AACC.exe`, `aacc-spawn.exe`, the
+  active uninstaller, a packaged `_internal` metadata file, and its managed
+  directory must each make preflight refuse before mutation, leave the full
+  payload/registry/shortcuts/AppData manifest and pending-reboot state
+  unchanged, and preserve the old payload so it still starts. Root and nested
+  `_internal` junctions are also rejected without traversing their targets.
 - Setup and uninstaller `/LOG` paths contain Chinese characters, spaces,
   `&() %! []`; every invocation must create a non-empty file at the exact
   requested path.
@@ -292,9 +308,11 @@ Installer contract:
 
 The build script reads version `1.4.2` from `pyproject.toml` via
 `uv version --short`. The workflow uses both supported hosted Windows images,
-bootstraps the hash-pinned Inno compiler when an explicit trusted
-`AACC_ISCC_PATH` is not supplied, verifies version 6.7.1, and logs only the
-compiler version and a sanitized source category.
+downloads only the official Inno Setup 6.7.1 bootstrap whose SHA-256 is pinned,
+requires a valid Authenticode signature, and extracts a fresh private compiler
+tree for every build. It rejects local compiler overrides and old extracted
+compiler caches, verifies the actual compiler engine with a no-output probe,
+then removes the private compiler tree in `finally`.
 
 When Windows signing becomes available, the order is broker, AACC and other
 inner binaries, then Setup, all with a timestamp. Signing is not claimed by
@@ -385,17 +403,23 @@ default `%APPDATA%\AACC` structure.
     checks from the installed directory.
 14. Cover a stopped and running legacy portable that does not understand the
     shutdown protocol; Setup must never hang or mutate on refusal.
-15. Snapshot install state, lock root `AACC.exe`, independently observe an
-    already-replaced metadata file, and prove native rollback restores it.
-16. Lock a stale `_internal` file and require non-zero post-commit cleanup;
-    release it, reinstall, and verify the exact manifest plus stable
-    config/credential hashes and the preserved database smoke row.
-17. Silent-uninstall while AACC is running; separately prove shutdown failure
+15. Snapshot install state; separately lock `AACC.exe`, `aacc-spawn.exe`, the
+    active `uninsNNN.exe` and `.dat`, the Start Menu shortcut, an existing
+    packaged `_internal` metadata file, and its managed directory. Prove each
+    preflight refusal occurs before mutation and leaves the complete state
+    unchanged.
+16. Lock an unknown stale `_internal` file and require post-commit cleanup to
+    return exit 9 without claiming old-byte rollback; release it, reinstall,
+    and verify exact cleanup plus stable config/credential hashes and the
+    preserved database smoke row.
+17. Add a nested `_internal` junction and prove preflight refuses without
+    traversing or mutating its external target.
+18. Silent-uninstall while AACC is running; separately prove shutdown failure
     aborts without mutation.
-18. Verify graceful exit, removal of the two executables, `_internal`,
+19. Verify graceful exit, removal of the two executables, `_internal`,
     shortcuts, and uninstall registration.
-19. Verify `%APPDATA%\AACC` and the marker remain.
-20. Both hosted legs run build and product smoke under Windows PowerShell 5.1.
+20. Verify `%APPDATA%\AACC` and the marker remain.
+21. Both hosted legs run build and product smoke under Windows PowerShell 5.1.
     Only after their serial DAG passes does the final job revalidate
     checksum/ZIP structure, copy candidates into the safe output tree, and
     upload Setup, SHA-256, and portable ZIP. Always-uploaded diagnostics never
