@@ -98,6 +98,24 @@ def test_web_quota_service_parses_snapshot_and_preserves_it_on_error(qapp, tmp_p
     assert errors == ["temporary"]
 
 
+def test_fallback_error_is_sanitized_and_does_not_skip_web_refresh(qapp, tmp_path: Path):
+    session = FakeSession()
+    service = KimiWebQuotaService(tmp_path, session=session)
+    errors: list[str] = []
+    service.error_occurred.connect(errors.append)
+
+    def fail_fallback() -> None:
+        raise RuntimeError("token=private-fallback-secret")
+
+    service.set_fallback_refresh(fail_fallback)
+
+    service.refresh_now()
+
+    assert session.refreshes == 1
+    assert errors == ["Kimi Code 备用额度刷新失败"]
+    assert "private-fallback-secret" not in errors[0]
+
+
 def test_web_quota_service_delegates_login_logout_and_close(qapp, tmp_path: Path):
     session = FakeSession()
     service = KimiWebQuotaService(tmp_path, session=session)

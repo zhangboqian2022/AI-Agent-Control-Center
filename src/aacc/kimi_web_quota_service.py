@@ -74,7 +74,10 @@ class KimiWebQuotaService(QObject):
 
     def refresh_now(self) -> None:
         if self._fallback_refresh is not None:
-            self._fallback_refresh()
+            try:
+                self._fallback_refresh()
+            except Exception:  # noqa: BLE001 - one failed source must not skip the other
+                self._on_error("Kimi Code 备用额度刷新失败")
         self._ensure_session().refresh()
 
     def set_fallback_refresh(self, callback: Callable[[], None]) -> None:

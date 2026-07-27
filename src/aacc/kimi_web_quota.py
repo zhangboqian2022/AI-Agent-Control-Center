@@ -218,14 +218,14 @@ def merge_kimi_quota(
     membership_level = (
         web.membership_level
         if web is not None and web.membership_level
-        else code.membership_level
-        if code is not None
+        else fallback.membership_level
+        if fallback is not None
         else None
     )
     booster = (
         web.booster
         if web is not None and web.booster is not None
-        else (code.booster if code is not None else None)
+        else (fallback.booster if fallback is not None else None)
     )
     return KimiQuota(
         five_hour=five_hour,

@@ -100,6 +100,8 @@ class QuotaService(QObject):
             return self._state
 
     def start(self) -> None:
+        if self._stop.is_set():
+            raise RuntimeError("cannot start a stopped quota service")
         self._started = True
         self._thread.start()
 
@@ -118,6 +120,8 @@ class QuotaService(QObject):
         self._externally_scheduled = enabled
 
     def refresh_now(self) -> None:
+        if self._stop.is_set():
+            return
         self._wake.set()
         if not self._thread.is_alive():
             # start() was never called: run a one-shot poll so explicit
