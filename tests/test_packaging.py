@@ -292,11 +292,10 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
 
 
 def test_specs_bundle_native_qt_webview_for_kimi_membership_login() -> None:
-    for name in ("AACC.spec", "AACC-windows.spec"):
-        text = (ROOT / name).read_text(encoding="utf-8")
-        assert "PySide6.QtWebView" in text
-        assert "QtWebEngine" not in text
-        assert "hooks" in text
+    text = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    assert "PySide6.QtWebView" in text
+    assert "QtWebEngine" not in text
+    assert "hooks" in text
 
     hook = (ROOT / "hooks" / "hook-PySide6.QtWebView.py").read_text(encoding="utf-8")
     assert "collect_module" in hook

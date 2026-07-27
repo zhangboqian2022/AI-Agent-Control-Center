@@ -34,6 +34,7 @@ from aacc.gui import MainWindow
 from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
 from aacc.kimi_web_quota_service import KimiWebQuotaService
+from aacc.kimi_web_session import initialize_native_webview
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
 from aacc.persistence import StateStore
@@ -176,6 +177,7 @@ def _hotkey_actions(window: MainWindow) -> dict[str, object]:
 
 def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
+    initialize_native_webview()
     trusted = is_accessibility_trusted()
     runtime = build_runtime(
         config_path,
