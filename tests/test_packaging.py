@@ -262,6 +262,16 @@ def test_windows_build_packages_spawn_broker_at_exact_onedir_root() -> None:
     assert "@($rootFiles | Sort-Object) -join" not in script
 
 
+def test_windows_build_chains_setup_unless_explicitly_skipped() -> None:
+    script = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
+
+    root_validation = script.index("unexpected Windows package root")
+    installer_build = script.index("build_windows_installer.ps1")
+    assert root_validation < installer_build
+    assert "AACC_SKIP_INSTALLER" in script
+    assert '$env:AACC_SKIP_INSTALLER -ne "1"' in script
+
+
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "fetch-depth: 0" in workflow
