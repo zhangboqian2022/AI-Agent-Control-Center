@@ -7,7 +7,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-2022, windows-2025-vs2026]
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
@@ -49,11 +49,11 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: test -d dist/AACC.app
       - name: Build Windows app
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows-')
         shell: pwsh
         run: ./scripts/build_windows.ps1
       - name: Assert Windows executable and modules
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows-')
         shell: pwsh
         run: |
           if (-not (Test-Path "dist\AACC\AACC.exe")) { throw "AACC.exe missing" }
@@ -62,19 +62,19 @@ jobs:
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
       - name: Package Windows portable app
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows-')
         shell: pwsh
         run: |
           $version = uv version --short
-          $archive = "AACC-$version-windows-x64.zip"
+          $archive = "AACC-$version-windows-x64-${{ matrix.os }}.zip"
           Compress-Archive -Path "dist\AACC" -DestinationPath $archive -Force
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $entries = [System.IO.Compression.ZipFile]::OpenRead($archive).Entries.FullName
           if ($entries -notcontains "AACC/AACC.exe") { throw "AACC.exe missing from $archive" }
       - name: Upload Windows portable package
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows-')
         uses: actions/upload-artifact@v4
         with:
-          name: AACC-windows-x64
-          path: AACC-*-windows-x64.zip
+          name: AACC-windows-x64-${{ matrix.os }}
+          path: AACC-*-windows-x64-${{ matrix.os }}.zip
           if-no-files-found: error

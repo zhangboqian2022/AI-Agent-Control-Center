@@ -24,6 +24,8 @@ if ($LASTEXITCODE -ne 0 -or $Version -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
 }
 $VersionComma = "$($Matches[1]),$($Matches[2]),$($Matches[3]),0"
 
+. "$PSScriptRoot\windows_toolchain.ps1"
+
 $ProgramFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
 if ([string]::IsNullOrWhiteSpace($ProgramFilesX86)) {
     $ProgramFilesX86 = $env:ProgramFiles
@@ -33,43 +35,13 @@ if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
     throw "vswhere.exe is required to locate an installed Visual Studio MSVC toolchain"
 }
 
-$InstallationPath = ((
-    & $VsWhere -latest -prerelease -products * -property installationPath |
-        Select-Object -First 1
-) | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($InstallationPath)) {
-    throw "an installed Visual Studio is required"
-}
-
-$VsDevCmd = Join-Path $InstallationPath "Common7\Tools\VsDevCmd.bat"
-if (-not (Test-Path -LiteralPath $VsDevCmd -PathType Leaf)) {
-    throw "Visual Studio developer environment is missing"
-}
-
-$EnvironmentLoader = Join-Path $BuildDir "load-vs-environment.cmd"
-@(
-    "@echo off"
-    "call `"$VsDevCmd`" -no_logo -arch=x64 -host_arch=x64 >nul"
-    "if errorlevel 1 exit /b %errorlevel%"
-    "set"
-) | Set-Content -LiteralPath $EnvironmentLoader -Encoding ASCII
-$DeveloperEnvironment = & $EnvironmentLoader
-if ($LASTEXITCODE -ne 0) {
-    throw "failed to initialize the Visual Studio x64 environment"
-}
-foreach ($Line in $DeveloperEnvironment) {
-    $Separator = $Line.IndexOf("=")
-    if ($Separator -gt 0) {
-        $Name = $Line.Substring(0, $Separator)
-        $Value = $Line.Substring($Separator + 1)
-        [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
-    }
-}
-
-$Cl = (Get-Command cl.exe -ErrorAction Stop).Source
-$Link = (Get-Command link.exe -ErrorAction Stop).Source
-$Rc = (Get-Command rc.exe -ErrorAction Stop).Source
-$Dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
+$Candidates = Get-AaccVsWhereCandidates -VsWherePath $VsWhere
+$Toolchain = Select-AaccMsvcToolchain -Candidates $Candidates
+Set-AaccToolchainEnvironment -Toolchain $Toolchain
+$Cl = $Toolchain.Tools["cl.exe"]
+$Link = $Toolchain.Tools["link.exe"]
+$Rc = $Toolchain.Tools["rc.exe"]
+$Dumpbin = $Toolchain.Tools["dumpbin.exe"]
 
 "#pragma once`r`n#define AACC_PRODUCT_VERSION L`"$Version`"`r`n" |
     Set-Content -LiteralPath $VersionHeaderPath -Encoding ASCII
