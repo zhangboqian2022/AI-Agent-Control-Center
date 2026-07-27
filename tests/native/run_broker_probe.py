@@ -20,6 +20,16 @@ def emit_probe_failure(code: int, reason: str) -> int:
     return code
 
 
+def kill_and_reap(process: Any) -> bool:
+    with suppress(OSError):
+        process.kill()
+    try:
+        process.communicate(timeout=5.0)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -91,14 +101,12 @@ def main(
             input=request_bytes, timeout=args.timeout_seconds
         )
     except subprocess.TimeoutExpired:
-        with suppress(OSError):
-            process.kill()
-        try:
-            process.communicate(timeout=5.0)
-        except (OSError, subprocess.TimeoutExpired):
+        if not kill_and_reap(process):
             return emit_probe_failure(5, "timeout-reap")
         return emit_probe_failure(5, "timeout")
     except OSError:
+        if not kill_and_reap(process):
+            return emit_probe_failure(5, "communicate-reap")
         return emit_probe_failure(5, "communicate")
 
     if process.returncode != args.expected_exit_code:

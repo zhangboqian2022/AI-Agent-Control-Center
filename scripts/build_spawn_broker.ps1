@@ -354,7 +354,8 @@ function Get-SafeBrokerProbeDiagnostic {
     }
     $Pattern = (
         '^AACC_BROKER_PROBE code=(?:5|6) reason=(?:' +
-        'launch|communicate|timeout|timeout-reap|target-exit|target-stderr)$'
+        'launch|communicate|communicate-reap|timeout|timeout-reap|' +
+        'target-exit|target-stderr)$'
     )
     $Match = [regex]::Match($Diagnostic.Trim(), $Pattern)
     if ($Match.Success) {
@@ -534,6 +535,14 @@ try {
         Invoke-BrokerProbe -CodexPath $Target -BundleDir $BundleDir `
             -RequestId $Iteration -Payload $Payload
     }
+
+    $UnicodePayloadUnit = -join @([char]0x4E34, [char]0x65F6)
+    $UnicodePayload = (($UnicodePayloadUnit * 35000) -join "")
+    if ($UnicodePayload.Length -ne 70000) {
+        throw "native Unicode payload fixture has an unexpected length"
+    }
+    Invoke-BrokerProbe -CodexPath $FakeExe -BundleDir $BundleDir `
+        -RequestId 21 -Payload $UnicodePayload
 
     foreach ($ExitCase in @(
         @{ Target = $FakeCmd; Code = 7 },
