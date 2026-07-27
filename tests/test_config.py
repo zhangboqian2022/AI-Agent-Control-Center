@@ -367,11 +367,15 @@ def test_load_config_removes_unrelated_explicit_windows_ace(tmp_path: Path) -> N
     saved_acl = raw_acl.decode("utf-16-le").lstrip("\ufeff")
     access_sids = set(re.findall(r";;;([^)\r\n]+)\)", saved_acl))
     assert "S-1-1-0" not in saved_acl
+    assert "OW" not in access_sids
     assert access_sids, saved_acl
-    assert access_sids <= {
+    allowed_sids = {
         current_sid_match.group(0),
         "SY",
         "BA",
         "S-1-5-18",
         "S-1-5-32-544",
     }
+    if current_sid_match.group(0).endswith("-500"):
+        allowed_sids.add("LA")
+    assert access_sids <= allowed_sids
