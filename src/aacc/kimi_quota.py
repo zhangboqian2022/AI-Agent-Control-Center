@@ -61,7 +61,7 @@ class BoosterWallet:
 class KimiQuota:
     weekly: QuotaDetail | None
     five_hour: QuotaDetail | None
-    total_quota: QuotaDetail | None
+    monthly: QuotaDetail | None
     membership_level: str | None
     booster: BoosterWallet | None
     status: QuotaStatus = QuotaStatus.OK
@@ -166,7 +166,7 @@ def parse_quota(data: object) -> KimiQuota:
             if isinstance(item, dict) and _is_five_hour_window(item.get("window")):
                 five_hour = _make_detail(item.get("detail"))
                 break
-    total_quota = _make_detail(root.get("totalQuota"))
+    monthly = _make_detail(root.get("totalQuota"))
     valid_windows = sum(detail is not None for detail in (weekly, five_hour))
     status = (
         QuotaStatus.OK
@@ -186,7 +186,7 @@ def parse_quota(data: object) -> KimiQuota:
     return KimiQuota(
         weekly=weekly,
         five_hour=five_hour,
-        total_quota=total_quota,
+        monthly=monthly,
         membership_level=membership_level,
         booster=_parse_booster(root.get("boosterWallet")),
         status=status,

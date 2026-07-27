@@ -22,7 +22,7 @@ def make_quota() -> KimiQuota:
             reset_at=datetime(2026, 7, 24, 20, 0, tzinfo=UTC),
             percentage=10,
         ),
-        total_quota=QuotaDetail(used=0, limit=0, remaining=0, reset_at=None, percentage=0),
+        monthly=QuotaDetail(used=0, limit=0, remaining=0, reset_at=None, percentage=0),
         membership_level="PRO",
         booster=BoosterWallet(status="STATUS_ACTIVE", is_enabled=True, balance_yuan=3.15),
     )
@@ -59,7 +59,7 @@ def test_show_quota_without_booster_hides_balance(qapp):
         KimiQuota(
             weekly=quota.weekly,
             five_hour=quota.five_hour,
-            total_quota=quota.total_quota,
+            monthly=quota.monthly,
             membership_level=None,
             booster=None,
         )
@@ -74,7 +74,7 @@ def test_show_partial_quota_uses_dashes_for_missing_window(qapp):
         KimiQuota(
             weekly=quota.weekly,
             five_hour=None,
-            total_quota=None,
+            monthly=None,
             membership_level=None,
             booster=None,
             status=QuotaStatus.PARTIAL,
@@ -90,7 +90,7 @@ def test_show_unknown_quota_does_not_display_zero_percent(qapp):
         KimiQuota(
             weekly=None,
             five_hour=None,
-            total_quota=None,
+            monthly=None,
             membership_level=None,
             booster=None,
             status=QuotaStatus.UNKNOWN,
