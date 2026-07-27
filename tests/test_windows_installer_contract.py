@@ -123,6 +123,12 @@ def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
     assert "Get-Command ISCC.exe" not in text
     assert "/PORTABLE=1" in text
     assert "/CURRENTUSER" in text
+    assert (
+        'Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse'
+        in text
+    )
+    assert "$IsccCandidates.Count -ne 1" in text
+    assert 'Join-Path $InnoRoot "ISCC.exe"' not in text
 
 
 def test_windows_installer_build_validates_inputs_and_fresh_output() -> None:

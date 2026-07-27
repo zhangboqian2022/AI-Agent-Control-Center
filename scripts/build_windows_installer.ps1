@@ -180,8 +180,10 @@ else {
 
     $InnoRoot = Join-Path $Root "build\tools\inno-$InnoVersion"
     [System.IO.Directory]::CreateDirectory($InnoRoot) | Out-Null
-    $CandidateIsccPath = Join-Path $InnoRoot "ISCC.exe"
-    if (-not (Test-Path -LiteralPath $CandidateIsccPath -PathType Leaf)) {
+    $IsccCandidates = @(
+        Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse
+    )
+    if ($IsccCandidates.Count -eq 0) {
         & $BootstrapPath `
             /PORTABLE=1 `
             /VERYSILENT `
@@ -193,9 +195,15 @@ else {
         if ($LASTEXITCODE -ne 0) {
             throw "Inno Setup bootstrap failed"
         }
+        $IsccCandidates = @(
+            Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse
+        )
+    }
+    if ($IsccCandidates.Count -ne 1) {
+        throw "bootstrapped Inno Setup compiler layout is invalid"
     }
     $IsccPath = Resolve-ExistingLeaf `
-        -Path $CandidateIsccPath `
+        -Path $IsccCandidates[0].FullName `
         -Category "bootstrapped ISCC"
     Assert-IsccTrusted -Path $IsccPath
     Write-Host "Using verified Inno Setup $InnoVersion compiler (bootstrapped)"
