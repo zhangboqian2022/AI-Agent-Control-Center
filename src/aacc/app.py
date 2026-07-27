@@ -226,6 +226,21 @@ def build_runtime(
     )
 
 
+class _UvicornLogBridge(logging.Handler):
+    """Route Uvicorn warnings/errors through AACC's redacting file handler."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            _logger.log(
+                record.levelno,
+                "API server: %s",
+                record.getMessage(),
+                exc_info=record.exc_info,
+            )
+        except Exception:  # noqa: BLE001 - logging must never crash the GUI
+            return
+
+
 class APIServerThread:
     def __init__(self, runtime: Runtime) -> None:
         api = create_api(runtime.config, runtime.manager, runtime.automation_executor)
@@ -239,15 +254,24 @@ class APIServerThread:
                 log_config=None,
             )
         )
+        self._uvicorn_logger = logging.getLogger("uvicorn.error")
+        self._previous_uvicorn_propagate = self._uvicorn_logger.propagate
+        self._log_bridge = _UvicornLogBridge(level=logging.WARNING)
+        self._uvicorn_logger.addHandler(self._log_bridge)
+        self._uvicorn_logger.propagate = False
         self.thread = threading.Thread(target=self.server.run, name="aacc-api", daemon=True)
 
     def start(self) -> None:
         self.thread.start()
 
     def stop(self) -> None:
-        self.server.should_exit = True
-        if self.thread.is_alive():
-            self.thread.join(timeout=3)
+        try:
+            self.server.should_exit = True
+            if self.thread.is_alive():
+                self.thread.join(timeout=3)
+        finally:
+            self._uvicorn_logger.removeHandler(self._log_bridge)
+            self._uvicorn_logger.propagate = self._previous_uvicorn_propagate
 
 
 def _hotkey_actions(window: MainWindow) -> dict[str, object]:

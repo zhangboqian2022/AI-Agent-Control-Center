@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -326,6 +327,7 @@ def test_api_server_does_not_configure_console_logging(
     monkeypatch: object,
 ) -> None:
     captured: dict[str, object] = {}
+    forwarded: list[tuple[int, str, tuple[object, ...]]] = []
     runtime = SimpleNamespace(
         config=SimpleNamespace(
             app=SimpleNamespace(api=SimpleNamespace(host="127.0.0.1", port=8787))
@@ -344,10 +346,21 @@ def test_api_server_does_not_configure_console_logging(
         "Server",
         lambda _config: SimpleNamespace(run=lambda: None, should_exit=False),
     )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module._logger,
+        "log",
+        lambda level, message, *args, **_kwargs: forwarded.append((level, message, args)),
+    )
 
-    app_module.APIServerThread(runtime)
+    server = app_module.APIServerThread(runtime)
 
     assert captured["log_config"] is None
+    logging.getLogger("uvicorn.error").error("bind failed: %s", "smoke")
+    assert forwarded == [(logging.ERROR, "API server: %s", ("bind failed: smoke",))]
+
+    server.stop()
+    logging.getLogger("uvicorn.error").error("after stop")
+    assert len(forwarded) == 1
 
 
 def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_runtime(
