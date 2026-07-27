@@ -364,6 +364,37 @@ def test_ci_runs_real_windows_product_smoke_before_primary_artifact_publish() ->
     assert "Hosted Windows Server evidence only" in workflow
 
 
+def test_ci_isolates_unverified_primary_artifacts_from_always_uploaded_diagnostics() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    final_job = workflow.split("windows-package-2025:", 1)[1]
+    package_step = final_job.split("Package and strictly verify primary artifacts", 1)[1].split(
+        "Upload primary Windows Setup artifacts", 1
+    )[0]
+    diagnostics_step = final_job.split("Upload Windows smoke diagnostics", 1)[1]
+
+    assert "build\\candidate-validation" in package_step
+    assert "build\\windows-smoke\\artifact" not in package_step
+    assert "build/windows-smoke" in diagnostics_step
+    assert "candidate-validation" not in diagnostics_step
+    assert "verified-output" not in diagnostics_step
+    for primary_glob in ("AACC-*-Setup.exe", "AACC-*-Setup.exe.sha256", "windows-x64"):
+        assert primary_glob not in diagnostics_step
+
+
+def test_hosted_windows_build_and_product_smoke_run_under_windows_powershell_51() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    frozen_job = workflow.split("windows-frozen-2022:", 1)[1].split("windows-package-2025:", 1)[0]
+    package_job = workflow.split("windows-package-2025:", 1)[1]
+
+    for job in (frozen_job, package_job):
+        build_step = job.split("Build Windows app", 1)[1].split("- name:", 1)[0]
+        smoke_step = job.split("Smoke frozen", 1)[1].split("- name:", 1)[0]
+        assert "shell: powershell" in build_step
+        assert "shell: powershell" in smoke_step
+        assert "shell: pwsh" not in build_step
+        assert "shell: pwsh" not in smoke_step
+
+
 def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> None:
     script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
 
@@ -416,11 +447,23 @@ def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> 
         "AACC_LEGACY_EVIDENCE_FILE",
         "legacy-control-evidence.jsonl",
         "Get-ProcessIdentity -Process $Process",
+        "Assert-NonEmptyLiteralFile",
+        "Assert-InstalledRootPayloadHashes",
+        "Get-StableAppDataState",
+        "Assert-StableAppDataState",
+        "aacc_smoke_preservation",
+        "temporaryClones",
+        "rollback-probe-observed.txt",
+        "stale-obsolete.pyd",
     ):
         assert required in script
     assert "if (-not $Process.WaitForExit(5000))" in script
     assert "$SpecialLeaf\\broker-marker.json" in script
     assert "$SpecialLeaf\\timeout-identities.jsonl" in script
+    assert '$SmokeRoot "installed\\$SpecialLeaf\\setup copy' not in script
+    assert '$CandidateRoot "product-smoke\\$SpecialLeaf\\setup copy' in script
+    assert "$Stopwatch.ElapsedMilliseconds -ge 23000" in script
+    assert "$Stopwatch.ElapsedMilliseconds -le 35000" in script
 
 
 def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
@@ -446,10 +489,12 @@ def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
     assert "AACC_LEGACY_EVIDENCE_FILE" in legacy
     assert "creation_time" in legacy
     assert "image_path" in legacy
-    assert "FILE_SHARE_READ" not in locker
-    assert "FILE_SHARE_WRITE" not in locker
-    assert "FILE_SHARE_DELETE" not in locker
+    lock_open = locker.split("HANDLE payload = CreateFileW(", 1)[1].split(");", 1)[0]
+    assert "GENERIC_READ" in lock_open
+    assert re.search(r"GENERIC_READ,\s*0,", lock_open)
     assert "LOCK_READY" in locker
+    assert "ROLLBACK_PROBE_OBSERVED" in locker
+    assert "ReadAllBytes" in locker
 
 
 def test_windows_artifact_verifier_rejects_malformed_checksum_and_zip_layout() -> None:

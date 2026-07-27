@@ -43,7 +43,7 @@ Name: "{autoprograms}\AACC"; Filename: "{app}\AACC.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\AACC"; Filename: "{app}\AACC.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\AACC.exe"; Description: "启动 AACC / Launch AACC"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\AACC.exe"; Description: "启动 AACC / Launch AACC"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent; Check: InternalCleanupSucceeded
 
 [Code]
 const
@@ -54,6 +54,9 @@ const
   WAIT_TIMEOUT = 258;
   STARTF_USESHOWWINDOW = 1;
   FILE_ATTRIBUTE_REPARSE_POINT = $400;
+  CleanupRetryCount = 3;
+  CleanupRetryDelayMilliseconds = 250;
+  InternalCleanupFailureExitCode = 9;
 
 type
   { These pointer-sized records are reviewed for the pinned Inno Setup 6.7.1
@@ -107,6 +110,9 @@ function TerminateProcess(hProcess: THandle; uExitCode: DWORD): BOOL;
   external 'TerminateProcess@kernel32.dll stdcall';
 function CloseHandle(hObject: THandle): BOOL;
   external 'CloseHandle@kernel32.dll stdcall';
+
+var
+  InternalCleanupIncomplete: Boolean;
 
 function ShutdownFailureMessage: String;
 begin
@@ -199,17 +205,121 @@ begin
   end;
 end;
 
-procedure CleanupInternalExtras(
+function ValidateInternalManifest(const Manifest: TArrayOfString): Boolean;
+var
+  Index: Integer;
+  PriorIndex: Integer;
+  EntryPath: String;
+  PriorPath: String;
+  FramedPath: String;
+begin
+  Result := False;
+  if GetArrayLength(Manifest) = 0 then
+    Exit;
+  for Index := 0 to GetArrayLength(Manifest) - 1 do
+  begin
+    if (Length(Manifest[Index]) < 3) or
+       ((Copy(Manifest[Index], 1, 2) <> 'D ') and
+        (Copy(Manifest[Index], 1, 2) <> 'F ')) then
+      Exit;
+    EntryPath := Copy(
+      Manifest[Index],
+      3,
+      Length(Manifest[Index]) - 2
+    );
+    if Copy(Manifest[Index], 1, 2) = 'D ' then
+    begin
+      if EntryPath = '' then
+        Exit;
+      if EntryPath[Length(EntryPath)] <> '/' then
+        Exit;
+      Delete(EntryPath, Length(EntryPath), 1);
+    end
+    else
+    begin
+      if EntryPath = '' then
+        Exit;
+      if EntryPath[Length(EntryPath)] = '/' then
+        Exit;
+    end;
+    if EntryPath = '' then
+      Exit;
+    FramedPath := '/' + EntryPath + '/';
+    if (EntryPath[1] = '/') or
+       (Pos('\', EntryPath) <> 0) or
+       (Pos(':', EntryPath) <> 0) or
+       (Pos('//', FramedPath) <> 0) or
+       (Pos('/./', FramedPath) <> 0) or
+       (Pos('/../', FramedPath) <> 0) then
+      Exit;
+    for PriorIndex := 0 to Index - 1 do
+    begin
+      PriorPath := Copy(
+        Manifest[PriorIndex],
+        3,
+        Length(Manifest[PriorIndex]) - 2
+      );
+      if PriorPath <> '' then
+        if PriorPath[Length(PriorPath)] = '/' then
+          Delete(PriorPath, Length(PriorPath), 1);
+      if CompareText(PriorPath, EntryPath) = 0 then
+        Exit;
+    end;
+  end;
+  Result := True;
+end;
+
+function DeleteFileWithRetries(const Path: String): Boolean;
+var
+  Attempt: Integer;
+begin
+  Result := False;
+  for Attempt := 1 to CleanupRetryCount do
+  begin
+    if DeleteFile(Path) then
+    begin
+      Result := True;
+      Exit;
+    end;
+    if Attempt < CleanupRetryCount then
+      Sleep(CleanupRetryDelayMilliseconds);
+  end;
+end;
+
+function RemoveDirWithRetries(const Path: String): Boolean;
+var
+  Attempt: Integer;
+begin
+  Result := False;
+  for Attempt := 1 to CleanupRetryCount do
+  begin
+    if RemoveDir(Path) then
+    begin
+      Result := True;
+      Exit;
+    end;
+    if Attempt < CleanupRetryCount then
+      Sleep(CleanupRetryDelayMilliseconds);
+  end;
+end;
+
+function CleanupInternalExtras(
   const RootPath: String;
   const RelativePath: String;
   const Manifest: TArrayOfString
-);
+): Boolean;
 var
   SearchPath: String;
   FullPath: String;
   ChildRelative: String;
   FindRec: TFindRec;
 begin
+  Result := True;
+  if not DirExists(RootPath) then
+  begin
+    Result := False;
+    Exit;
+  end;
   SearchPath := AddBackslash(RootPath);
   if RelativePath <> '' then
     SearchPath := SearchPath + RelativePath + '\';
@@ -230,22 +340,32 @@ begin
           begin
             { Remove only the junction/reparse directory entry. Never recurse
               into a target that is outside the installed payload. }
-            if not RemoveDir(FullPath) then
+            if not RemoveDirWithRetries(FullPath) then
+            begin
               Log('AACC_MANIFEST_CLEANUP result=reparse-directory-retained');
+              Result := False;
+            end;
           end
-          else if not DeleteFile(FullPath) then
+          else if not DeleteFileWithRetries(FullPath) then
+          begin
             Log('AACC_MANIFEST_CLEANUP result=reparse-file-retained');
+            Result := False;
+          end;
         end
         else if (FindRec.Attributes and faDirectory) <> 0 then
         begin
-          CleanupInternalExtras(RootPath, ChildRelative, Manifest);
+          if not CleanupInternalExtras(RootPath, ChildRelative, Manifest) then
+            Result := False;
           if not ManifestContains(
             Manifest,
             'D ' + ManifestPath(ChildRelative) + '/'
           ) then
           begin
-            if not RemoveDir(FullPath) then
+            if not RemoveDirWithRetries(FullPath) then
+            begin
               Log('AACC_MANIFEST_CLEANUP result=directory-retained');
+              Result := False;
+            end;
           end;
         end
         else if not ManifestContains(
@@ -253,8 +373,11 @@ begin
           'F ' + ManifestPath(ChildRelative)
         ) then
         begin
-          if not DeleteFile(FullPath) then
+          if not DeleteFileWithRetries(FullPath) then
+          begin
             Log('AACC_MANIFEST_CLEANUP result=file-retained');
+            Result := False;
+          end;
         end;
       end;
     until not FindNext(FindRec);
@@ -263,19 +386,31 @@ begin
   end;
 end;
 
-procedure CleanupCommittedInternalPayload;
+function CleanupCommittedInternalPayload: Boolean;
 var
   Manifest: TArrayOfString;
   ManifestPath: String;
 begin
+  Result := False;
   ManifestPath := ExpandConstant('{app}\uninstall\internal-manifest-v1.txt');
   if not LoadStringsFromFile(ManifestPath, Manifest) then
   begin
     Log('AACC_MANIFEST_CLEANUP result=manifest-unavailable');
     Exit;
   end;
-  CleanupInternalExtras(ExpandConstant('{app}\_internal'), '', Manifest);
+  if not ValidateInternalManifest(Manifest) then
+  begin
+    Log('AACC_MANIFEST_CLEANUP result=manifest-invalid');
+    Exit;
+  end;
+  if not CleanupInternalExtras(
+    ExpandConstant('{app}\_internal'),
+    '',
+    Manifest
+  ) then
+    Exit;
   Log('AACC_MANIFEST_CLEANUP result=completed');
+  Result := True;
 end;
 
 function ShutdownExistingAACC(var ErrorMessage: String): Boolean;
@@ -338,10 +473,23 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    try
-      CleanupCommittedInternalPayload;
-    except
-      Log('AACC_MANIFEST_CLEANUP result=unexpected-retained');
+    if not CleanupCommittedInternalPayload then
+    begin
+      InternalCleanupIncomplete := True;
+      Log('AACC_MANIFEST_CLEANUP result=incomplete');
     end;
   end;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  if InternalCleanupIncomplete then
+    Result := InternalCleanupFailureExitCode
+  else
+    Result := 0;
+end;
+
+function InternalCleanupSucceeded: Boolean;
+begin
+  Result := not InternalCleanupIncomplete;
 end;

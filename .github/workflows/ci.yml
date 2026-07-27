@@ -63,12 +63,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
       - name: Build Windows app without Setup
-        shell: pwsh
+        shell: powershell
         env:
           AACC_SKIP_INSTALLER: 1
         run: ./scripts/build_windows.ps1
       - name: Assert Windows executable and modules
-        shell: pwsh
+        shell: powershell
         run: |
           if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
           if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
@@ -77,7 +77,7 @@ jobs:
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
       - name: Smoke frozen Windows product
-        shell: pwsh
+        shell: powershell
         run: ./scripts/test_windows_package.ps1 -FrozenOnly
       - name: Upload Windows smoke diagnostics
         if: always()
@@ -103,10 +103,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
       - name: Build Windows app and Setup
-        shell: pwsh
+        shell: powershell
         run: ./scripts/build_windows.ps1
       - name: Assert Windows executable and modules
-        shell: pwsh
+        shell: powershell
         run: |
           if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
           if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
@@ -115,13 +115,13 @@ jobs:
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
       - name: Smoke frozen and installed Windows product
-        shell: pwsh
+        shell: powershell
         run: ./scripts/test_windows_package.ps1
       - name: Package and strictly verify primary artifacts
-        shell: pwsh
+        shell: powershell
         run: |
           $version = uv version --short
-          $artifactRoot = "build\windows-smoke\artifact 验证 &() %! [x]"
+          $artifactRoot = "build\candidate-validation\artifact 验证 &() %! [x]"
           New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
           $portablePath = Join-Path $artifactRoot "AACC-$version-windows-x64-windows-2025-vs2026.zip"
           Compress-Archive -Path "dist\AACC" -DestinationPath $portablePath -Force

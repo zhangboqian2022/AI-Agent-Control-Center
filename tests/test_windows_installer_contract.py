@@ -111,6 +111,7 @@ def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
     assert "postinstall" in run
     assert "nowait" in run
     assert "skipifsilent" in run
+    assert "Check: InternalCleanupSucceeded" in run
 
 
 def test_inno_setup_cleans_only_manifest_extras_after_commit() -> None:
@@ -127,12 +128,24 @@ def test_inno_setup_cleans_only_manifest_extras_after_commit() -> None:
     reparse_branch = code.split(
         "if (FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then", 1
     )[1].split("else if (FindRec.Attributes and faDirectory) <> 0 then", 1)[0]
-    assert "RemoveDir(FullPath)" in reparse_branch
-    assert "DeleteFile(FullPath)" in reparse_branch
+    assert "RemoveDirWithRetries(FullPath)" in reparse_branch
+    assert "DeleteFileWithRetries(FullPath)" in reparse_branch
     assert "DelTree(" not in reparse_branch
     assert "CleanupInternalExtras(" not in reparse_branch
-    assert "Log(" in code
-    assert "RaiseException" not in code
+    assert "CleanupRetryCount = 3" in code
+    assert "CleanupRetryDelayMilliseconds" in code
+    assert "DeleteFileWithRetries" in code
+    assert "RemoveDirWithRetries" in code
+    assert "ValidateInternalManifest" in code
+    assert "CleanupInternalExtras" in code
+    assert "if not CleanupCommittedInternalPayload then" in code
+    assert "InternalCleanupIncomplete := True" in code
+    assert "function GetCustomSetupExitCode: Integer" in code
+    assert "function InternalCleanupSucceeded: Boolean" in code
+    assert "InternalCleanupFailureExitCode = 9" in code
+    assert "Result := InternalCleanupFailureExitCode" in code
+    assert "RaiseException(" not in code
+    assert "result=incomplete" in code
 
 
 def test_windows_smoke_closes_uninstaller_clone_capture_race() -> None:
@@ -141,13 +154,14 @@ def test_windows_smoke_closes_uninstaller_clone_capture_race() -> None:
         "function Invoke-Uninstaller", 1
     )[0]
 
-    initial = function.index("$InitialSnapshot = @(Get-OwnedProcessTree")
+    initial = function.index("$InitialSnapshot = @(")
     polling = function.index("while (-not $Process.HasExited")
-    final = function.index("$FinalSnapshot = @(Get-OwnedProcessTree")
-    waiting = function.index("Assert-ProcessExitedByDeadline")
+    final = function.index("$FinalSnapshot = @(")
+    waiting = function.index("$TreeDeadline = [DateTime]::UtcNow.AddSeconds(30)")
     assert initial < polling < final < waiting
     assert "ParentProcessId" in function
     assert "Register-OwnedIdentity -Identity $Identity" in function
+    assert function.count("-ExpectedRootIdentity $RootIdentity") >= 4
 
 
 def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
