@@ -55,6 +55,8 @@ def _runtime_for_application_test(events: list[str]) -> SimpleNamespace:
 
 
 def _patch_application_shell(monkeypatch: object, events: list[str], runtime: object) -> None:
+    scheduled: list[object] = []
+
     class Signal:
         def connect(self, callback) -> None:
             events.append("cleanup-connected")
@@ -64,6 +66,8 @@ def _patch_application_shell(monkeypatch: object, events: list[str], runtime: ob
 
         def exec(self) -> int:
             events.append("exec")
+            for callback in scheduled:
+                callback()  # type: ignore[operator]
             return 0
 
     class Timer:
@@ -79,8 +83,8 @@ def _patch_application_shell(monkeypatch: object, events: list[str], runtime: ob
             pass
 
         @staticmethod
-        def singleShot(_delay: int, _callback) -> None:  # noqa: N802
-            pass
+        def singleShot(_delay: int, callback) -> None:  # noqa: N802
+            scheduled.append(callback)
 
     class Window:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -108,6 +112,7 @@ def test_windows_listener_is_installed_before_hotkeys_and_survives_hotkey_failur
 ) -> None:
     events: list[str] = []
     runtime = _runtime_for_application_test(events)
+    runtime.kimi_web_quota_service = SimpleNamespace(start=lambda: events.append("kimi-web-start"))
     _patch_application_shell(monkeypatch, events, runtime)
 
     class Listener:
@@ -141,6 +146,7 @@ def test_windows_listener_is_installed_before_hotkeys_and_survives_hotkey_failur
     )
     assert events.index("listener-start") < events.index("window-show")
     assert events.index("listener-start") < events.index("hotkeys-created")
+    assert events.index("exec") < events.index("kimi-web-start")
     assert "hotkeys-failed" in events
     assert events.index("listener-stop") < events.index("hotkeys-stop")
     assert events.index("hotkeys-stop") < events.index("runtime-close")
