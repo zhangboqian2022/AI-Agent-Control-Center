@@ -17,12 +17,17 @@
 - Codex 只显示一行更大的 `WEEK`，数据优先来自本机已安装 Codex
   `app-server` 的只读 `account/rateLimits/read`，不可用时才回退到有界本地
   会话元数据。AACC 不启动任务、不发送提示词、不发起登录。
-- Kimi 严格按 `5H`、`WEEK`、`MONTH` 三行显示。用户在 AACC 内直接登录
-  Kimi 官网后，隔离的网页会话缓存在 AACC 本地，直到在 AACC 中明确退出登录。
-  三个窗口每五分钟一起刷新；Kimi Code 只能补临时缺失的 `5H`/`WEEK`，不能
-  虚构 `MONTH`。
-- 每行将百分比、进度条和完整本地重置日期时间分开排版。缺失值诚实显示
-  `--`，不会显示为 `0%`。额度查询只是只读元数据请求，不消耗模型 Token。
+- Kimi 严格按 `5H`、`WEEK`、`MONTH` 三行显示。操作系统原生的每应用
+  WebView 存储保留 Kimi 第一方站点会话。对于原生网页会话复用，AACC 只保存
+  受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值
+  复制进该门禁；Kimi Code OAuth 凭据由现有凭据保护另行保存。明确退出登录
+  会先同步关闭复用，再尝试有界的原生站点数据清理。
+- 网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能用
+  足够新的数据补临时缺失的 `5H`/`WEEK`，不能虚构 `MONTH`。额度查询只读取
+  元数据、不发送提示词，也不消耗生成 Token。
+- 每行将百分比、进度条和完整本地重置日期时间分开排版。百分比已知但没有
+  可信重置时间时，百分比仍显示，重置位置为 `--`；其他缺失值也诚实显示
+  `--`，不会伪装为 `0%`。
 
 ### Windows Setup 与安全加固
 
@@ -30,8 +35,9 @@
   `%LocalAppData%\Programs\AACC`。它始终创建开始菜单快捷方式，可选但默认不
   勾选桌面快捷方式，不添加开机启动。
 - 再次运行 Setup 会先请求 AACC 在 20 秒内优雅退出，再原位升级。卸载会移除
-  程序、快捷方式与卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC`，其中包含
-  设置、历史、数据库及缓存的 Kimi 网页会话。
+  程序、快捷方式与卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC` 中由
+  AACC 管理的设置、历史、数据库、凭据与复用决定。原生 WebView 存储由操作
+  系统另行管理，因此不声称 Setup 会保留或移除网页会话。
 - 敏感目录、配置、Kimi 凭据、SQLite 数据库及存在时的 WAL/SHM 使用原生精确
   受保护 DACL，仅允许当前用户、Local System 与本机 Administrators 完全控制；
   不再依赖 `whoami.exe` 或 `icacls.exe`。
@@ -60,13 +66,21 @@
   app-server’s read-only `account/rateLimits/read` method and falls back to
   bounded local session metadata. It does not start a task, submit a prompt, or
   initiate login.
-- Kimi renders `5H`, `WEEK`, and `MONTH` in that order. Its isolated membership
-  web session remains cached locally until explicit AACC logout, and all three
-  windows refresh together every five minutes. Kimi Code may fill a missing
-  `5H` or `WEEK`, never `MONTH`.
+- Kimi renders `5H`, `WEEK`, and `MONTH` in that order. The operating system's
+  native per-application WebView store retains the first-party Kimi session.
+  For native website-session reuse, AACC persists only a protected reuse
+  decision and does not copy cookies, passwords, a website bearer token,
+  account names, or quota values into that gate. Kimi Code OAuth credentials
+  remain separately protected. Explicit logout synchronously disables reuse,
+  then attempts bounded native site-data cleanup.
+- The web source and Kimi Code fallback start in the same five-minute cycle.
+  Only sufficiently fresh Kimi Code data may fill a missing `5H` or `WEEK`;
+  it never supplies `MONTH`. Metadata-only lookups send no prompt and use no
+  generation tokens.
 - Each available row separates percentage, progress, and complete local reset
-  date/time. Missing data stays `--`, never fabricated `0%`. Metadata-only
-  quota refreshes consume no model tokens.
+  date/time. A known percentage without a trustworthy reset remains visible
+  while the reset displays `--`; other missing data also stays `--`, never
+  fabricated `0%`.
 
 ### Windows Setup and security
 
@@ -75,8 +89,10 @@
   unchecked desktop shortcut, and adds no login item.
 - Rerunning Setup requests bounded graceful shutdown and upgrades in place.
   Uninstall removes the program, shortcuts, and registration. Upgrade and
-  uninstall preserve `%APPDATA%\AACC`, including settings, history, database,
-  and the cached Kimi web session.
+  uninstall preserve AACC-owned settings, history, database, credentials, and
+  reuse decision under `%APPDATA%\AACC`. The operating system owns the native
+  WebView store separately, so this is not a claim that Setup preserves or
+  removes the website session.
 - A native DACL protects sensitive directories, configuration, credentials,
   SQLite database, WAL, and SHM with the exact current-user, Local System, and
   Administrators allowlist. Runtime protection no longer executes
@@ -110,6 +126,8 @@ checks.
   protected configuration, credentials, database, WAL, or SHM.
 - [ ] Sign in to a real Kimi membership account from AACC and confirm `5H`,
   `WEEK`, and `MONTH` refresh together and survive an app restart.
+- [ ] Obtain macOS and Windows manual sign-off for native-session persistence,
+  explicit logout across restart, and the shared five-minute refresh cycle.
 - [ ] Confirm a real read-only Codex `WEEK` refresh without starting a task.
 - [ ] Attach the completed checklist evidence to the release PR or notes.
 - [ ] Only then create tag and release `v1.4.2`.

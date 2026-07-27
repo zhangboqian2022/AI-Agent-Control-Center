@@ -119,6 +119,41 @@ def test_monthly_reset_prefers_quota_window_over_annual_subscription_renewal():
     assert result.monthly.reset_at == datetime(2026, 8, 20, 13, 28, 47, tzinfo=UTC)
 
 
+def test_monthly_reset_does_not_fall_back_to_annual_billing_time():
+    result = parse_membership_quota(
+        {"subscriptionBalance": {"amountUsedRatio": 0.31}},
+        {
+            "subscription": {
+                "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                "nextBillingTime": "2027-07-20T13:28:47Z",
+            }
+        },
+        now=NOW,
+    )
+
+    assert result.monthly is not None
+    assert result.monthly.percentage == 31
+    assert result.monthly.reset_at is None
+
+
+@pytest.mark.parametrize("untrusted_key", ["resetAt", "expiresAt", "nextResetTime"])
+def test_monthly_reset_rejects_noncanonical_balance_fields(untrusted_key: str):
+    result = parse_membership_quota(
+        {
+            "subscriptionBalance": {
+                "amountUsedRatio": 0.31,
+                untrusted_key: "2026-08-20T13:28:47Z",
+            }
+        },
+        {},
+        now=NOW,
+    )
+
+    assert result.monthly is not None
+    assert result.monthly.percentage == 31
+    assert result.monthly.reset_at is None
+
+
 def test_parse_membership_quota_rejects_invalid_values_without_fabricating_zero():
     result = parse_membership_quota(
         {

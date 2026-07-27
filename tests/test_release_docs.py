@@ -130,3 +130,75 @@ def test_bilingual_guides_make_desktop_controls_platform_specific() -> None:
         assert term in english
     for term in ("Win+H", "系统托盘", "辅助功能", "不添加开机启动项"):
         assert term in chinese
+
+
+def test_kimi_web_session_docs_describe_native_store_and_reuse_gate_honestly() -> None:
+    english_names = (
+        "README.md",
+        "docs/user-guide.en.md",
+        "docs/release-notes-1.4.2.md",
+        "docs/windows-verification-checklist.en.md",
+        "docs/superpowers/specs/2026-07-27-kimi-web-quota-readable-bars-design.md",
+    )
+    chinese_names = (
+        "README.zh-CN.md",
+        "docs/user-guide.md",
+        "docs/release-notes-1.4.2.md",
+        "docs/windows-verification-checklist.zh-CN.md",
+    )
+    english = "\n".join(_read(name) for name in english_names)
+    chinese = "\n".join(_read(name) for name in chinese_names)
+
+    for term in (
+        "native per-application WebView store",
+        "protected reuse decision",
+        "synchronously disables reuse",
+        "bounded native site-data cleanup",
+        "same five-minute cycle",
+        "no generation tokens",
+        "trustworthy reset",
+        "macOS and Windows manual sign-off",
+    ):
+        assert term in english
+    for term in (
+        "原生的每应用 WebView 存储",
+        "受保护的复用决定",
+        "同步关闭复用",
+        "有界的原生站点数据清理",
+        "同一个五分钟周期",
+        "不消耗生成 Token",
+        "可信重置时间",
+        "macOS 与 Windows 人工签字",
+    ):
+        assert term in chinese
+
+    for text in (english, chinese):
+        assert "%APPDATA%\\AACC" in text
+        assert "cookie" in text.casefold()
+
+    for name in english_names:
+        text = _read(name)
+        assert "website bearer token" in text.casefold()
+        assert "Kimi Code OAuth" in text
+    for name in chinese_names:
+        text = _read(name)
+        assert "网页 Bearer Token" in text
+        assert "Kimi Code OAuth" in text
+
+    assert "including settings, history, and the cached Kimi web session" not in english
+    assert (
+        "including configuration, task history, database, and the cached Kimi membership session"
+        not in english
+    )
+    assert "其中包括设置、历史和缓存的 Kimi 网页会话" not in chinese
+    assert "其中包括配置、任务历史、数据库与缓存的 Kimi 会员会话" not in chinese
+
+
+def test_old_kimi_web_quota_design_is_explicitly_superseded() -> None:
+    design = _read("docs/superpowers/specs/2026-07-27-kimi-web-quota-readable-bars-design.md")
+
+    assert "Status: Superseded" in design
+    assert "2026-07-27-kimi-web-session-correction-design.md" in design
+    assert "nextBillingTime" not in design
+    assert "native per-application WebView store" in design
+    assert re.search(r"protected\s+reuse\s+decision", design)

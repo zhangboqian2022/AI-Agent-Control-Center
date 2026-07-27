@@ -4,6 +4,8 @@ Record only what is actually observed. Unchecked items are not compatibility
 claims. Hosted GitHub Actions on Windows Server 2022/2025 verifies builds and
 automated product smoke, but it does **not** replace this consumer Windows
 10/11 checklist or the separate-account denial test.
+Completing this checklist provides only the Windows half of the required
+macOS and Windows manual sign-off for native WebView persistence and logout.
 
 Candidate: `AACC-1.4.2-Setup.exe`
 
@@ -37,10 +39,20 @@ Commit and candidate SHA-256:
 - [ ] **Quota rows**: without starting a Codex task, refresh and verify one real
   Codex `WEEK` row. Kimi shows `5H`, `WEEK`, `MONTH` in that order after real
   membership login; each available row shows a complete local reset date/time,
-  and unavailable data is `--`, never `0%`.
-- [ ] **Settings and cached session**: always-on-top and API credential reset
-  persist; the Kimi web session survives an AACC restart without storing or
-  displaying the account password.
+  a known percentage without a trustworthy reset shows `--` for the reset,
+  and unavailable percentages are `--`, never `0%`.
+- [ ] **Settings and native session**: always-on-top and API credential reset
+  persist. Confirm that the operating system's native per-application WebView
+  store retains the first-party Kimi session across an AACC restart. Inspect
+  `%APPDATA%\AACC\kimi-web-session-state.json` and confirm AACC stores only a
+  protected reuse decision for native website-session reuse, not a cookie,
+  password, website bearer token, account name, or quota value. Kimi Code OAuth
+  credentials remain separately stored under AACC's credential protection.
+- [ ] **Shared refresh and logout**: observe that the web source and Kimi Code
+  fallback start from the same five-minute cycle and that metadata lookups use
+  no generation tokens. Explicit logout must synchronously disable reuse,
+  attempt bounded native site-data cleanup, and remain logged out after an
+  immediate AACC restart.
 - [ ] **Native DACL**: after AACC creates its files, inspect `config.yaml`,
   `aacc.db`, `aacc.db-wal`, `aacc.db-shm` when present, and
   `kimi-credentials.json`. Each file has inheritance disabled and exactly one
@@ -51,11 +63,14 @@ Commit and candidate SHA-256:
   above.
 - [ ] **Upgrade and graceful shutdown**: while AACC is running, rerun the same
   Setup. It closes AACC gracefully, upgrades in place, restarts normally, and
-  preserves settings, history, and the cached Kimi session.
+  preserves AACC-owned settings, history, database, credentials, and reuse
+  decision under `%APPDATA%\AACC`. Record native WebView persistence as a
+  separate observed platform result, not as an AppData guarantee.
 - [ ] **Uninstall and preserved AppData**: uninstall removes the program,
   shortcuts, and uninstall entry but preserves `%APPDATA%\AACC`. Reinstall
-  starts normally with the preserved data; explicit Kimi logout removes the
-  cached membership session.
+  starts normally with the preserved AACC data. The operating system owns the
+  native WebView store separately, so this check does not claim that uninstall
+  preserves or removes the website session.
 - [ ] **Long-running stability**: leave AACC running for at least 30 minutes
   while tasks and quotas refresh; no crash, raw traceback, orphaned Codex
   broker tree, or sustained UI hang appears.

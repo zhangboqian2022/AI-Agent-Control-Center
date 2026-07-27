@@ -16,7 +16,7 @@ Codex 元数据连续读取失败时，顶部会出现黄色告警条，但不�
 
 Codex 额度条会优先启动本机已安装的 Codex `app-server`，使用 Codex 已配置账户仅调用只读 `account/rateLimits/read`；它不会提交提示词、启动任务或发起登录。该路径不可用时，AACC 才回退到近期本机会话文件有界尾部的结构化 `rate_limits`。AACC 只接受未来有效的 10080 分钟周窗口，并刻意忽略旧版较短窗口，因此没有 Codex 五小时字段。元数据缺失、过期或格式变化时会显示“数据不可用”，不会显示为零用量。点击额度条可立即刷新。
 
-Kimi 按 `5H`、`WEEK`、`MONTH` 显示。在 AACC 内登录 Kimi 会员官网后，隔离的网页会话会缓存在 AACC 本地，并每五分钟一起刷新三行。Kimi Code 只能为临时缺失的 `5H` 或 `WEEK` 补位，不能虚构 `MONTH`。额度查询只是元数据请求，不消耗模型 Token。
+Kimi 按 `5H`、`WEEK`、`MONTH` 显示。操作系统原生的每应用 WebView 存储保留 Kimi 第一方站点会话。对于原生网页会话复用，AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进该门禁；Kimi Code OAuth 凭据由 AACC 现有凭据保护另行保存。一个协调器让网页源和 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能用足够新的数据为临时缺失的 `5H` 或 `WEEK` 补位，不能虚构 `MONTH`。额度查询只读取元数据，不发送提示词，也不消耗生成 Token。百分比已知但没有可信重置时间时，百分比仍显示，重置位置为 `--`。明确退出登录会先同步关闭复用，再尝试有界的原生站点数据清理。原生会话跨重启保留及退出后仍保持登出，仍需 macOS 与 Windows 人工签字。
 
 ## macOS DMG
 
@@ -26,7 +26,7 @@ Kimi 按 `5H`、`WEEK`、`MONTH` 显示。在 AACC 内登录 Kimi 会员官网�
 
 Windows 1.4.2 主候选产物是 `AACC-1.4.2-Setup.exe`，普通用户无需安装 Python 或 `uv`。先核对 `AACC-1.4.2-Setup.exe.sha256`，再运行 Setup。它只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器创建开始菜单快捷方式，提供默认不勾选的桌面快捷方式，并且不添加开机启动项。
 
-再次运行同一个 Setup 会在有界的优雅退出后原位升级。卸载会移除程序、开始菜单项、可选桌面快捷方式和卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC`，其中包括配置、任务历史、数据库与缓存的 Kimi 会员会话；需要清除网页会话时，请在 AACC 中明确退出 Kimi 登录。
+再次运行同一个 Setup 会在有界的优雅退出后原位升级。卸载会移除程序、开始菜单项、可选桌面快捷方式和卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC` 下由 AACC 管理的配置、任务历史、数据库、凭据与受保护的复用决定。原生 WebView 存储由操作系统另行管理；这里不声称 Setup 会保留或移除网页会话。需要禁用复用并请求有界清理原生站点数据时，请在 AACC 中明确退出 Kimi 登录。
 
 1.4.2 候选版尚未签名，Windows 可能显示“未知发布者”或 SmartScreen；请先验证校验值，再选择“更多信息 → 仍要运行”。敏感配置、凭据、数据库、WAL 与 SHM 文件使用原生精确受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 只读查询通过 `AACC.exe` 旁的固定用途 broker 执行，因此应用不再调用 `icacls.exe`、`whoami.exe` 或 `taskkill.exe`。
 
