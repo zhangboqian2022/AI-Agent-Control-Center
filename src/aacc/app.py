@@ -33,7 +33,7 @@ from aacc.discovery_service import (
 )
 from aacc.file_security import FileProtectionError
 from aacc.gui import MainWindow
-from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys
+from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys, HotkeyDriver
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
 from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.kimi_web_session import initialize_native_webview
@@ -365,63 +365,9 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
                 _logger.error("Application cleanup failed stage=runtime")
             return _show_startup_shutdown_error(data_dir, error)
     window.show()
-    if not trusted:
-        QTimer.singleShot(0, window.show_accessibility_guidance)
-    runtime.discovery.start()
-    runtime.kimi_discovery.start()
-    runtime.kimi_desktop_discovery.start()
-    if runtime.quota_service is not None:
-        runtime.quota_service.start()
-    if runtime.kimi_web_quota_service is not None:
-        kimi_web_quota_service = runtime.kimi_web_quota_service
-
-        def start_kimi_web_quota() -> None:
-            _logger.info("Application deferred startup starting stage=kimi-web-quota")
-            try:
-                kimi_web_quota_service.start()
-            except Exception:  # noqa: BLE001 - optional web quota must not block the app
-                _logger.error("Application deferred startup failed stage=kimi-web-quota")
-                try:
-                    kimi_web_quota_service.stop()
-                except Exception:  # noqa: BLE001 - app startup must still continue
-                    _logger.error(
-                        "Application deferred startup rollback failed stage=kimi-web-quota"
-                    )
-            else:
-                _logger.info("Application deferred startup completed stage=kimi-web-quota")
-
-        QTimer.singleShot(0, start_kimi_web_quota)
-    if runtime.codex_quota_service is not None:
-        runtime.codex_quota_service.start()
-
     api_server: APIServerThread | None = None
-    if runtime.config.app.api.enabled:
-        api_server = APIServerThread(runtime)
-        api_server.start()
-
-    if sys.platform == "win32":
-        from aacc.hotkeys_windows import WindowsGlobalHotkeys
-
-        hotkeys = WindowsGlobalHotkeys(
-            runtime.config.hotkeys,
-            _hotkey_actions(window),  # type: ignore[arg-type]
-            hwnd=int(window.winId()),
-        )
-    else:
-        hotkeys = GlobalHotkeys(runtime.config.hotkeys, _hotkey_actions(window))  # type: ignore[arg-type]
-    hotkey_sync = AccessibilityHotkeySync(hotkeys)
-    hotkey_sync.sync(trusted)
-
-    def refresh_accessibility() -> None:
-        trusted_now = is_accessibility_trusted()
-        window.accessibility_trusted = trusted_now
-        hotkey_sync.sync(trusted_now)
-
-    accessibility_timer = QTimer(qt_app)
-    accessibility_timer.setInterval(5000)
-    accessibility_timer.timeout.connect(refresh_accessibility)
-    accessibility_timer.start()
-
+    hotkeys: HotkeyDriver | None = None
+    accessibility_timer: QTimer | None = None
     cleaned = False
 
     def cleanup() -> None:
@@ -434,7 +380,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
                 "shutdown-listener",
                 shutdown_listener.stop if shutdown_listener is not None else lambda: None,
             ),
-            ("hotkeys", hotkeys.stop),
+            ("hotkeys", hotkeys.stop if hotkeys is not None else lambda: None),
             ("api-server", api_server.stop if api_server is not None else lambda: None),
             ("runtime", runtime.close),
         )
@@ -447,9 +393,115 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
             else:
                 _logger.info("Application cleanup completed stage=%s", stage)
 
+    def start_kimi_web_quota() -> None:
+        if cleaned or runtime.kimi_web_quota_service is None:
+            return
+        kimi_web_quota_service = runtime.kimi_web_quota_service
+
+        def stop_after_shutdown() -> None:
+            try:
+                kimi_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - shutdown must keep unwinding
+                _logger.error("Application post-shutdown cleanup failed stage=kimi-web-quota")
+
+        _logger.info("Application startup beginning stage=kimi-web-quota")
+        try:
+            kimi_web_quota_service.start()
+        except Exception:  # noqa: BLE001 - optional web quota must not block the app
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.error("Application startup failed stage=kimi-web-quota")
+            try:
+                kimi_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - app startup must still continue
+                _logger.error("Application startup rollback failed stage=kimi-web-quota")
+        else:
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.info("Application startup completed stage=kimi-web-quota")
+
+    def show_accessibility_guidance() -> None:
+        if not cleaned:
+            window.show_accessibility_guidance()
+
+    def start_runtime_components() -> None:
+        nonlocal accessibility_timer, api_server, hotkeys
+        if cleaned:
+            return
+        _logger.info("Application event-loop startup beginning")
+        try:
+            runtime.discovery.start()
+            if cleaned:
+                return
+            runtime.kimi_discovery.start()
+            if cleaned:
+                return
+            runtime.kimi_desktop_discovery.start()
+            if cleaned:
+                return
+            if runtime.quota_service is not None:
+                runtime.quota_service.start()
+                if cleaned:
+                    return
+            if runtime.codex_quota_service is not None:
+                runtime.codex_quota_service.start()
+                if cleaned:
+                    return
+
+            if runtime.config.app.api.enabled:
+                api_server = APIServerThread(runtime)
+                api_server.start()
+                if cleaned:
+                    return
+
+            if sys.platform == "win32":
+                from aacc.hotkeys_windows import WindowsGlobalHotkeys
+
+                hotkeys = WindowsGlobalHotkeys(
+                    runtime.config.hotkeys,
+                    _hotkey_actions(window),  # type: ignore[arg-type]
+                    hwnd=int(window.winId()),
+                )
+            else:
+                hotkeys = GlobalHotkeys(
+                    runtime.config.hotkeys,
+                    _hotkey_actions(window),  # type: ignore[arg-type]
+                )
+            hotkey_sync = AccessibilityHotkeySync(hotkeys)
+            hotkey_sync.sync(trusted)
+            if cleaned:
+                return
+
+            def refresh_accessibility() -> None:
+                trusted_now = is_accessibility_trusted()
+                window.accessibility_trusted = trusted_now
+                hotkey_sync.sync(trusted_now)
+
+            accessibility_timer = QTimer(qt_app)
+            accessibility_timer.setInterval(5000)
+            accessibility_timer.timeout.connect(refresh_accessibility)
+            accessibility_timer.start()
+        except Exception:  # noqa: BLE001 - async startup must exit instead of hanging
+            if cleaned:
+                return
+            _logger.exception("Application event-loop startup failed")
+            cleanup()
+            qt_app.exit(1)
+            return
+        _logger.info("Application event-loop startup completed")
+        if runtime.kimi_web_quota_service is not None:
+            QTimer.singleShot(0, start_kimi_web_quota)
+        if not trusted:
+            QTimer.singleShot(0, show_accessibility_guidance)
+
     qt_app.aboutToQuit.connect(cleanup)
     try:
         _logger.info("Application entering Qt event loop")
+        # Keep this as the final operation before exec(). Scheduling it earlier allows
+        # a nested native/Qt event pump to start services without a top-level event loop.
+        QTimer.singleShot(0, start_runtime_components)
         return qt_app.exec()
     finally:
         cleanup()

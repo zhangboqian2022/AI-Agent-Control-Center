@@ -54,27 +54,47 @@ def _runtime_for_application_test(events: list[str]) -> SimpleNamespace:
     )
 
 
-def _patch_application_shell(monkeypatch: object, events: list[str], runtime: object) -> None:
+def _patch_application_shell(
+    monkeypatch: object,
+    events: list[str],
+    runtime: object,
+    *,
+    trusted: bool = True,
+) -> None:
     scheduled: list[object] = []
 
     class Signal:
+        def __init__(self) -> None:
+            self.callbacks: list[object] = []
+
         def connect(self, callback) -> None:
             events.append("cleanup-connected")
+            self.callbacks.append(callback)
+
+        def emit(self) -> None:
+            for callback in self.callbacks:
+                callback()  # type: ignore[operator]
 
     class Application:
         aboutToQuit = Signal()
+
+        def __init__(self) -> None:
+            self.exit_code = 0
+            runtime.qt_app = self  # type: ignore[attr-defined]
+
+        def exit(self, code: int) -> None:
+            self.exit_code = code
+            self.aboutToQuit.emit()
 
         def exec(self) -> int:
             events.append("exec")
             for callback in scheduled:
                 callback()  # type: ignore[operator]
-            return 0
+            return self.exit_code
 
     class Timer:
-        timeout = Signal()
-
         def __init__(self, *_args: object) -> None:
-            pass
+            self.timeout = Signal()
 
         def setInterval(self, _interval: int) -> None:  # noqa: N802
             pass
@@ -98,10 +118,13 @@ def _patch_application_shell(monkeypatch: object, events: list[str], runtime: ob
         def show(self) -> None:
             events.append("window-show")
 
+        def show_accessibility_guidance(self) -> None:
+            events.append("guidance-show")
+
     monkeypatch.setattr(app_module, "configure_logging", lambda *_args: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "_create_qapplication", Application)  # type: ignore[attr-defined]
-    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: trusted)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "build_runtime", lambda *_args, **_kwargs: runtime)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "MainWindow", Window)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "QTimer", Timer)  # type: ignore[attr-defined]
@@ -146,10 +169,78 @@ def test_windows_listener_is_installed_before_hotkeys_and_survives_hotkey_failur
     )
     assert events.index("listener-start") < events.index("window-show")
     assert events.index("listener-start") < events.index("hotkeys-created")
+    assert events.index("exec") < events.index("service-start")
     assert events.index("exec") < events.index("kimi-web-start")
+    assert events.index("exec") < events.index("hotkeys-created")
     assert "hotkeys-failed" in events
     assert events.index("listener-stop") < events.index("hotkeys-stop")
     assert events.index("hotkeys-stop") < events.index("runtime-close")
+
+
+def test_untrusted_guidance_is_shown_after_core_services_start(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+    _patch_application_shell(monkeypatch, events, runtime, trusted=False)
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("exec") < events.index("service-start")
+    assert events.index("service-start") < events.index("guidance-show")
+
+
+def test_web_start_shutdown_does_not_show_later_guidance_or_restart_components(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    class QuittingWebService:
+        running = False
+
+        def start(self) -> None:
+            events.append("kimi-web-start")
+            self.running = True
+            runtime.qt_app.exit(0)
+            events.append("kimi-web-return")
+            self.running = True
+
+        def stop(self) -> None:
+            events.append("kimi-web-stop")
+            self.running = False
+
+    class Hotkeys:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            events.append("hotkeys-created")
+
+        def start(self) -> bool:
+            events.append("hotkeys-start")
+            return True
+
+        def stop(self) -> None:
+            events.append("hotkeys-stop")
+
+    web_service = QuittingWebService()
+    runtime.kimi_web_quota_service = web_service
+    runtime.close = lambda: (web_service.stop(), events.append("runtime-close"))
+    runtime.codex_quota_service = SimpleNamespace(
+        start=lambda: events.append("codex-quota-start"),
+        stop=lambda: events.append("codex-quota-stop"),
+    )
+    _patch_application_shell(monkeypatch, events, runtime, trusted=False)
+    monkeypatch.setattr(app_module, "GlobalHotkeys", Hotkeys)  # type: ignore[attr-defined]
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("hotkeys-created") < events.index("kimi-web-start")
+    assert events.index("codex-quota-start") < events.index("kimi-web-start")
+    assert events.index("kimi-web-start") < events.index("runtime-close")
+    assert events.count("kimi-web-stop") == 2
+    assert not web_service.running
+    assert "guidance-show" not in events
 
 
 def test_deferred_kimi_web_start_failure_stops_partial_service(
@@ -199,6 +290,34 @@ def test_deferred_kimi_web_start_failure_stops_partial_service(
     )
     assert events.index("exec") < events.index("kimi-web-start")
     assert events.count("kimi-web-stop") == 1
+
+
+def test_event_loop_startup_failure_cleans_up_and_exits_nonzero(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    def fail_discovery_start() -> None:
+        events.append("service-failed")
+        raise RuntimeError("startup failed")
+
+    runtime.discovery.start = fail_discovery_start
+    _patch_application_shell(monkeypatch, events, runtime)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "GlobalHotkeys",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("hotkeys must not start after discovery failure")
+        ),
+    )
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 1
+    )
+    assert events.index("exec") < events.index("service-failed")
+    assert events.count("runtime-close") == 1
 
 
 def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_runtime(
