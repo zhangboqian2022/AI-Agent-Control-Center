@@ -79,7 +79,10 @@ function Assert-IsccVersion {
         throw "ISCC version validation failed"
     }
 
-    $ProbePath = Join-Path $ManifestBuildRoot "iscc-version-probe.iss"
+    $ProbeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "aacc-iscc-version-probe-" + [Guid]::NewGuid().ToString("N")
+    )
+    $ProbePath = Join-Path $ProbeRoot "probe.iss"
     $ProbeText = @"
 [Setup]
 AppName=AACC Inno Version Probe
@@ -87,12 +90,28 @@ AppVersion=0
 DefaultDirName={tmp}\AACCInnoVersionProbe
 Uninstallable=no
 "@
-    [System.IO.File]::WriteAllText(
-        $ProbePath,
-        $ProbeText,
-        [System.Text.UTF8Encoding]::new($false, $true)
-    )
+    $ProbeOutput = @()
+    $ProbeExitCode = $null
+    $ProbeRootOwned = $false
     try {
+        if (Test-Path -LiteralPath $ProbeRoot) {
+            throw "ISCC version probe directory already exists"
+        }
+        [System.IO.Directory]::CreateDirectory($ProbeRoot) | Out-Null
+        $ProbeRootOwned = $true
+        $ProbeRootItem = Get-Item -LiteralPath $ProbeRoot -Force -ErrorAction Stop
+        if (-not $ProbeRootItem.PSIsContainer -or
+            (($ProbeRootItem.Attributes -band
+                [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw "ISCC version probe directory is invalid"
+        }
+        [System.IO.File]::WriteAllText(
+            $ProbePath,
+            $ProbeText,
+            [System.Text.UTF8Encoding]::new($false, $true)
+        )
+        Resolve-ExistingLeaf -Path $ProbePath -Category "ISCC version probe" |
+            Out-Null
         $ProbeOutput = @(
             & $Path "/O-" $ProbePath 2>&1 |
                 ForEach-Object { [string]$_ }
@@ -100,7 +119,28 @@ Uninstallable=no
         $ProbeExitCode = $LASTEXITCODE
     }
     finally {
-        Remove-Item -LiteralPath $ProbePath -Force -ErrorAction SilentlyContinue
+        if ($ProbeRootOwned -and (Test-Path -LiteralPath $ProbeRoot)) {
+            $CleanupItem = Get-Item `
+                -LiteralPath $ProbeRoot `
+                -Force `
+                -ErrorAction SilentlyContinue
+            if ($null -ne $CleanupItem -and
+                $CleanupItem.PSIsContainer -and
+                (($CleanupItem.Attributes -band
+                    [System.IO.FileAttributes]::ReparsePoint) -eq 0)) {
+                Remove-Item `
+                    -LiteralPath $ProbeRoot `
+                    -Recurse `
+                    -Force `
+                    -ErrorAction SilentlyContinue
+            }
+            elseif ($null -ne $CleanupItem) {
+                Remove-Item `
+                    -LiteralPath $ProbeRoot `
+                    -Force `
+                    -ErrorAction SilentlyContinue
+            }
+        }
     }
     $ExpectedEngineLine = "Compiler engine version: Inno Setup $InnoVersion"
     $EngineMatches = @(
@@ -233,105 +273,88 @@ if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
     throw "project version is not a restricted numeric version"
 }
 
-$IsccPath = $null
-if (-not [string]::IsNullOrWhiteSpace($env:AACC_ISCC_PATH)) {
-    $IsccPath = Resolve-ExistingLeaf `
-        -Path $env:AACC_ISCC_PATH `
-        -Category "AACC_ISCC_PATH"
-    Assert-IsccTrusted -Path $IsccPath
-    Write-Host "Using verified Inno Setup $InnoVersion compiler (explicit)"
+if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    throw "LOCALAPPDATA is unavailable"
 }
-else {
-    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        throw "LOCALAPPDATA is unavailable"
-    }
-    $CacheRoot = Join-Path $env:LOCALAPPDATA "AACC\build-cache\inno-$InnoVersion"
-    [System.IO.Directory]::CreateDirectory($CacheRoot) | Out-Null
-    $BootstrapPath = Join-Path $CacheRoot $InnoBootstrapName
-    $DownloadPath = "$BootstrapPath.download"
+$CacheRoot = Join-Path $env:LOCALAPPDATA "AACC\build-cache\inno-$InnoVersion"
+[System.IO.Directory]::CreateDirectory($CacheRoot) | Out-Null
+$BootstrapPath = Join-Path $CacheRoot $InnoBootstrapName
+$DownloadPath = "$BootstrapPath.download"
 
-    $BootstrapReady = $false
-    if (Test-Path -LiteralPath $BootstrapPath -PathType Leaf) {
-        try {
-            Assert-BootstrapTrusted -Path $BootstrapPath
-            $BootstrapReady = $true
-        }
-        catch {
-            Remove-Item -LiteralPath $BootstrapPath -Force
-        }
+$BootstrapReady = $false
+if (Test-Path -LiteralPath $BootstrapPath -PathType Leaf) {
+    try {
+        Assert-BootstrapTrusted -Path $BootstrapPath
+        $BootstrapReady = $true
     }
-    if (-not $BootstrapReady) {
-        if (Test-Path -LiteralPath $DownloadPath) {
-            Remove-Item -LiteralPath $DownloadPath -Force
-        }
-        Invoke-WebRequest `
-            -UseBasicParsing `
-            -Uri $InnoBootstrapUrl `
-            -OutFile $DownloadPath
-        Assert-BootstrapTrusted -Path $DownloadPath
-        Move-Item -LiteralPath $DownloadPath -Destination $BootstrapPath
+    catch {
+        Remove-Item -LiteralPath $BootstrapPath -Force
     }
-    Assert-BootstrapTrusted -Path $BootstrapPath
+}
+if (-not $BootstrapReady) {
+    if (Test-Path -LiteralPath $DownloadPath) {
+        Remove-Item -LiteralPath $DownloadPath -Force
+    }
+    Invoke-WebRequest `
+        -UseBasicParsing `
+        -Uri $InnoBootstrapUrl `
+        -OutFile $DownloadPath
+    Assert-BootstrapTrusted -Path $DownloadPath
+    Move-Item -LiteralPath $DownloadPath -Destination $BootstrapPath
+}
+Assert-BootstrapTrusted -Path $BootstrapPath
 
-    $InnoRoot = Join-Path $Root "build\tools\inno-$InnoVersion"
+$InnoRoot = Join-Path $Root (
+    "build\tools\inno-$InnoVersion-" + [Guid]::NewGuid().ToString("N")
+)
+if (Test-Path -LiteralPath $InnoRoot) {
+    throw "fresh Inno Setup extraction directory already exists"
+}
+$InnoRootOwned = $false
+try {
     [System.IO.Directory]::CreateDirectory($InnoRoot) | Out-Null
+    $InnoRootOwned = $true
+    $InnoRootItem = Get-Item -LiteralPath $InnoRoot -Force -ErrorAction Stop
+    if (-not $InnoRootItem.PSIsContainer -or
+        (($InnoRootItem.Attributes -band
+            [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw "Inno Setup extraction directory is invalid"
+    }
+    $BootstrapArguments = @(
+        "/PORTABLE=1"
+        "/VERYSILENT"
+        "/CURRENTUSER"
+        "/NOICONS"
+        "/NORESTART"
+        "/SP-"
+        ('/DIR="' + $InnoRoot + '"')
+    )
+    $BootstrapProcess = Start-Process -FilePath $BootstrapPath `
+        -ArgumentList $BootstrapArguments -PassThru
+    try {
+        if (-not $BootstrapProcess.WaitForExit(120000)) {
+            if (-not $BootstrapProcess.HasExited) {
+                $BootstrapProcess.Kill()
+                if (-not $BootstrapProcess.WaitForExit(5000)) {
+                    throw "Inno Setup bootstrap cleanup timed out"
+                }
+            }
+            throw "Inno Setup bootstrap timed out"
+        }
+        if ($BootstrapProcess.ExitCode -ne 0) {
+            throw "Inno Setup bootstrap failed"
+        }
+    }
+    finally {
+        $BootstrapProcess.Dispose()
+    }
+    if (-not (Test-Path -LiteralPath $InnoRoot -PathType Container)) {
+        throw "Inno Setup bootstrap failed"
+    }
     $IsccCandidates = @(
         Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse
     )
-    if ($IsccCandidates.Count -eq 0) {
-        $BootstrapArguments = @(
-            "/PORTABLE=1"
-            "/VERYSILENT"
-            "/CURRENTUSER"
-            "/NOICONS"
-            "/NORESTART"
-            "/SP-"
-            ('/DIR="' + $InnoRoot + '"')
-        )
-        $BootstrapProcess = Start-Process -FilePath $BootstrapPath `
-            -ArgumentList $BootstrapArguments -PassThru
-        try {
-            if (-not $BootstrapProcess.WaitForExit(120000)) {
-                if (-not $BootstrapProcess.HasExited) {
-                    $BootstrapProcess.Kill()
-                    if (-not $BootstrapProcess.WaitForExit(5000)) {
-                        throw "Inno Setup bootstrap cleanup timed out"
-                    }
-                }
-                throw "Inno Setup bootstrap timed out"
-            }
-            if ($BootstrapProcess.ExitCode -ne 0) {
-                throw "Inno Setup bootstrap failed"
-            }
-        }
-        finally {
-            $BootstrapProcess.Dispose()
-        }
-        if (-not (Test-Path -LiteralPath $InnoRoot -PathType Container)) {
-            throw "Inno Setup bootstrap failed"
-        }
-        $IsccCandidates = @(
-            Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse
-        )
-    }
     Write-Host "AACC_INNO_LAYOUT candidate_count=$($IsccCandidates.Count)"
-    if ($IsccCandidates.Count -eq 0) {
-        $DesktopRoot = [Environment]::GetFolderPath(
-            [Environment+SpecialFolder]::DesktopDirectory
-        )
-        $DefaultDesktopIscc = Join-Path $DesktopRoot "Inno Setup 6\ISCC.exe"
-        $DefaultDesktopCandidates = @(
-            Get-Item -LiteralPath $DefaultDesktopIscc -Force -ErrorAction SilentlyContinue |
-                Where-Object {
-                    -not $_.PSIsContainer -and
-                    (($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0)
-                }
-        )
-        Write-Host (
-            "AACC_INNO_DEFAULT_DESKTOP candidate_count=" +
-            $DefaultDesktopCandidates.Count
-        )
-    }
     if ($IsccCandidates.Count -ne 1) {
         throw "bootstrapped Inno Setup compiler layout is invalid"
     }
@@ -339,68 +362,106 @@ else {
         -Path $IsccCandidates[0].FullName `
         -Category "bootstrapped ISCC"
     Assert-IsccTrusted -Path $IsccPath
-    Write-Host "Using verified Inno Setup $InnoVersion compiler (bootstrapped)"
-}
+    Write-Host (
+        "Using verified Inno Setup $InnoVersion compiler (hash-pinned bootstrap)"
+    )
 
-$OutputDir = Join-Path $Root "dist\installer"
-[System.IO.Directory]::CreateDirectory($OutputDir) | Out-Null
-$SetupLeaf = "AACC-$Version-Setup.exe"
-$ExpectedSetupPath = Join-Path $OutputDir $SetupLeaf
-$ChecksumPath = "$ExpectedSetupPath.sha256"
-if (Test-Path -LiteralPath $ExpectedSetupPath) {
-    Remove-Item -LiteralPath $ExpectedSetupPath -Force
-}
-if (Test-Path -LiteralPath $ChecksumPath) {
-    Remove-Item -LiteralPath $ChecksumPath -Force
-}
+    $OutputDir = Join-Path $Root "dist\installer"
+    [System.IO.Directory]::CreateDirectory($OutputDir) | Out-Null
+    $SetupLeaf = "AACC-$Version-Setup.exe"
+    $ExpectedSetupPath = Join-Path $OutputDir $SetupLeaf
+    $ChecksumPath = "$ExpectedSetupPath.sha256"
+    if (Test-Path -LiteralPath $ExpectedSetupPath) {
+        Remove-Item -LiteralPath $ExpectedSetupPath -Force
+    }
+    if (Test-Path -LiteralPath $ChecksumPath) {
+        Remove-Item -LiteralPath $ChecksumPath -Force
+    }
 
-& $IsccPath "/DMyAppVersion=$Version" $IssPath
-if ($LASTEXITCODE -ne 0) {
-    throw "Inno Setup compilation failed"
-}
+    & $IsccPath "/DMyAppVersion=$Version" $IssPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inno Setup compilation failed"
+    }
 
-$SetupCandidates = @(
-    Get-ChildItem -LiteralPath $OutputDir -Filter $SetupLeaf -File -Force
-)
-if ($SetupCandidates.Count -ne 1 -or
-    $SetupCandidates[0].Name -cne $SetupLeaf -or
-    $SetupCandidates[0].Length -lt $MinimumSetupBytes) {
-    throw "expected fresh Windows Setup was not produced"
-}
-$ExpectedSetupPath = $SetupCandidates[0].FullName
+    $SetupCandidates = @(
+        Get-ChildItem -LiteralPath $OutputDir -Filter $SetupLeaf -File -Force
+    )
+    if ($SetupCandidates.Count -ne 1 -or
+        $SetupCandidates[0].Name -cne $SetupLeaf -or
+        $SetupCandidates[0].Length -lt $MinimumSetupBytes) {
+        throw "expected fresh Windows Setup was not produced"
+    }
+    $ExpectedSetupPath = $SetupCandidates[0].FullName
 
-$Digest = (
-    Get-FileHash -LiteralPath $ExpectedSetupPath -Algorithm SHA256
-).Hash.ToLowerInvariant()
-if ($Digest -notmatch '^[0-9a-f]{64}$') {
-    throw "Windows Setup checksum format is invalid"
-}
-$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText(
-    $ChecksumPath,
-    "$Digest  $SetupLeaf`n",
-    $Utf8NoBom
-)
+    $Digest = (
+        Get-FileHash -LiteralPath $ExpectedSetupPath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    if ($Digest -notmatch '^[0-9a-f]{64}$') {
+        throw "Windows Setup checksum format is invalid"
+    }
+    $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText(
+        $ChecksumPath,
+        "$Digest  $SetupLeaf`n",
+        $Utf8NoBom
+    )
 
-$ChecksumBytes = [System.IO.File]::ReadAllBytes($ChecksumPath)
-if ($ChecksumBytes.Length -ge 3 -and
-    $ChecksumBytes[0] -eq 0xEF -and
-    $ChecksumBytes[1] -eq 0xBB -and
-    $ChecksumBytes[2] -eq 0xBF) {
-    throw "Windows Setup checksum unexpectedly contains a BOM"
-}
-$StrictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
-$ChecksumText = $StrictUtf8.GetString($ChecksumBytes)
-if ($ChecksumText -cne "$Digest  $SetupLeaf`n" -or
-    $ChecksumText -notmatch '^[0-9a-f]{64}  AACC-\d+\.\d+\.\d+-Setup\.exe\n$') {
-    throw "Windows Setup checksum file is malformed"
-}
-$VerifiedDigest = (
-    Get-FileHash -LiteralPath $ExpectedSetupPath -Algorithm SHA256
-).Hash.ToLowerInvariant()
-if ($VerifiedDigest -cne $Digest) {
-    throw "Windows Setup checksum verification failed"
-}
+    $ChecksumBytes = [System.IO.File]::ReadAllBytes($ChecksumPath)
+    if ($ChecksumBytes.Length -ge 3 -and
+        $ChecksumBytes[0] -eq 0xEF -and
+        $ChecksumBytes[1] -eq 0xBB -and
+        $ChecksumBytes[2] -eq 0xBF) {
+        throw "Windows Setup checksum unexpectedly contains a BOM"
+    }
+    $StrictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $ChecksumText = $StrictUtf8.GetString($ChecksumBytes)
+    if ($ChecksumText -cne "$Digest  $SetupLeaf`n" -or
+        $ChecksumText -notmatch '^[0-9a-f]{64}  AACC-\d+\.\d+\.\d+-Setup\.exe\n$') {
+        throw "Windows Setup checksum file is malformed"
+    }
+    $VerifiedDigest = (
+        Get-FileHash -LiteralPath $ExpectedSetupPath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    if ($VerifiedDigest -cne $Digest) {
+        throw "Windows Setup checksum verification failed"
+    }
 
-Write-Host "Built dist/installer/$SetupLeaf"
-Write-Host "SHA-256 $Digest"
+    Write-Host "Built dist/installer/$SetupLeaf"
+    Write-Host "SHA-256 $Digest"
+}
+finally {
+    if ($InnoRootOwned -and (Test-Path -LiteralPath $InnoRoot)) {
+        $InnoCleanupItem = Get-Item `
+            -LiteralPath $InnoRoot `
+            -Force `
+            -ErrorAction SilentlyContinue
+        $InnoCleanupKind = $null
+        if ($null -ne $InnoCleanupItem -and
+            $InnoCleanupItem.PSIsContainer -and
+            (($InnoCleanupItem.Attributes -band
+                [System.IO.FileAttributes]::ReparsePoint) -eq 0)) {
+            $InnoCleanupKind = "private_toolchain"
+            Remove-Item `
+                -LiteralPath $InnoRoot `
+                -Recurse `
+                -Force `
+                -ErrorAction SilentlyContinue
+        }
+        elseif ($null -ne $InnoCleanupItem) {
+            $InnoCleanupKind = "replacement"
+            Remove-Item `
+                -LiteralPath $InnoRoot `
+                -Force `
+                -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $InnoRoot) {
+            Write-Warning "AACC_INNO_CLEANUP cleanup_failed=true"
+        }
+        elseif ($null -ne $InnoCleanupKind) {
+            Write-Host "AACC_INNO_CLEANUP removed_$InnoCleanupKind=true"
+        }
+        else {
+            Write-Host "AACC_INNO_CLEANUP path_disappeared=true"
+        }
+    }
+}
