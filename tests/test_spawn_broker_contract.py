@@ -27,6 +27,8 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     assert "ConvertTo-AaccLocalPath" in toolchain
     assert "OrdinalIgnoreCase" in toolchain
     assert "Get-AaccToolPaths -Candidate $candidate" in toolchain
+    assert "validate_broker_response.py" in script
+    assert "ConvertFrom-Json" not in script
     for variable in ("VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH"):
         assert variable in toolchain
     for root in ("VCToolsInstallDir", "WindowsSdkDir"):
@@ -166,5 +168,10 @@ def test_spawn_broker_windows_integration() -> None:
         ],
         cwd=ROOT,
         check=False,
+        capture_output=True,
+        text=True,
     )
-    assert completed.returncode == 0
+    assert completed.returncode == 0, (
+        "broker integration failed "
+        f"(stdout={len(completed.stdout)} bytes, stderr={len(completed.stderr)} bytes)"
+    )

@@ -314,6 +314,49 @@ function Assert-BrokerRejectsUnsafeTarget {
     }
 }
 
+function Assert-BrokerResponseJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Output,
+        [Parameter(Mandatory = $true)][string]$Payload,
+        [Parameter(Mandatory = $true)][int]$RequestId
+    )
+
+    $ResponsePath = Join-Path $IntegrationRoot ("broker-response-" + [guid]::NewGuid() + ".json")
+    $PayloadPath = Join-Path $IntegrationRoot ("broker-payload-" + [guid]::NewGuid() + ".txt")
+    $PidPath = Join-Path $IntegrationRoot ("broker-pid-" + [guid]::NewGuid() + ".txt")
+    $ValidatorPath = Join-Path $Root "tests\native\validate_broker_response.py"
+    if (-not (Test-Path -LiteralPath $ValidatorPath -PathType Leaf)) {
+        throw "broker JSON validator is unavailable"
+    }
+    [System.IO.File]::WriteAllText($ResponsePath, $Output, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($PayloadPath, $Payload, [System.Text.UTF8Encoding]::new($false))
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = $PythonExecutable
+    $StartInfo.Arguments = (
+        "`"$ValidatorPath`" --response `"$ResponsePath`" --payload `"$PayloadPath`" " +
+        "--request-id $RequestId --pid-file `"$PidPath`""
+    )
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.CreateNoWindow = $true
+    $Validator = New-Object System.Diagnostics.Process
+    $Validator.StartInfo = $StartInfo
+    try {
+        if (-not $Validator.Start() -or -not $Validator.WaitForExit(10000)) {
+            try { if (-not $Validator.HasExited) { $Validator.Kill() } } catch {}
+            try { $null = $Validator.WaitForExit(5000) } catch {}
+            throw "broker JSON validator timed out"
+        }
+        if ($Validator.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
+            throw "broker JSON validation failed"
+        }
+        return [int](Get-Content -LiteralPath $PidPath -Raw)
+    }
+    finally {
+        $Validator.Dispose()
+        Remove-Item -LiteralPath $ResponsePath, $PayloadPath, $PidPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-BrokerProbe {
     param(
         [Parameter(Mandatory = $true)]
@@ -358,31 +401,8 @@ function Invoke-BrokerProbe {
             throw "aacc-spawn emitted unexpected diagnostics on a successful launch"
         }
 
-        $Response = $Output | ConvertFrom-Json
-        if (
-            $Response.args.Count -ne 2 -or
-            $Response.args[0] -ne "app-server" -or
-            $Response.args[1] -ne "--stdio"
-        ) {
-            throw "aacc-spawn changed the fixed Codex arguments"
-        }
-        if (
-            $Response.request.id -ne $RequestId -or
-            $Response.request.method -ne "account/rateLimits/read" -or
-            $Response.request.payload -ne $Payload
-        ) {
-            throw "aacc-spawn did not preserve JSON stdio"
-        }
-        if ($Response.bundle_in_path -ne $false) {
-            throw "aacc-spawn did not remove bundle-rooted PATH entries"
-        }
-        if ($Response.preserved_path_present -ne $true) {
-            throw "aacc-spawn removed a PATH entry outside the bundle"
-        }
-        if ($Response.broker_target_matches_expected -ne $true) {
-            throw "aacc-spawn did not replace its private cmd target variable"
-        }
-        Assert-ProcessExited -Id ([int]$Response.pid)
+        $ChildPid = Assert-BrokerResponseJson -Output $Output -Payload $Payload -RequestId $RequestId
+        Assert-ProcessExited -Id $ChildPid
     }
     finally {
         if ($Started -and -not $Process.HasExited) {
