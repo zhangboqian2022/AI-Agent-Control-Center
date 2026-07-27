@@ -115,6 +115,14 @@ def test_windows_smoke_accepts_empty_process_argument_arrays() -> None:
         assert "[AllowEmptyCollection()][string[]]$Arguments" in function
 
 
+def test_windows_smoke_reads_executable_path_from_the_process_module() -> None:
+    text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+    function = text.split("function Get-ProcessIdentity", 1)[1].split("\n}", 1)[0]
+
+    assert "$Process.MainModule.FileName" in function
+    assert "Path = $Process.Path" not in function
+
+
 def test_windows_smoke_fixtures_use_only_command_line_unicode_definitions() -> None:
     script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
 

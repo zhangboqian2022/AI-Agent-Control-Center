@@ -91,7 +91,7 @@ function Get-ProcessIdentity {
     try {
         return [pscustomobject]@{
             Id = $Process.Id
-            Path = $Process.Path
+            Path = $Process.MainModule.FileName
             CreationTimeUtc = $Process.StartTime.ToUniversalTime().Ticks
         }
     }
