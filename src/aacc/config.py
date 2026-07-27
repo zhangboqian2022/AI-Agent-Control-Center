@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import sys
@@ -11,6 +12,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from aacc.file_security import FileProtectionError, protect_directory, protect_file
 from aacc.models import AgentConfig, AppConfig, TaskConfig, TerminalConfig
 
 CURRENT_CONFIG_VERSION = 1
@@ -19,6 +21,7 @@ CURRENT_CONFIG_VERSION = 1
 # would have let users run the API with a public constant as the token.
 _PLACEHOLDER_PREFIXES = ("change-me", "replace-", "your-token", "placeholder")
 Migration = Callable[[dict[str, Any]], dict[str, Any]]
+_logger = logging.getLogger("aacc.config")
 
 
 def _migrate_0_to_1(raw: dict[str, Any]) -> dict[str, Any]:
@@ -107,8 +110,7 @@ def _reject_unsafe_path(path: Path) -> None:
 def _prepare_parent(path: Path) -> None:
     if path.parent.is_symlink():
         raise ValueError("AACC configuration directory must not be a symbolic link")
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(path.parent, 0o700)
+    protect_directory(path.parent, platform=sys.platform)
 
 
 def save_config(path: Path, config: AppConfig) -> None:
@@ -118,9 +120,11 @@ def save_config(path: Path, config: AppConfig) -> None:
     temporary = Path(temporary_name)
     try:
         if sys.platform != "win32":
-            # os.fchmod is Unix-only; on Windows the default ACL already
-            # restricts the file to the current user.
-            os.fchmod(descriptor, 0o600)
+            try:
+                protect_file(temporary, descriptor=descriptor, platform=sys.platform)
+            except Exception:
+                os.close(descriptor)
+                raise
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             yaml.safe_dump(
                 config.model_dump(mode="json"),
@@ -130,8 +134,8 @@ def save_config(path: Path, config: AppConfig) -> None:
             )
             handle.flush()
             os.fsync(handle.fileno())
+        protect_file(temporary, platform=sys.platform)
         os.replace(temporary, path)
-        os.chmod(path, 0o600)
         if sys.platform != "win32":
             # Windows cannot open a directory handle with os.open; the file
             # flush+fsync above is kept on every platform.
@@ -140,6 +144,9 @@ def save_config(path: Path, config: AppConfig) -> None:
                 os.fsync(directory_descriptor)
             finally:
                 os.close(directory_descriptor)
+    except FileProtectionError:
+        _logger.critical("Unable to protect the AACC configuration file")
+        raise
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -185,7 +192,7 @@ def load_config(path: Path) -> AppConfig:
         if changed:
             save_config(path, config)
         else:
-            os.chmod(path, 0o600)
+            protect_file(path, platform=sys.platform)
         return config
     except (OSError, yaml.YAMLError, ValidationError, ValueError) as error:
         if "regular expression" in str(error) or "127.0.0.1" in str(error):

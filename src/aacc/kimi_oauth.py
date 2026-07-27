@@ -10,6 +10,7 @@ refresh_token would rotate it server-side and kick the CLI offline
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import sys
@@ -23,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from aacc.file_security import FileProtectionError, protect_directory, protect_file
+
 DEFAULT_OAUTH_HOST = "https://auth.kimi.com"
 CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
@@ -32,6 +35,7 @@ SLOW_DOWN_STEP_SECONDS = 5.0
 HTTP_TIMEOUT_SECONDS = 30.0
 CREDENTIALS_FILE_NAME = "kimi-credentials.json"
 DEVICE_ID_FILE_NAME = "device_id"
+_logger = logging.getLogger("aacc.kimi_oauth")
 
 
 class KimiOAuthError(RuntimeError):
@@ -319,31 +323,39 @@ def credentials_path(config_dir: Path) -> Path:
 
 
 def load_credentials(config_dir: Path) -> dict[str, Any] | None:
+    path = credentials_path(config_dir)
     try:
-        raw: Any = json.loads(credentials_path(config_dir).read_text(encoding="utf-8"))
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return raw if isinstance(raw, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    protect_file(path, platform=sys.platform)
+    return raw
 
 
 def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
-    config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(config_dir, 0o700)
+    protect_directory(config_dir, platform=sys.platform)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{CREDENTIALS_FILE_NAME}.", dir=config_dir
     )
     temporary = Path(temporary_name)
     try:
         if sys.platform != "win32":
-            # os.fchmod is Unix-only; on Windows the default ACL already
-            # restricts the file to the current user.
-            os.fchmod(descriptor, 0o600)
+            try:
+                protect_file(temporary, descriptor=descriptor, platform=sys.platform)
+            except Exception:
+                os.close(descriptor)
+                raise
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
+        protect_file(temporary, platform=sys.platform)
         os.replace(temporary, credentials_path(config_dir))
-        os.chmod(credentials_path(config_dir), 0o600)
+    except FileProtectionError:
+        _logger.critical("Unable to protect the Kimi credential file")
+        raise
     finally:
         temporary.unlink(missing_ok=True)
 

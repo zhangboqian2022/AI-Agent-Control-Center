@@ -7,6 +7,8 @@ import sys
 import httpx
 import pytest
 
+import aacc.kimi_oauth as kimi_oauth_module
+from aacc.file_security import FileProtectionError
 from aacc.kimi_oauth import (
     CLIENT_ID,
     DeviceAuthorization,
@@ -290,9 +292,15 @@ def test_credentials_roundtrip_permissions_and_clear(tmp_path):
 
 
 def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
-    # os.fchmod does not exist on Windows; simulate that to prove the
-    # win32 path never calls it (Windows ACLs already restrict the file).
+    # os.fchmod does not exist on Windows; the Windows path must use the
+    # shared ACL helper instead.
     monkeypatch.setattr(sys, "platform", "win32")
+    protected = []
+    monkeypatch.setattr(
+        kimi_oauth_module,
+        "protect_file",
+        lambda path, **_kwargs: protected.append(path),
+    )
 
     def raise_attribute_error(_descriptor: int, _mode: int) -> None:
         raise AttributeError("simulating windows")
@@ -302,6 +310,37 @@ def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
     save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
 
     assert load_credentials(tmp_path) == {"auth_method": "api_key", "api_key": "sk-kimi-x"}
+    assert len(protected) == 2
+    assert protected[0].name.startswith(".kimi-credentials.json.")
+    assert protected[1] == credentials_path(tmp_path)
+
+
+def test_save_credentials_does_not_replace_target_when_protection_fails(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    path = credentials_path(tmp_path)
+    path.write_text('{"original": true}', encoding="utf-8")
+    replace_calls = []
+
+    def fail_protection(*_args, **_kwargs):
+        raise FileProtectionError("denied")
+
+    monkeypatch.setattr(kimi_oauth_module, "protect_file", fail_protection)
+    monkeypatch.setattr(
+        os,
+        "replace",
+        lambda source, target: replace_calls.append((source, target)),
+    )
+
+    with pytest.raises(FileProtectionError, match="denied"):
+        save_credentials(tmp_path, {"api_key": "private-token"})
+
+    assert replace_calls == []
+    assert path.read_text(encoding="utf-8") == '{"original": true}'
+    assert "CRITICAL" in caplog.text
+    assert "private-token" not in caplog.text
 
 
 def test_load_credentials_tolerates_junk(tmp_path):
