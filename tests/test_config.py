@@ -365,9 +365,9 @@ def test_load_config_removes_unrelated_explicit_windows_ace(tmp_path: Path) -> N
     )
     raw_acl = acl_dump.read_bytes()
     saved_acl = raw_acl.decode("utf-16") if raw_acl.startswith(b"\xff\xfe") else raw_acl.decode()
-    access_sids = set(re.findall(r"\([^)]*;;;([^)]+)\)", saved_acl))
+    access_sids = set(re.findall(r";;;([^)\r\n]+)\)", saved_acl))
     assert "S-1-1-0" not in saved_acl
-    assert access_sids
+    assert access_sids, saved_acl
     assert access_sids <= {
         current_sid_match.group(0),
         "SY",
