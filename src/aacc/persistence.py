@@ -5,6 +5,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeVar
@@ -31,16 +32,31 @@ class StateStore:
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA busy_timeout=3000")
         self._last_history_cleanup = 0.0
-        try:
-            self._secure_database_files()
-        except Exception:
-            self._connection.close()
-            raise
+        self._initialized = False
+        self._secure_database_files_or_close()
 
     def _secure_database_files(self) -> None:
         for candidate in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm")):
             if candidate.exists():
                 protect_file(candidate)
+
+    def _close_after_protection_failure(self) -> None:
+        # Preserve the sanitized protection failure that made the store
+        # unsafe; a secondary close error must not replace it.
+        with suppress(Exception):
+            self._connection.close()
+
+    def _secure_database_files_or_close(self) -> None:
+        try:
+            self._secure_database_files()
+        except Exception:
+            self._initialized = False
+            self._close_after_protection_failure()
+            raise
+
+    def _require_initialized(self) -> None:
+        if not self._initialized:
+            raise RuntimeError("StateStore is not initialized")
 
     def _retry_locked(self, operation: Callable[[], T]) -> T:
         delays: tuple[float | None, ...] = (*RETRY_DELAYS, None)
@@ -89,13 +105,15 @@ class StateStore:
 
         with self._lock:
             self._retry_locked(operation)
-            self._secure_database_files()
+            self._secure_database_files_or_close()
+            self._initialized = True
 
     def register(self, task: TaskConfig) -> None:
         self.initialize([task])
 
     def get(self, task_id: str) -> TaskState:
         with self._lock:
+            self._require_initialized()
             row = self._connection.execute(
                 "SELECT payload FROM current_states WHERE task_id = ?", (task_id,)
             ).fetchone()
@@ -105,6 +123,7 @@ class StateStore:
 
     def list(self) -> list[TaskState]:
         with self._lock:
+            self._require_initialized()
             rows = self._connection.execute(
                 "SELECT payload FROM current_states ORDER BY task_id"
             ).fetchall()
@@ -146,8 +165,9 @@ class StateStore:
                     self._bound_task_history(state.task_id)
 
         with self._lock:
+            self._require_initialized()
             self._retry_locked(operation)
-            self._secure_database_files()
+            self._secure_database_files_or_close()
         return state
 
     def heartbeat(self, state: TaskState) -> TaskState:
@@ -156,6 +176,7 @@ class StateStore:
     def history(self, task_id: str, limit: int = 100) -> builtins.list[TaskState]:
         safe_limit = min(max(limit, 1), 1000)
         with self._lock:
+            self._require_initialized()
             rows = self._connection.execute(
                 "SELECT payload FROM ("
                 "SELECT id, payload FROM state_history WHERE task_id = ? "
@@ -167,3 +188,4 @@ class StateStore:
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+            self._initialized = False
