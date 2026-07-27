@@ -322,6 +322,34 @@ def test_event_loop_startup_failure_cleans_up_and_exits_nonzero(
     assert events.count("runtime-close") == 1
 
 
+def test_api_server_does_not_configure_console_logging(
+    monkeypatch: object,
+) -> None:
+    captured: dict[str, object] = {}
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(
+            app=SimpleNamespace(api=SimpleNamespace(host="127.0.0.1", port=8787))
+        ),
+        manager=SimpleNamespace(),
+        automation_executor=SimpleNamespace(),
+    )
+    monkeypatch.setattr(app_module, "create_api", lambda *_args: object())  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.uvicorn,
+        "Config",
+        lambda *_args, **kwargs: captured.update(kwargs) or object(),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.uvicorn,
+        "Server",
+        lambda _config: SimpleNamespace(run=lambda: None, should_exit=False),
+    )
+
+    app_module.APIServerThread(runtime)
+
+    assert captured["log_config"] is None
+
+
 def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_runtime(
     tmp_path: Path, monkeypatch: object
 ) -> None:
