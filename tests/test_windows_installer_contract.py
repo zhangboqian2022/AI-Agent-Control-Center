@@ -102,6 +102,7 @@ def test_inno_setup_rejects_internal_root_reparse_before_install() -> None:
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in code
     assert "FILE_ATTRIBUTE_DIRECTORY =" not in code
     assert "FILE_ATTRIBUTE_REPARSE_POINT =" not in code
+    assert "faDirectory" not in code
     assert "internal payload root is unsafe" in code
     assert prepare.index("ValidateInternalRootForInstall") < prepare.index("ShutdownExistingAACC")
 
@@ -152,7 +153,7 @@ def test_inno_setup_cleans_only_manifest_extras_after_commit() -> None:
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in code
     reparse_branch = code.split(
         "if (FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then", 1
-    )[1].split("else if (FindRec.Attributes and faDirectory) <> 0 then", 1)[0]
+    )[1].split("else if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then", 1)[0]
     assert "RemoveDirWithRetries(FullPath)" in reparse_branch
     assert "DeleteFileWithRetries(FullPath)" in reparse_branch
     assert "DelTree(" not in reparse_branch
