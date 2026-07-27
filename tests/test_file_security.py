@@ -45,7 +45,12 @@ def test_posix_file_protection_uses_descriptor_when_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[int, int]] = []
-    monkeypatch.setattr(os, "fchmod", lambda descriptor, mode: calls.append((descriptor, mode)))
+    monkeypatch.setattr(
+        os,
+        "fchmod",
+        lambda descriptor, mode: calls.append((descriptor, mode)),
+        raising=False,
+    )
 
     protect_file(tmp_path / "secret", descriptor=42, platform="darwin")
 

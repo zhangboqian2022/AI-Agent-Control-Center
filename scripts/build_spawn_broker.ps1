@@ -30,31 +30,22 @@ if ([string]::IsNullOrWhiteSpace($ProgramFilesX86)) {
 }
 $VsWhere = Join-Path $ProgramFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
-    throw "vswhere.exe is required to locate Visual Studio 2022"
+    throw "vswhere.exe is required to locate an installed Visual Studio MSVC toolchain"
 }
 
 $InstallationPath = ((
     & $VsWhere -latest -products * `
         -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-        -version "[17.0,18.0)" -property installationPath |
+        -property installationPath |
         Select-Object -First 1
 ) | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($InstallationPath)) {
-    throw "Visual Studio 2022 with the x64 MSVC toolchain is required"
-}
-$InstallationVersion = ((
-    & $VsWhere -latest -products * `
-        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-        -version "[17.0,18.0)" -property installationVersion |
-        Select-Object -First 1
-) | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or $InstallationVersion -notmatch '^17\.') {
-    throw "Visual Studio 2022 (17.x) is required"
+    throw "Visual Studio with the x64 MSVC toolchain is required"
 }
 
 $VsDevCmd = Join-Path $InstallationPath "Common7\Tools\VsDevCmd.bat"
 if (-not (Test-Path -LiteralPath $VsDevCmd -PathType Leaf)) {
-    throw "Visual Studio 2022 developer environment is missing"
+    throw "Visual Studio developer environment is missing"
 }
 
 $EnvironmentLoader = Join-Path $BuildDir "load-vs-environment.cmd"
@@ -66,7 +57,7 @@ $EnvironmentLoader = Join-Path $BuildDir "load-vs-environment.cmd"
 ) | Set-Content -LiteralPath $EnvironmentLoader -Encoding ASCII
 $DeveloperEnvironment = & $EnvironmentLoader
 if ($LASTEXITCODE -ne 0) {
-    throw "failed to initialize the Visual Studio 2022 x64 environment"
+    throw "failed to initialize the Visual Studio x64 environment"
 }
 foreach ($Line in $DeveloperEnvironment) {
     $Separator = $Line.IndexOf("=")
