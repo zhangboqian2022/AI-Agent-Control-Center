@@ -33,7 +33,7 @@ function Assert-AuthenticodeValid {
         [string]$Category
     )
 
-    $Signature = Get-AuthenticodeSignature -FilePath $Path -ErrorAction Stop
+    $Signature = Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
     if ($Signature.Status.ToString() -ne "Valid") {
         throw "$Category Authenticode validation failed"
     }

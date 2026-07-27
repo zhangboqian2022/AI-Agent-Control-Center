@@ -55,6 +55,8 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert "--shutdown-for-update" in code
     assert "PrepareToInstall" in code
     assert "InitializeUninstall" in code
+    assert "SuppressibleMsgBox(" in code
+    assert re.search(r"(?<!Suppressible)MsgBox\(", code) is None
     assert "ewWaitUntilTerminated" in code
     assert code.count("Exec(") == 1
     assert "ShellExec(" not in code
@@ -101,7 +103,8 @@ def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
     assert (
         "https://github.com/jrsoftware/issrc/releases/download/is-6_7_1/innosetup-6.7.1.exe"
     ) in text
-    assert "Get-AuthenticodeSignature" in text
+    assert "Get-AuthenticodeSignature -LiteralPath $Path" in text
+    assert "Get-AuthenticodeSignature -FilePath" not in text
     for exact_version_part in (
         "$VersionInfo.FileMajorPart -ne 6",
         "$VersionInfo.FileMinorPart -ne 7",

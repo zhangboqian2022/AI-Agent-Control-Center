@@ -86,5 +86,5 @@ var
 begin
   Result := ShutdownExistingAACC(ErrorMessage);
   if not Result then
-    MsgBox(ErrorMessage, mbError, MB_OK);
+    SuppressibleMsgBox(ErrorMessage, mbError, MB_OK, IDOK);
 end;
