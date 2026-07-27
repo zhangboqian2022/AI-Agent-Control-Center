@@ -323,6 +323,36 @@ function Assert-BrokerRejectsArguments {
     }
 }
 
+function Assert-BrokerRejectsUnsafeTarget {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath,
+        [Parameter(Mandatory = $true)]
+        [string]$BundleDir,
+        [Parameter(Mandatory = $true)]
+        [string]$SentinelPath
+    )
+
+    Remove-Item -LiteralPath $SentinelPath -Force -ErrorAction SilentlyContinue
+    $Arguments = (
+        "--protocol 1 --parent-pid $PID " +
+        "--bundle-dir `"$BundleDir`" --codex `"$TargetPath`""
+    )
+    $RejectionError = $null
+    try {
+        Assert-BrokerRejectsArguments -Arguments $Arguments
+    }
+    catch {
+        $RejectionError = $_
+    }
+    if (Test-Path -LiteralPath $SentinelPath) {
+        throw "unsafe broker target produced a side effect"
+    }
+    if ($null -ne $RejectionError) {
+        throw $RejectionError
+    }
+}
+
 function Invoke-BrokerProbe {
     param(
         [Parameter(Mandatory = $true)]
@@ -432,6 +462,12 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "fake .exe broker target link failed"
 }
+$UnsafeCarrier = Join-Path $TargetRoot "unsafe-carrier.cmd"
+$UnsafeSentinel = Join-Path $IntegrationRoot "unsafe-path-sentinel.txt"
+& $FakeExe --prepare-unsafe-path-fixtures $UnsafeCarrier
+if ($LASTEXITCODE -ne 0) {
+    throw "failed to prepare unsafe broker path fixtures"
+}
 
 $NativeFixtures = Join-Path $Root "tests\native"
 foreach ($Fixture in @(
@@ -458,6 +494,7 @@ $OldTestExitCode = $env:AACC_TEST_EXIT_CODE
 $OldDescendantPidFile = $env:AACC_TEST_DESCENDANT_PID_FILE
 $OldTestBundleDir = $env:AACC_TEST_BUNDLE_DIR
 $OldPreservedPathEntry = $env:AACC_TEST_PRESERVED_PATH_ENTRY
+$OldUnsafeSentinel = $env:AACC_TEST_UNSAFE_SENTINEL
 $OldPath = $env:PATH
 $DescendantBroker = $null
 $DescendantBrokerStarted = $false
@@ -468,6 +505,7 @@ try {
     $env:AACC_TEST_BUNDLE_DIR = $BundleDir
     $PreservedPathEntry = "${BundleDir}-sibling"
     $env:AACC_TEST_PRESERVED_PATH_ENTRY = $PreservedPathEntry
+    $env:AACC_TEST_UNSAFE_SENTINEL = $UnsafeSentinel
     $env:PATH = "$BundleDir;$BundleDir\poison;$PreservedPathEntry;$OldPath"
 
     $BrokerCountBefore = @(
@@ -525,6 +563,24 @@ try {
         "$ValidArguments arbitrary-command"
     )) {
         Assert-BrokerRejectsArguments -Arguments $InvalidArguments
+    }
+
+    $UnsafeTargets = @("${UnsafeCarrier}:payload.cmd")
+    foreach ($ControlCode in 1..31) {
+        $UnsafeTargets += (
+            "${UnsafeCarrier}:control-$ControlCode" +
+            [char]$ControlCode +
+            ".cmd"
+        )
+    }
+    if ($UnsafeCarrier -notmatch '^[A-Za-z]:\\') {
+        throw "unsafe path integration requires a drive-absolute build root"
+    }
+    $UnsafeTargets += "\\?\$UnsafeCarrier"
+    $UnsafeTargets += "\\.\$UnsafeCarrier"
+    foreach ($UnsafeTarget in $UnsafeTargets) {
+        Assert-BrokerRejectsUnsafeTarget -TargetPath $UnsafeTarget `
+            -BundleDir $BundleDir -SentinelPath $UnsafeSentinel
     }
 
     $PidFile = Join-Path $IntegrationRoot "descendant-pids.txt"
@@ -618,6 +674,12 @@ finally {
     }
     else {
         $env:AACC_TEST_PRESERVED_PATH_ENTRY = $OldPreservedPathEntry
+    }
+    if ($null -eq $OldUnsafeSentinel) {
+        Remove-Item Env:AACC_TEST_UNSAFE_SENTINEL -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AACC_TEST_UNSAFE_SENTINEL = $OldUnsafeSentinel
     }
 }
 

@@ -47,7 +47,77 @@ bool PathHasEntry(
     return false;
 }
 
+bool WriteAsciiFile(const std::wstring& path, const std::string& contents) {
+    if (contents.size() > MAXDWORD) {
+        SetLastError(ERROR_FILE_TOO_LARGE);
+        return false;
+    }
+    const DWORD byte_count = static_cast<DWORD>(contents.size());
+    const HANDLE file = CreateFileW(
+        path.c_str(),
+        GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    DWORD written = 0;
+    const bool succeeded =
+        WriteFile(
+            file,
+            contents.data(),
+            byte_count,
+            &written,
+            nullptr) != FALSE &&
+        written == byte_count;
+    const DWORD error = GetLastError();
+    CloseHandle(file);
+    SetLastError(error);
+    return succeeded;
+}
+
+bool IsAttributeVisibleFile(const std::wstring& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+int PrepareUnsafePathFixtures(const std::wstring& carrier) {
+    const std::string batch =
+        "@echo off\r\n"
+        "> \"%AACC_TEST_UNSAFE_SENTINEL%\" echo unsafe\r\n"
+        "exit /b 0\r\n";
+    if (!WriteAsciiFile(carrier, batch) ||
+        !IsAttributeVisibleFile(carrier) ||
+        !WriteAsciiFile(carrier + L":payload.cmd", batch) ||
+        !IsAttributeVisibleFile(carrier + L":payload.cmd")) {
+        return 95;
+    }
+
+    for (wchar_t control = 0x0001; control <= 0x001F; ++control) {
+        std::wstring stream =
+            carrier + L":control-" +
+            std::to_wstring(static_cast<unsigned int>(control));
+        stream.push_back(control);
+        stream.append(L".cmd");
+        if (!WriteAsciiFile(stream, batch) ||
+            !IsAttributeVisibleFile(stream)) {
+            return 96;
+        }
+    }
+    return 0;
+}
+
 int wmain(int argc, wchar_t* argv[]) {
+    if (argc == 3 &&
+        std::wstring(argv[1]) == L"--prepare-unsafe-path-fixtures") {
+        return PrepareUnsafePathFixtures(argv[2]);
+    }
+
     if (argc != 3 || std::wstring(argv[1]) != L"app-server" ||
         std::wstring(argv[2]) != L"--stdio") {
         return 90;
