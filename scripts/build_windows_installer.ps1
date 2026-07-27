@@ -199,6 +199,24 @@ else {
             Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse
         )
     }
+    Write-Host "AACC_INNO_LAYOUT candidate_count=$($IsccCandidates.Count)"
+    if ($IsccCandidates.Count -eq 0) {
+        $DesktopRoot = [Environment]::GetFolderPath(
+            [Environment+SpecialFolder]::DesktopDirectory
+        )
+        $DefaultDesktopIscc = Join-Path $DesktopRoot "Inno Setup 6\ISCC.exe"
+        $DefaultDesktopCandidates = @(
+            Get-Item -LiteralPath $DefaultDesktopIscc -Force -ErrorAction SilentlyContinue |
+                Where-Object {
+                    -not $_.PSIsContainer -and
+                    (($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0)
+                }
+        )
+        Write-Host (
+            "AACC_INNO_DEFAULT_DESKTOP candidate_count=" +
+            $DefaultDesktopCandidates.Count
+        )
+    }
     if ($IsccCandidates.Count -ne 1) {
         throw "bootstrapped Inno Setup compiler layout is invalid"
     }
