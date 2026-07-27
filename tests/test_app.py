@@ -152,6 +152,55 @@ def test_windows_listener_is_installed_before_hotkeys_and_survives_hotkey_failur
     assert events.index("hotkeys-stop") < events.index("runtime-close")
 
 
+def test_deferred_kimi_web_start_failure_stops_partial_service(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    class FailingWebService:
+        def start(self) -> None:
+            events.append("kimi-web-start")
+            raise RuntimeError("partial web start")
+
+        def stop(self) -> None:
+            events.append("kimi-web-stop")
+
+    runtime.kimi_web_quota_service = FailingWebService()
+    _patch_application_shell(monkeypatch, events, runtime)
+
+    class Listener:
+        def start(self, _app, _window) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    class Hotkeys:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> bool:
+            return True
+
+        def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "WindowsShutdownListener", Listener)  # type: ignore[attr-defined]
+    monkeypatch.setitem(  # type: ignore[attr-defined]
+        sys.modules,
+        "aacc.hotkeys_windows",
+        SimpleNamespace(WindowsGlobalHotkeys=Hotkeys),
+    )
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("exec") < events.index("kimi-web-start")
+    assert events.count("kimi-web-stop") == 1
+
+
 def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_runtime(
     tmp_path: Path, monkeypatch: object
 ) -> None:
