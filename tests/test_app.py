@@ -220,13 +220,175 @@ def test_default_codex_quota_factory_composes_live_and_local_readers(
     monkeypatch.setattr(app_module, "find_codex_executable", lambda: executable)
 
     service = app_module._default_codex_quota_service_factory(
-        app_module.load_config(tmp_path / "config.yaml")
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="darwin",
     )
 
     assert service is not None
     assert isinstance(service._reader, CompositeCodexQuotaReader)
     assert isinstance(service._reader._primary, CodexAppServerReader)
     assert isinstance(service._reader._fallback, CodexQuotaReader)
+
+
+def test_frozen_windows_codex_quota_uses_only_packaged_broker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from aacc.codex_quota import CompositeCodexQuotaReader
+
+    install = tmp_path / "AACC"
+    executable = install / "AACC.exe"
+    broker = install / "aacc-spawn.exe"
+    bundle = install / "_internal"
+    codex = tmp_path / "tools" / "codex.cmd"
+    for path in (executable, broker, codex):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"MZ")
+    bundle.mkdir()
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+
+    service = app_module._default_codex_quota_service_factory(
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="win32",
+        frozen=True,
+        application_executable=executable,
+        frozen_bundle_dir=bundle,
+        environ={"AACC_SPAWN_BROKER_PATH": str(tmp_path / "ignored.exe")},
+        parent_pid=42,
+    )
+
+    assert service is not None
+    assert isinstance(service._reader, CompositeCodexQuotaReader)
+    assert service._reader._primary is not None
+    command = service._reader._primary._process_command()
+    assert command.args[0] == str(broker)
+    assert command.args[6] == str(bundle)
+    assert command.args[-1] == str(codex)
+
+
+def test_frozen_windows_missing_or_inconsistent_bundle_uses_local_fallback(
+    tmp_path: Path,
+    monkeypatch,
+    caplog,
+) -> None:
+    install = tmp_path / "private-install"
+    executable = install / "AACC.exe"
+    broker = install / "aacc-spawn.exe"
+    codex = tmp_path / "private-tools" / "codex.cmd"
+    wrong_bundle = tmp_path / "wrong" / "_internal"
+    for path in (executable, broker, codex):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"MZ")
+    wrong_bundle.mkdir(parents=True)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+
+    service = app_module._default_codex_quota_service_factory(
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="win32",
+        frozen=True,
+        application_executable=executable,
+        frozen_bundle_dir=wrong_bundle,
+        environ={},
+        parent_pid=42,
+    )
+
+    assert service is not None
+    assert service._reader._primary is None
+    assert "Windows Codex quota broker unavailable" in caplog.text
+    assert str(install) not in caplog.text
+    assert str(codex) not in caplog.text
+
+
+def test_frozen_windows_missing_broker_uses_local_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install = tmp_path / "AACC"
+    executable = install / "AACC.exe"
+    bundle = install / "_internal"
+    codex = tmp_path / "tools" / "codex.cmd"
+    for path in (executable, codex):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"MZ")
+    bundle.mkdir()
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+
+    service = app_module._default_codex_quota_service_factory(
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="win32",
+        frozen=True,
+        application_executable=executable,
+        frozen_bundle_dir=bundle,
+        environ={"AACC_SPAWN_BROKER_PATH": str(tmp_path / "ignored.exe")},
+        parent_pid=42,
+    )
+
+    assert service is not None
+    assert service._reader._primary is None
+
+
+def test_source_windows_requires_absolute_broker_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    codex = tmp_path / "tools" / "codex.exe"
+    codex.parent.mkdir()
+    codex.write_bytes(b"MZ")
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+    config = app_module.load_config(tmp_path / "config.yaml")
+
+    without_override = app_module._default_codex_quota_service_factory(
+        config,
+        platform="win32",
+        frozen=False,
+        application_executable=tmp_path / "python.exe",
+        environ={"AACC_SPAWN_BROKER_PATH": "relative/aacc-spawn.exe"},
+        parent_pid=42,
+    )
+
+    assert without_override is not None
+    assert without_override._reader._primary is None
+
+    broker = tmp_path / "native" / "aacc-spawn.exe"
+    broker.parent.mkdir()
+    broker.write_bytes(b"MZ")
+    with_override = app_module._default_codex_quota_service_factory(
+        config,
+        platform="win32",
+        frozen=False,
+        application_executable=tmp_path / "python.exe",
+        environ={"AACC_SPAWN_BROKER_PATH": str(broker)},
+        parent_pid=42,
+    )
+
+    assert with_override is not None
+    assert with_override._reader._primary is not None
+    command = with_override._reader._primary._process_command()
+    assert command.args[0] == str(broker)
+    assert command.args[6] == str(broker.parent)
+
+
+def test_non_windows_ignores_broker_override_and_keeps_direct_reader(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    codex = tmp_path / "codex"
+    codex.write_bytes(b"")
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+
+    service = app_module._default_codex_quota_service_factory(
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="darwin",
+        environ={"AACC_SPAWN_BROKER_PATH": str(tmp_path / "broker")},
+    )
+
+    assert service is not None
+    assert service._reader._primary is not None
+    assert service._reader._primary._process_command().args == (
+        str(codex),
+        "app-server",
+        "--stdio",
+    )
 
 
 def test_default_codex_quota_factory_keeps_local_reader_without_executable(
