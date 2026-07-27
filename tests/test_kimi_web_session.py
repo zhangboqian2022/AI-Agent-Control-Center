@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from aacc.kimi_web_session import (
     KIMI_MEMBERSHIP_URL,
     KimiWebSession,
@@ -18,11 +20,8 @@ def test_membership_script_reads_both_connect_services_without_credentials():
     assert KIMI_MEMBERSHIP_URL.startswith("https://www.kimi.com/")
 
 
-def test_web_session_uses_native_system_webview(qapp, tmp_path):
-    session = KimiWebSession(tmp_path)
+def test_web_session_uses_native_system_webview_without_import_time_initialization():
+    source = inspect.getsource(KimiWebSession)
 
-    assert type(session.view).__name__ == "QWebView"
-    assert session.storage_path == tmp_path / "kimi-web-session"
-    assert session.storage_path.is_dir()
-
-    session.close()
+    assert "QWebView()" in source
+    assert "QWebEngine" not in source

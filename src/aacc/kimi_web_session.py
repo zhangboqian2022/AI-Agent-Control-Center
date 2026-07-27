@@ -7,17 +7,28 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
 
 from aacc.file_security import protect_directory
 
-# Qt requires native-web-view initialization before QApplication construction.
-QtWebView.initialize()
-
 KIMI_MEMBERSHIP_URL = "https://www.kimi.com/membership/subscription"
 KIMI_ORIGIN_HOST = "www.kimi.com"
 BRIDGE_PREFIX = "AACC_KIMI_QUOTA:"
+_webview_initialized = False
+
+
+def initialize_native_webview() -> None:
+    """Initialize Qt's native backend before QApplication is constructed."""
+
+    global _webview_initialized
+    if _webview_initialized:
+        return
+    if QGuiApplication.instance() is not None:
+        raise RuntimeError("native web view must be initialized before QApplication")
+    QtWebView.initialize()
+    _webview_initialized = True
 
 
 def membership_fetch_script() -> str:
@@ -74,6 +85,8 @@ class KimiWebSession(QObject):
 
     def __init__(self, config_dir: Path, parent: QObject | None = None) -> None:
         super().__init__(parent)
+        if not _webview_initialized:
+            raise RuntimeError("native web view is not initialized")
         self.storage_path = config_dir / "kimi-web-session"
         protect_directory(self.storage_path)
         self.view = QWebView()
