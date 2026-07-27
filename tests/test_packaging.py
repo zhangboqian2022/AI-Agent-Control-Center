@@ -1,9 +1,11 @@
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 from aacc import __version__
@@ -13,6 +15,7 @@ from aacc.models import AppConfig
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX shell scripts")
 def test_required_scripts_exist_are_executable_and_parse() -> None:
     for name in (
         "install.sh",
@@ -142,6 +145,7 @@ def test_build_scripts_support_explicit_signing_and_notarization() -> None:
     assert "stapler staple" in dmg_script
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX shell scripts")
 def test_partial_release_credentials_fail_before_build() -> None:
     cases = [
         {"AACC_CODESIGN_IDENTITY": "Developer ID Application: Example"},
@@ -253,6 +257,7 @@ def test_build_uses_locked_development_environment() -> None:
     assert "uv sync --locked --extra dev" in script
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX shell scripts")
 def test_release_verifier_rejects_incomplete_or_broken_assets() -> None:
     path = ROOT / "scripts" / "verify_release.sh"
     assert path.exists()

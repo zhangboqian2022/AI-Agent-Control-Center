@@ -110,7 +110,8 @@ def test_read_only_catalog_connection_has_busy_timeout(
     assert observed == [5.0]
 
 
-def test_fresh_chat_conversation_is_running(tmp_path: Path) -> None:
+def test_fresh_chat_conversation_is_running(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     root = tmp_path / "daimon"
     _write_conversations(
         _db_path(root),
@@ -309,7 +310,8 @@ def test_app_process_match_windows(monkeypatch) -> None:
     assert not _default_app_process_match("/Applications/Kimi.app/Contents/MacOS/Kimi")
 
 
-def test_app_process_match_darwin_unchanged() -> None:
+def test_app_process_match_darwin_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     from aacc.kimi_desktop_discovery import _default_app_process_match
 
     assert _default_app_process_match("/Applications/Kimi.app/Contents/MacOS/Kimi")
@@ -326,7 +328,8 @@ def test_terminal_config_windows(monkeypatch) -> None:
     assert terminal.app_bundle_id is None
 
 
-def test_terminal_config_darwin_unchanged() -> None:
+def test_terminal_config_darwin_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     from aacc.kimi_desktop_discovery import _default_terminal_config
 
     terminal = _default_terminal_config()

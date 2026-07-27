@@ -96,7 +96,8 @@ def test_codex_default_process_pattern_windows(monkeypatch) -> None:
     assert not re.search(pattern, "notcodex.exe", re.IGNORECASE)
 
 
-def test_codex_default_process_pattern_darwin_unchanged() -> None:
+def test_codex_default_process_pattern_darwin_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     from aacc.adapters import _default_codex_process_pattern
 
     assert _default_codex_process_pattern() == r"(?:^|/)codex(?:\s|$)"

@@ -118,7 +118,8 @@ def test_discover_tolerates_missing_work_dir(tmp_path: Path) -> None:
     assert "work_dir" not in task.state.metadata
 
 
-def test_discover_returns_kimi_task_shape(tmp_path: Path) -> None:
+def test_discover_returns_kimi_task_shape(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     home = tmp_path / ".kimi-code"
     active_id = "session_active-1234"
     idle_id = "session_idle-5678"
@@ -745,7 +746,8 @@ def test_process_pattern_windows_matches_kimi_exe(monkeypatch) -> None:
     assert not pattern.search("notkimi.exe")
 
 
-def test_process_pattern_darwin_unchanged() -> None:
+def test_process_pattern_darwin_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     from aacc.kimi_discovery import _default_process_pattern
 
     pattern = _default_process_pattern()
@@ -763,7 +765,8 @@ def test_discovered_task_terminal_windows(monkeypatch, tmp_path: Path) -> None:
     assert terminal.app_bundle_id is None
 
 
-def test_discovered_task_terminal_darwin_unchanged() -> None:
+def test_discovered_task_terminal_darwin_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     from aacc.kimi_discovery import _default_terminal_config
 
     terminal = _default_terminal_config("/home/user/myproject")

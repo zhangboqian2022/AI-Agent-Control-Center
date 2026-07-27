@@ -17,6 +17,7 @@ class FakeQuartz:
 
 
 def test_accessibility_trust_uses_quartz_options(monkeypatch: object) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")  # type: ignore[attr-defined]
     quartz = FakeQuartz(True)
     monkeypatch.setattr(accessibility, "_load_quartz", lambda: quartz)  # type: ignore[attr-defined]
 
@@ -25,6 +26,7 @@ def test_accessibility_trust_uses_quartz_options(monkeypatch: object) -> None:
 
 
 def test_open_accessibility_settings_uses_system_deep_link(monkeypatch: object) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")  # type: ignore[attr-defined]
     calls: list[tuple[list[str], dict[str, object]]] = []
 
     def runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -42,6 +44,7 @@ def test_open_accessibility_settings_uses_system_deep_link(monkeypatch: object) 
 
 
 def test_accessibility_failures_are_safe(monkeypatch: object) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         accessibility, "_load_quartz", lambda: (_ for _ in ()).throw(ImportError())
     )

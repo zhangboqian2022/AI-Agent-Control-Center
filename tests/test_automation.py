@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -7,6 +8,11 @@ import pytest
 
 from aacc.automation import AutomationError, MacAutomation, applescript_quote
 from aacc.config import default_config
+
+
+@pytest.fixture(autouse=True)
+def _use_darwin_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
 
 
 class Recorder:
