@@ -346,7 +346,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         shutdown_listener = WindowsShutdownListener()
         try:
             shutdown_listener.start(qt_app, window)
-        except (OSError, RuntimeError) as error:
+        except Exception as error:  # noqa: BLE001 - listener startup must fail closed
             try:
                 shutdown_listener.stop()
             except Exception:  # noqa: BLE001 - runtime/SQLite still must close

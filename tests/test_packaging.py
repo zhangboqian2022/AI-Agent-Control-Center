@@ -257,9 +257,9 @@ def test_windows_build_packages_spawn_broker_at_exact_onedir_root() -> None:
         'Copy-Item "build\\native\\aacc-spawn.exe" "dist\\AACC\\aacc-spawn.exe" -Force'
     )
     assert broker_build < pyinstaller_build < broker_copy
-    assert (
-        '@($rootFiles | Sort-Object) -join "," -ne "_internal,AACC.exe,aacc-spawn.exe"'
-    ) in script
+    assert "Compare-Object -ReferenceObject $expectedRootEntries" in script
+    assert "unexpected Windows package root" in script
+    assert "@($rootFiles | Sort-Object) -join" not in script
 
 
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
