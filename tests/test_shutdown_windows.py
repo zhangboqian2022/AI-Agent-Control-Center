@@ -54,6 +54,7 @@ class FakeWin32ShutdownApi:
         self.images = {} if images is None else images
         self.wait_results: dict[int, bool | BaseException] = {}
         self.pid_errors: dict[int, BaseException] = {}
+        self.pid_sequences: dict[int, list[int]] = {}
         self.open_errors: dict[int, BaseException] = {}
         self.post_error: BaseException | None = None
         self.find_titles: list[str] = []
@@ -63,6 +64,7 @@ class FakeWin32ShutdownApi:
         self.posted: list[tuple[int, int]] = []
         self.waited: list[tuple[int, int]] = []
         self.closed: list[int] = []
+        self.pid_queries: list[int] = []
 
     def register_window_message(self, name: str) -> int:
         assert name == SHUTDOWN_MESSAGE_NAME
@@ -73,8 +75,11 @@ class FakeWin32ShutdownApi:
         return tuple(self.windows)
 
     def window_process_id(self, hwnd: int) -> int:
+        self.pid_queries.append(hwnd)
         if hwnd in self.pid_errors:
             raise self.pid_errors[hwnd]
+        if hwnd in self.pid_sequences:
+            return self.pid_sequences[hwnd].pop(0)
         return self.pids[hwnd]
 
     def open_verified_process(self, pid: int) -> FakeProcess:
@@ -121,6 +126,7 @@ def test_shutdown_client_uses_hidden_exact_title_window_and_one_process_handle(
     assert api.posted == [(101, api.shutdown_message)]
     assert api.waited == [(201, 20_000)]
     assert api.closed == [201]
+    assert api.pid_queries == [101, 101]
 
 
 def test_shutdown_client_skips_wrong_image_and_selects_later_hidden_real_window(
@@ -168,7 +174,41 @@ def test_shutdown_client_treats_natural_exit_during_post_as_success(
     monkeypatch.setattr("aacc.shutdown_windows.sys.executable", r"C:\Program Files\AACC\AACC.exe")
 
     assert request_shutdown_for_update(win32_module=api) == 0
-    assert api.waited == [(200, 0)]
+    assert api.waited == [(200, 20_000)]
+    assert api.closed == [200]
+
+
+def test_shutdown_client_post_failure_waits_full_timeout_then_returns_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = FakeWin32ShutdownApi(
+        windows=[100],
+        pids={100: 200},
+        images={200: r"C:\Program Files\AACC\AACC.exe"},
+    )
+    api.post_error = OSError("post failed")
+    api.wait_results[200] = False
+    monkeypatch.setattr("aacc.shutdown_windows.sys.executable", r"C:\Program Files\AACC\AACC.exe")
+
+    assert request_shutdown_for_update(win32_module=api) != 0
+    assert api.waited == [(200, 20_000)]
+    assert api.closed == [200]
+
+
+def test_shutdown_client_rechecks_window_pid_before_posting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = FakeWin32ShutdownApi(
+        windows=[100],
+        pids={100: 200},
+        images={200: r"C:\Program Files\AACC\AACC.exe"},
+    )
+    api.pid_sequences[100] = [200, 300]
+    monkeypatch.setattr("aacc.shutdown_windows.sys.executable", r"C:\Program Files\AACC\AACC.exe")
+
+    assert request_shutdown_for_update(win32_module=api) != 0
+    assert api.pid_queries == [100, 100]
+    assert api.posted == []
     assert api.closed == [200]
 
 
@@ -332,6 +372,72 @@ def test_shutdown_listener_start_and_stop_are_idempotent() -> None:
 
     assert len(app.installed) == 1
     assert app.removed == app.installed
+
+
+def test_shutdown_listener_can_schedule_again_after_stop_and_restart(qapp) -> None:
+    api = FakeWin32ShutdownApi()
+    first_window = FakeWindow(991)
+    second_window = FakeWindow(992)
+    listener = WindowsShutdownListener(win32_module=api)
+
+    listener.start(qapp, first_window)
+    assert listener.dispatch_message(
+        event_type=b"windows_generic_MSG",
+        hwnd=991,
+        message=api.shutdown_message,
+        w_param=0,
+        l_param=0,
+    )
+    QCoreApplication.processEvents()
+    listener.stop()
+
+    listener.start(qapp, second_window)
+    assert listener.dispatch_message(
+        event_type=b"windows_generic_MSG",
+        hwnd=992,
+        message=api.shutdown_message,
+        w_param=0,
+        l_param=0,
+    )
+    QCoreApplication.processEvents()
+
+    assert first_window.quit_calls == 1
+    assert second_window.quit_calls == 1
+
+
+def test_shutdown_listener_rolls_back_partial_native_filter_install() -> None:
+    class PartiallyFailingApplication(FakeQtApplication):
+        def installNativeEventFilter(self, event_filter: object) -> None:
+            super().installNativeEventFilter(event_filter)
+            raise RuntimeError("install failed")
+
+    app = PartiallyFailingApplication()
+    listener = WindowsShutdownListener(win32_module=FakeWin32ShutdownApi())
+
+    with pytest.raises(RuntimeError, match="install failed"):
+        listener.start(app, FakeWindow())
+
+    assert app.removed == app.installed
+    assert listener._filter is None
+    assert listener._qt_app is None
+    assert listener._window is None
+    assert listener._hwnd == 0
+    assert listener._message == 0
+
+
+def test_shutdown_listener_win_id_failure_does_not_install_filter() -> None:
+    class FailingWindow(FakeWindow):
+        def winId(self) -> int:
+            raise RuntimeError("winId failed")
+
+    app = FakeQtApplication()
+    listener = WindowsShutdownListener(win32_module=FakeWin32ShutdownApi())
+
+    with pytest.raises(RuntimeError, match="winId failed"):
+        listener.start(app, FailingWindow())
+
+    assert app.installed == []
+    assert listener._filter is None
 
 
 def test_shutdown_listener_rejects_zero_registered_message() -> None:
