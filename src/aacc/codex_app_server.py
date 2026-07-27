@@ -22,6 +22,12 @@ from aacc.codex_quota import (
     parse_app_server_rate_limits,
 )
 from aacc.security import redact
+from aacc.windows_broker import (
+    WINDOWS_PROCESS_CREATION_FLAGS as WINDOWS_PROCESS_CREATION_FLAGS,
+)
+from aacc.windows_broker import (
+    BrokerCommand,
+)
 
 APP_SERVER_TIMEOUT_SECONDS = 10.0
 MAX_APP_SERVER_LINE_CHARS = 65_536
@@ -29,8 +35,7 @@ APP_SERVER_QUEUE_SIZE = 32
 WhichExecutable = Callable[[str], str | None]
 IsRegularFile = Callable[[Path], bool]
 PopenFactory = Callable[..., subprocess.Popen[str]]
-RunCommand = Callable[..., subprocess.CompletedProcess[str]]
-WINDOWS_PROCESS_CREATION_FLAGS = 0x08000000 | 0x00000200
+ProcessCommandFactory = Callable[[Path], BrokerCommand]
 
 _logger = logging.getLogger("aacc.codex_quota")
 
@@ -95,7 +100,7 @@ class CodexAppServerReader:
         popen: PopenFactory = subprocess.Popen,
         version: str | None = None,
         platform: str = sys.platform,
-        run: RunCommand = subprocess.run,
+        command_factory: ProcessCommandFactory | None = None,
     ) -> None:
         self._executable = executable
         self._timeout_seconds = max(0.05, timeout_seconds)
@@ -103,9 +108,11 @@ class CodexAppServerReader:
         self._popen = popen
         self._version = version or public_version()
         self._platform = platform
-        self._run = run
+        self._command_factory = command_factory
 
     def read_latest(self) -> CodexQuotaSnapshot:
+        if self._platform == "win32" and self._command_factory is None:
+            return self._unknown()
         process: subprocess.Popen[str] | None = None
         reader_thread: threading.Thread | None = None
         output: queue.Queue[str | None] = queue.Queue(maxsize=APP_SERVER_QUEUE_SIZE)
@@ -120,10 +127,11 @@ class CodexAppServerReader:
                 "errors": "replace",
                 "bufsize": 1,
             }
-            if self._platform == "win32":
-                popen_options["creationflags"] = WINDOWS_PROCESS_CREATION_FLAGS
+            command = self._process_command()
+            if command.creationflags:
+                popen_options["creationflags"] = command.creationflags
             process = self._popen(
-                [str(self._executable), "app-server", "--stdio"],
+                command.args,
                 **popen_options,
             )
             if process.stdin is None or process.stdout is None:
@@ -170,6 +178,14 @@ class CodexAppServerReader:
             self._reap(process)
             if reader_thread is not None:
                 reader_thread.join(timeout=0.2)
+
+    def _process_command(self) -> BrokerCommand:
+        if self._command_factory is not None:
+            return self._command_factory(self._executable)
+        return BrokerCommand(
+            (str(self._executable), "app-server", "--stdio"),
+            0,
+        )
 
     @staticmethod
     def _send(process: subprocess.Popen[str], message: dict[str, Any]) -> None:
@@ -241,24 +257,13 @@ class CodexAppServerReader:
         if process.stdin is not None:
             with suppress(OSError):
                 process.stdin.close()
-        if process.poll() is None:
-            tree_killed = False
-            if self._platform == "win32":
-                try:
-                    result = self._run(
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                        capture_output=True,
-                        text=True,
-                        timeout=2.0,
-                        check=False,
-                        shell=False,
-                    )
-                    tree_killed = result.returncode == 0
-                except (OSError, subprocess.TimeoutExpired):
-                    tree_killed = False
-            if not tree_killed:
-                with suppress(OSError):
-                    process.terminate()
+        try:
+            is_running = process.poll() is None
+        except OSError:
+            is_running = False
+        if is_running:
+            with suppress(OSError):
+                process.terminate()
         try:
             process.wait(timeout=0.5)
         except subprocess.TimeoutExpired:
@@ -266,9 +271,12 @@ class CodexAppServerReader:
                 process.kill()
             with suppress(OSError, subprocess.TimeoutExpired):
                 process.wait(timeout=0.5)
-        if process.stdout is not None:
-            with suppress(OSError):
-                process.stdout.close()
+        except OSError:
+            pass
+        finally:
+            if process.stdout is not None:
+                with suppress(OSError):
+                    process.stdout.close()
 
     @staticmethod
     def _unknown() -> CodexQuotaSnapshot:

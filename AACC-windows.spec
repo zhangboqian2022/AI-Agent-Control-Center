@@ -20,6 +20,7 @@ a = Analysis(
     datas=[(os.path.join(ROOT, 'src', 'aacc', 'styles.qss'), 'aacc')],
     hiddenimports=[
         'aacc.adapters',
+        'aacc.windows_broker',
         'PySide6.QtWebView',
         'win32api',
         'win32con',

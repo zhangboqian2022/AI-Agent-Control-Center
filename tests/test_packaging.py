@@ -311,6 +311,17 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
     assert "aacc.hotkeys_windows" not in hidden_imports
 
 
+def test_windows_spec_includes_broker_python_module_but_not_native_binary() -> None:
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]
+    binaries = spec.split("binaries=", 1)[1].split("]", 1)[0]
+    datas = spec.split("datas=", 1)[1].split("]", 1)[0]
+
+    assert "'aacc.windows_broker'" in hidden_imports
+    assert "aacc-spawn" not in binaries
+    assert "aacc-spawn" not in datas
+
+
 def test_build_uses_locked_development_environment() -> None:
     script = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
     assert "uv sync --locked --extra dev" in script

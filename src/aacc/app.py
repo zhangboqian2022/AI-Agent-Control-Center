@@ -42,6 +42,7 @@ from aacc.models import AppConfig
 from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
 from aacc.task_manager import TaskManager
+from aacc.windows_broker import build_broker_command, packaged_broker_path
 
 _logger = logging.getLogger("aacc.app")
 
@@ -90,11 +91,70 @@ def _default_kimi_web_quota_service_factory(
 
 def _default_codex_quota_service_factory(
     config: AppConfig,
+    *,
+    platform: str | None = None,
+    frozen: bool | None = None,
+    application_executable: Path | None = None,
+    frozen_bundle_dir: Path | None = None,
+    environ: dict[str, str] | None = None,
+    parent_pid: int | None = None,
 ) -> CodexQuotaService | None:
     if not config.app.codex_quota_enabled:
         return None
+    resolved_platform = sys.platform if platform is None else platform
     executable = find_codex_executable()
-    live_reader = CodexAppServerReader(executable) if executable is not None else None
+    live_reader: CodexAppServerReader | None = None
+    if executable is not None and resolved_platform != "win32":
+        live_reader = CodexAppServerReader(executable, platform=resolved_platform)
+    elif executable is not None:
+        is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+        process_executable = (
+            Path(sys.executable) if application_executable is None else application_executable
+        )
+        environment = dict(os.environ) if environ is None else environ
+        broker = packaged_broker_path(
+            platform=resolved_platform,
+            frozen=is_frozen,
+            executable=process_executable,
+            environ=environment,
+        )
+        bundle_dir: Path | None
+        if is_frozen:
+            raw_bundle = (
+                getattr(sys, "_MEIPASS", None) if frozen_bundle_dir is None else frozen_bundle_dir
+            )
+            bundle_dir = Path(raw_bundle) if raw_bundle is not None else None
+            expected_bundle = process_executable.parent / "_internal"
+            if bundle_dir != expected_bundle:
+                bundle_dir = None
+        else:
+            # Source mode has no PyInstaller bundle. The broker's validated
+            # absolute parent is the narrowest deterministic protocol value.
+            bundle_dir = broker.parent if broker is not None else None
+        process_pid = os.getpid() if parent_pid is None else parent_pid
+        if broker is not None and bundle_dir is not None:
+            try:
+                build_broker_command(
+                    broker,
+                    executable,
+                    parent_pid=process_pid,
+                    bundle_dir=bundle_dir,
+                )
+            except ValueError:
+                pass
+            else:
+                live_reader = CodexAppServerReader(
+                    executable,
+                    platform="win32",
+                    command_factory=lambda codex: build_broker_command(
+                        broker,
+                        codex,
+                        parent_pid=process_pid,
+                        bundle_dir=bundle_dir,
+                    ),
+                )
+        if live_reader is None:
+            _logger.warning("Windows Codex quota broker unavailable; using local fallback")
     reader = CompositeCodexQuotaReader(
         live_reader,
         CodexQuotaReader(Path.home() / ".codex" / "sessions"),

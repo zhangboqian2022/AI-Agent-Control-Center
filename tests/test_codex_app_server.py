@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import psutil
 import pytest
 
 from aacc.codex_app_server import (
@@ -23,6 +22,7 @@ from aacc.codex_quota import (
     CodexQuotaStatus,
     parse_app_server_rate_limits,
 )
+from aacc.windows_broker import BrokerCommand
 
 NOW = datetime(2026, 7, 27, 8, 0, tzinfo=UTC)
 
@@ -226,9 +226,9 @@ def _fake_server(tmp_path: Path, body: str) -> Path:
 
 
 def _capturing_popen(
-    calls: list[list[str]],
+    calls: list[tuple[str, ...]],
 ) -> Any:
-    def start(args: list[str], **kwargs: object) -> subprocess.Popen[str]:
+    def start(args: tuple[str, ...], **kwargs: object) -> subprocess.Popen[str]:
         calls.append(args)
         return subprocess.Popen(args, **kwargs)
 
@@ -266,7 +266,7 @@ print(json.dumps({
 }), flush=True)
 """,
     )
-    calls: list[list[str]] = []
+    calls: list[tuple[str, ...]] = []
     reader = CodexAppServerReader(
         server,
         timeout_seconds=2,
@@ -276,7 +276,7 @@ print(json.dumps({
 
     snapshot = reader.read_latest()
 
-    assert calls == [[str(server), "app-server", "--stdio"]]
+    assert calls == [(str(server), "app-server", "--stdio")]
     assert snapshot.status is CodexQuotaStatus.OK
     assert snapshot.weekly is not None
     assert snapshot.weekly.used_percent == 9
@@ -300,106 +300,204 @@ def test_stdout_notifications_cannot_evict_a_matching_response() -> None:
     ) == {"rateLimits": {}}
 
 
-def test_windows_reader_hides_process_and_kills_the_process_tree(tmp_path: Path) -> None:
-    calls: list[tuple[list[str], dict[str, object]]] = []
-
+def test_windows_reader_uses_broker_command_and_reaps_only_broker(tmp_path: Path) -> None:
     class FakeStream:
+        close_calls = 0
+
         def write(self, _value: str) -> int:
             return 0
 
         def flush(self) -> None:
             pass
 
+        def readline(self, _limit: int) -> str:
+            return ""
+
         def close(self) -> None:
-            pass
+            self.close_calls += 1
 
     class FakeProcess:
         pid = 4321
         stdin = FakeStream()
-        stdout = io.StringIO("")
+        stdout = FakeStream()
+        terminate_calls = 0
+        kill_calls = 0
+        wait_calls = 0
 
         def poll(self) -> None:
             return None
 
         def wait(self, timeout: float) -> int:
+            self.wait_calls += 1
             return 0
 
         def terminate(self) -> None:
-            raise AssertionError("taskkill should handle the Windows process tree")
+            self.terminate_calls += 1
 
         def kill(self) -> None:
-            raise AssertionError("taskkill should handle the Windows process tree")
+            self.kill_calls += 1
 
+    process = FakeProcess()
+    popen_args: tuple[str, ...] | None = None
     popen_kwargs: dict[str, object] = {}
 
-    def popen(_args: list[str], **kwargs: object) -> FakeProcess:
+    def popen(args: tuple[str, ...], **kwargs: object) -> FakeProcess:
+        nonlocal popen_args
+        popen_args = args
         popen_kwargs.update(kwargs)
-        return FakeProcess()
-
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append((args, kwargs))
-        return subprocess.CompletedProcess(args, 0, "", "")
+        return process
 
     reader = CodexAppServerReader(
         tmp_path / "codex.cmd",
         timeout_seconds=0.05,
         popen=popen,
         platform="win32",
-        run=run,
+        command_factory=lambda _codex: BrokerCommand(
+            ("C:\\AACC\\aacc-spawn.exe", "--protocol", "1"),
+            WINDOWS_PROCESS_CREATION_FLAGS,
+        ),
     )
     reader.read_latest()
 
+    assert popen_args == ("C:\\AACC\\aacc-spawn.exe", "--protocol", "1")
     assert popen_kwargs["creationflags"] == WINDOWS_PROCESS_CREATION_FLAGS
-    assert calls == [
-        (
-            ["taskkill", "/PID", "4321", "/T", "/F"],
-            {
-                "capture_output": True,
-                "text": True,
-                "timeout": 2.0,
-                "check": False,
-                "shell": False,
-            },
-        )
-    ]
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 0
+    assert process.wait_calls == 1
+    assert process.stdin.close_calls == 1
+    assert process.stdout.close_calls == 1
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows cmd.exe and taskkill")
-def test_windows_cmd_timeout_does_not_leave_a_descendant(tmp_path: Path) -> None:
-    pid_file = tmp_path / "child.pid"
-    child = tmp_path / "child.py"
-    child.write_text(
-        "import os, pathlib, sys, time\n"
-        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8')\n"
-        "time.sleep(30)\n",
-        encoding="utf-8",
-    )
-    wrapper = tmp_path / "fake-codex.cmd"
-    wrapper.write_text(
-        f'@echo off\r\n"{sys.executable}" "{child}" "{pid_file}"\r\n',
-        encoding="utf-8",
-    )
+def test_windows_reader_without_broker_factory_fails_closed_before_popen(
+    tmp_path: Path,
+) -> None:
+    popen_calls = 0
+
+    def popen(*_args: object, **_kwargs: object) -> None:
+        nonlocal popen_calls
+        popen_calls += 1
 
     snapshot = CodexAppServerReader(
-        wrapper,
-        timeout_seconds=2.0,
+        tmp_path / "codex.cmd",
         platform="win32",
+        popen=popen,
     ).read_latest()
 
     assert snapshot.status is CodexQuotaStatus.UNKNOWN
-    deadline = time.monotonic() + 2
-    while not pid_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert pid_file.exists()
-    pid = int(pid_file.read_text(encoding="utf-8"))
-    deadline = time.monotonic() + 2
-    while _pid_exists(pid) and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert not _pid_exists(pid)
+    assert popen_calls == 0
 
 
-def _pid_exists(pid: int) -> bool:
-    return psutil.pid_exists(pid)
+def test_reader_reap_kills_broker_only_after_wait_timeout(tmp_path: Path) -> None:
+    class FakeStream:
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    class FakeProcess:
+        stdin = FakeStream()
+        stdout = FakeStream()
+        terminate_calls = 0
+        kill_calls = 0
+        wait_calls = 0
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+
+        def wait(self, timeout: float) -> int:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired("broker", timeout)
+            return 0
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+
+    process = FakeProcess()
+    reader = CodexAppServerReader(
+        tmp_path / "codex.cmd",
+        platform="win32",
+        command_factory=lambda _codex: BrokerCommand(("broker",), 0),
+    )
+
+    reader._reap(process)  # type: ignore[arg-type]
+
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+    assert process.wait_calls == 2
+    assert process.stdin.close_calls == 1
+    assert process.stdout.close_calls == 1
+
+
+def test_reader_reap_waits_for_already_exited_process(tmp_path: Path) -> None:
+    class FakeProcess:
+        stdin = None
+        stdout = None
+        wait_calls = 0
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout: float) -> int:
+            self.wait_calls += 1
+            return 0
+
+        def terminate(self) -> None:
+            raise AssertionError("already-exited process must not be terminated")
+
+        def kill(self) -> None:
+            raise AssertionError("already-exited process must not be killed")
+
+    process = FakeProcess()
+    reader = CodexAppServerReader(tmp_path / "codex", platform="darwin")
+
+    reader._reap(process)  # type: ignore[arg-type]
+
+    assert process.wait_calls == 1
+
+
+def test_reader_reap_suppresses_process_os_errors_and_closes_streams(
+    tmp_path: Path,
+) -> None:
+    class FakeStream:
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    class FakeProcess:
+        stdin = FakeStream()
+        stdout = FakeStream()
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            raise OSError("process disappeared")
+
+        def wait(self, timeout: float) -> int:
+            raise OSError("invalid process handle")
+
+        def kill(self) -> None:
+            raise AssertionError("OSError is not a timeout")
+
+    process = FakeProcess()
+    reader = CodexAppServerReader(tmp_path / "codex", platform="darwin")
+
+    reader._reap(process)  # type: ignore[arg-type]
+
+    assert process.stdin.close_calls == 1
+    assert process.stdout.close_calls == 1
+
+
+def test_python_sources_contain_no_taskkill() -> None:
+    source_root = Path(__file__).parents[1] / "src"
+    sources = "\n".join(path.read_text(encoding="utf-8") for path in source_root.rglob("*.py"))
+
+    assert "taskkill" not in sources.lower()
 
 
 def test_app_server_reader_times_out_and_reaps_child(tmp_path: Path) -> None:
