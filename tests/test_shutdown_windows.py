@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
 
 import pytest
 from PySide6.QtCore import QCoreApplication
 
 from aacc.shutdown_windows import (
+    _MSG,
     AACC_WINDOW_TITLE,
     SHUTDOWN_MESSAGE_NAME,
     WindowsShutdownListener,
@@ -453,5 +455,27 @@ def test_native_filter_rejects_wrong_event_type_and_null_message_pointer(qapp) -
     listener.start(qapp, FakeWindow())
     assert listener._filter is not None
 
-    assert listener._filter.nativeEventFilter(b"other", 1) == (False, 0)
-    assert listener._filter.nativeEventFilter(b"windows_generic_MSG", 0) == (False, 0)
+    assert listener._filter.nativeEventFilter(b"other", 1) is False
+    assert listener._filter.nativeEventFilter(b"windows_generic_MSG", 0) is False
+
+
+def test_native_filter_dispatches_registered_windows_message_and_returns_bool(qapp) -> None:
+    window = FakeWindow()
+    listener = WindowsShutdownListener(win32_module=FakeWin32ShutdownApi())
+    listener.start(qapp, window)
+    assert listener._filter is not None
+    message = _MSG(
+        hwnd=window.hwnd,
+        message=0xC042,
+        wParam=0,
+        lParam=0,
+    )
+
+    result = listener._filter.nativeEventFilter(
+        b"windows_generic_MSG",
+        ctypes.addressof(message),
+    )
+    QCoreApplication.processEvents()
+
+    assert result is False
+    assert window.quit_calls == 1
