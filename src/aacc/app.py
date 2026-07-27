@@ -236,6 +236,7 @@ class APIServerThread:
                 port=runtime.config.app.api.port,
                 log_level="warning",
                 access_log=False,
+                log_config=None,
             )
         )
         self.thread = threading.Thread(target=self.server.run, name="aacc-api", daemon=True)
