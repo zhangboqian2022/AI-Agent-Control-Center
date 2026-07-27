@@ -178,12 +178,12 @@ class _ShutdownEventFilter(QAbstractNativeEventFilter):
         self,
         event_type: QByteArray | bytes | bytearray | memoryview[int],
         message: int,
-    ) -> tuple[bool, int]:
+    ) -> bool:
         raw_event_type = (
             bytes(event_type.data()) if isinstance(event_type, QByteArray) else bytes(event_type)
         )
         if raw_event_type not in _WINDOWS_EVENT_TYPES or not message:
-            return False, 0
+            return False
         msg = ctypes.cast(int(message), ctypes.POINTER(_MSG)).contents
         self._owner.dispatch_message(
             event_type=raw_event_type,
@@ -192,7 +192,7 @@ class _ShutdownEventFilter(QAbstractNativeEventFilter):
             w_param=int(msg.wParam),
             l_param=int(msg.lParam),
         )
-        return False, 0
+        return False
 
 
 class WindowsShutdownListener:
