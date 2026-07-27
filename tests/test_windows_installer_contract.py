@@ -104,6 +104,14 @@ def test_inno_setup_rejects_internal_root_reparse_before_install() -> None:
     assert prepare.index("ValidateInternalRootForInstall") < prepare.index("ShutdownExistingAACC")
 
 
+def test_windows_smoke_accepts_empty_process_argument_arrays() -> None:
+    text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+
+    for function_name in ("New-ProcessStartInfo", "Start-OwnedProcess"):
+        function = text.split(f"function {function_name}", 1)[1].split("\n}", 1)[0]
+        assert "[AllowEmptyCollection()][string[]]$Arguments" in function
+
+
 def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
     text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     lowered = text.lower()
