@@ -15,31 +15,16 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     for linker_flag in ("/DYNAMICBASE", "/NXCOMPAT", "/HIGHENTROPYVA"):
         assert linker_flag in script
     assert "vswhere.exe" in script
-    assert "-prerelease -latest -products *" in script
-    assert "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64" in script
-    assert "-property installationPath" in script
+    assert "-latest -prerelease -products * -property installationPath" in script
+    assert "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64" not in script
+    for tool in ("cl.exe", "link.exe", "rc.exe", "dumpbin.exe"):
+        assert f"Get-Command {tool} -ErrorAction Stop" in script
     assert '-version "[17.0,18.0)"' not in script
     assert "Visual Studio 2022" not in script
     assert "uv version --short" in script
     assert "dumpbin" in script.lower()
     for forbidden_dependency in ("VCRUNTIME", "MSVCP", "ucrtbase", "Python", "Qt"):
         assert forbidden_dependency in script
-
-
-def test_broker_build_logs_safe_vswhere_diagnostics_on_discovery_failure() -> None:
-    script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
-
-    assert 'Write-Host "AACC_VS_DISCOVERY_DIAGNOSTICS"' in script
-    assert '@("installationPath", "installationVersion", "productId")' in script
-    assert "& $VsWhere -all -prerelease -products * -property $Property" in script
-    assert '$VisualStudioRoot = "C:\\Program Files\\Microsoft Visual Studio"' in script
-    assert "Get-ChildItem -LiteralPath $VisualStudioRoot -Directory" in script
-    assert "Get-ChildItem -LiteralPath $Directory.FullName -Directory" in script
-    failure_start = script.index(
-        "if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($InstallationPath))"
-    )
-    failure_end = script.index("$VsDevCmd", failure_start)
-    assert "Write-VisualStudioDiscoveryDiagnostics" in script[failure_start:failure_end]
 
 
 def test_broker_dependency_check_is_an_explicit_allowlist() -> None:
