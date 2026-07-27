@@ -381,6 +381,12 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
                 kimi_web_quota_service.start()
             except Exception:  # noqa: BLE001 - optional web quota must not block the app
                 _logger.error("Application deferred startup failed stage=kimi-web-quota")
+                try:
+                    kimi_web_quota_service.stop()
+                except Exception:  # noqa: BLE001 - app startup must still continue
+                    _logger.error(
+                        "Application deferred startup rollback failed stage=kimi-web-quota"
+                    )
             else:
                 _logger.info("Application deferred startup completed stage=kimi-web-quota")
 
