@@ -223,7 +223,13 @@ download.
 Installer contract:
 
 - Inno Setup 6.7.1, checked explicitly before compilation.
+- The compiler bootstrap uses the immutable `innosetup-6.7.1.exe` release and
+  verifies SHA-256
+  `4d11e8050b6185e0d49bd9e8cc661a7a59f44959a621d31d11033124c4e8a7b0`
+  before executing a downloaded or cached installer.
 - `PrivilegesRequired=lowest`.
+- `UsePreviousAppDir=yes` and `UninstallLogMode=append`; the stable App ID
+  owns per-user upgrades without allowing a command-line/admin override.
 - Windows x64 only with `x64compatible`.
 - Stable App ID: `{C174E242-E193-5863-8A46-F16152875173}`.
 - Default directory: `{localappdata}\Programs\AACC`.
@@ -235,6 +241,8 @@ Installer contract:
 - Desktop shortcut is offered but unchecked by default.
 - No login/startup item is added.
 - The final page offers Launch AACC, skipped for silent installation.
+- `CloseApplications=no` and `RestartApplications=no`; Inno Restart Manager
+  never closes or restarts AACC on the installer's behalf.
 - Upgrade calls `--shutdown-for-update`, waits up to 20 seconds, removes only
   the old `{app}\_internal`, and then replaces the two root executables and
   `_internal`.
@@ -247,11 +255,16 @@ Installer contract:
   their data.
 - The unsigned installer honestly retains the Windows Unknown
   publisher/SmartScreen warning.
+- Silent smoke adds `/NOCLOSEAPPLICATIONS`,
+  `/NOFORCECLOSEAPPLICATIONS`, and `/NORESTARTAPPLICATIONS`. Shutdown failure
+  aborts before mutation; a locked-file reinstall fault must prove that the
+  prior payload is restored and still starts.
 
 The build script reads version `1.4.2` from `pyproject.toml` via
-`uv version --short`. The workflow is pinned to `windows-2025`, locates the
-preinstalled `ISCC.exe`, verifies version 6.7.1, and logs the compiler path and
-version.
+`uv version --short`. The workflow uses both supported hosted Windows images,
+bootstraps the hash-pinned Inno compiler when an explicit trusted
+`AACC_ISCC_PATH` is not supplied, verifies version 6.7.1, and logs only the
+compiler version and a sanitized source category.
 
 When Windows signing becomes available, the order is broker, AACC and other
 inner binaries, then Setup, all with a timestamp. Signing is not claimed by
