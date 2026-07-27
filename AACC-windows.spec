@@ -24,6 +24,7 @@ a = Analysis(
         'PySide6.QtWebView',
         'win32api',
         'win32con',
+        'win32event',
         'win32security',
         'ntsecuritycon',
         'pywintypes',

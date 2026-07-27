@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
-import ctypes
+import importlib
 import logging
 import ntpath
+import os
 import sys
-from ctypes import wintypes
 from typing import Any, Protocol, cast
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QByteArray, QTimer
+from PySide6.QtCore import QTimer
 
 AACC_WINDOW_TITLE = "AI Agent Control Center"
-SHUTDOWN_MESSAGE_NAME = "AACC.ShutdownForUpdate.v1"
+SHUTDOWN_EVENT_PREFIX = r"Local\AACC.ShutdownForUpdate.v2"
 MAX_SHUTDOWN_TIMEOUT_MS = 120_000
+EVENT_ALL_ACCESS = 0x001F0003
+EVENT_MODIFY_STATE = 0x0002
+ERROR_ALREADY_EXISTS = 183
+SYSTEM_SID = "S-1-5-18"
+ADMINISTRATORS_SID = "S-1-5-32-544"
 _NATURAL_EXIT_WINERRORS = {87, 1168, 1400}
 
 _logger = logging.getLogger("aacc.shutdown")
-_WINDOWS_EVENT_TYPES = {b"windows_generic_MSG", b"windows_dispatcher_MSG"}
 
 
 class _ProcessHandle(Protocol):
@@ -30,16 +34,174 @@ class _ProcessHandle(Protocol):
     def wait_for_exit(self, timeout_ms: int) -> bool: ...
 
 
-class _Win32ShutdownApi(Protocol):
-    def register_window_message(self, name: str) -> int: ...
+class _ShutdownEventHandle(Protocol):
+    def __enter__(self) -> _ShutdownEventHandle: ...
 
+    def __exit__(self, *args: object) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class _Win32ControlApi(Protocol):
     def find_exact_windows(self, title: str) -> tuple[int, ...]: ...
 
     def window_process_id(self, hwnd: int) -> int: ...
 
     def open_verified_process(self, pid: int) -> _ProcessHandle: ...
 
-    def post_message(self, hwnd: int, message: int) -> None: ...
+
+class _ShutdownEventApi(Protocol):
+    def create_shutdown_event(self, name: str) -> _ShutdownEventHandle: ...
+
+    def open_shutdown_event(self, name: str) -> _ShutdownEventHandle: ...
+
+    def set_shutdown_event(self, handle: _ShutdownEventHandle) -> None: ...
+
+    def is_shutdown_event_signaled(self, handle: _ShutdownEventHandle) -> bool: ...
+
+
+class _PyWin32EventHandle:
+    def __init__(self, handle: Any, close_handle: Any) -> None:
+        self.raw = handle
+        self._close_handle = close_handle
+        self._closed = False
+
+    def __enter__(self) -> _PyWin32EventHandle:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._close_handle(self.raw)
+
+
+class WindowsShutdownEventApi:
+    """Small lazily loaded adapter for a protected per-process kernel event."""
+
+    def __init__(self) -> None:
+        self._win32api: Any = importlib.import_module("win32api")
+        self._win32con: Any = importlib.import_module("win32con")
+        self._win32event: Any = importlib.import_module("win32event")
+        self._win32security: Any = importlib.import_module("win32security")
+
+    def _current_user_sid_string(self) -> str:
+        token = self._win32security.OpenProcessToken(
+            self._win32api.GetCurrentProcess(),
+            self._win32con.TOKEN_QUERY,
+        )
+        try:
+            sid = self._win32security.GetTokenInformation(
+                token,
+                self._win32security.TokenUser,
+            )[0]
+            return str(self._win32security.ConvertSidToStringSid(sid))
+        finally:
+            close = getattr(token, "Close", None)
+            if close is not None:
+                close()
+
+    def _security_attributes(self) -> Any:
+        current_user_sid = self._current_user_sid_string()
+        sddl = (
+            "D:P"
+            f"(A;;0x{EVENT_ALL_ACCESS:x};;;{SYSTEM_SID})"
+            f"(A;;0x{EVENT_ALL_ACCESS:x};;;{ADMINISTRATORS_SID})"
+            f"(A;;0x{EVENT_ALL_ACCESS:x};;;{current_user_sid})"
+        )
+        descriptor = self._win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+            sddl,
+            self._win32security.SDDL_REVISION_1,
+        )
+        attributes = self._win32security.SECURITY_ATTRIBUTES()
+        attributes.SECURITY_DESCRIPTOR = descriptor
+        attributes.bInheritHandle = False
+        return attributes
+
+    def _wrap(self, handle: Any) -> _PyWin32EventHandle:
+        return _PyWin32EventHandle(handle, self._win32api.CloseHandle)
+
+    def create_shutdown_event(self, name: str) -> _PyWin32EventHandle:
+        attributes = self._security_attributes()
+        self._win32api.SetLastError(0)
+        raw_handle = self._win32event.CreateEvent(attributes, True, False, name)
+        handle = self._wrap(raw_handle)
+        if self._win32api.GetLastError() == ERROR_ALREADY_EXISTS:
+            handle.close()
+            raise OSError("shutdown event already exists")
+        try:
+            self._verify_event_dacl(raw_handle)
+        except Exception:
+            handle.close()
+            raise
+        return handle
+
+    def open_shutdown_event(self, name: str) -> _PyWin32EventHandle:
+        raw_handle = self._win32event.OpenEvent(EVENT_MODIFY_STATE, False, name)
+        return self._wrap(raw_handle)
+
+    def set_shutdown_event(self, handle: _ShutdownEventHandle) -> None:
+        self._win32event.SetEvent(cast(_PyWin32EventHandle, handle).raw)
+
+    def is_shutdown_event_signaled(self, handle: _ShutdownEventHandle) -> bool:
+        result = int(
+            self._win32event.WaitForSingleObject(
+                cast(_PyWin32EventHandle, handle).raw,
+                0,
+            )
+        )
+        if result == int(self._win32event.WAIT_OBJECT_0):
+            return True
+        if result == int(self._win32event.WAIT_TIMEOUT):
+            return False
+        raise OSError("unexpected shutdown event wait result")
+
+    def _verify_event_dacl(self, raw_handle: Any) -> None:
+        descriptor = self._win32security.GetSecurityInfo(
+            raw_handle,
+            self._win32security.SE_KERNEL_OBJECT,
+            self._win32security.DACL_SECURITY_INFORMATION,
+        )
+        control, _revision = descriptor.GetSecurityDescriptorControl()
+        if not control & self._win32security.SE_DACL_PROTECTED:
+            raise OSError("shutdown event DACL is not protected")
+        dacl = descriptor.GetSecurityDescriptorDacl()
+        if dacl is None:
+            raise OSError("shutdown event DACL is unavailable")
+
+        expected = {
+            SYSTEM_SID,
+            ADMINISTRATORS_SID,
+            self._current_user_sid_string(),
+        }
+        seen: set[str] = set()
+        for index in range(dacl.GetAceCount()):
+            ace = dacl.GetAce(index)
+            if len(ace) != 3:
+                raise OSError("shutdown event DACL contains an unsupported ACE")
+            (ace_type, flags), mask, sid = ace
+            sid_string = str(self._win32security.ConvertSidToStringSid(sid))
+            if (
+                ace_type != self._win32security.ACCESS_ALLOWED_ACE_TYPE
+                or flags & self._win32security.INHERITED_ACE
+                or flags != 0
+                or mask != EVENT_ALL_ACCESS
+                or sid_string not in expected
+                or sid_string in seen
+            ):
+                raise OSError("shutdown event DACL verification failed")
+            seen.add(sid_string)
+        if seen != expected:
+            raise OSError("shutdown event DACL verification failed")
+
+
+def shutdown_event_name(pid: int) -> str:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or pid > 0xFFFF_FFFF:
+        raise ValueError("pid must be an integer from 1 to 4294967295")
+    return f"{SHUTDOWN_EVENT_PREFIX}.{pid}"
 
 
 def _normalized_windows_image(path: str) -> str:
@@ -83,14 +245,15 @@ def request_shutdown_for_update(
     if win32_module is None:
         from aacc import win32
 
-        api = cast(_Win32ShutdownApi, win32)
+        control_api = cast(_Win32ControlApi, win32)
+        event_api = cast(_ShutdownEventApi, WindowsShutdownEventApi())
     else:
-        api = cast(_Win32ShutdownApi, win32_module)
+        control_api = cast(_Win32ControlApi, win32_module)
+        event_api = cast(_ShutdownEventApi, win32_module)
 
     expected_image = _normalized_windows_image(sys.executable)
     try:
-        message = api.register_window_message(SHUTDOWN_MESSAGE_NAME)
-        windows = api.find_exact_windows(AACC_WINDOW_TITLE)
+        windows = control_api.find_exact_windows(AACC_WINDOW_TITLE)
     except OSError:
         return _failed("discover")
     if not windows:
@@ -99,7 +262,7 @@ def request_shutdown_for_update(
     saw_candidate_failure = False
     for hwnd in windows:
         try:
-            pid = api.window_process_id(hwnd)
+            pid = control_api.window_process_id(hwnd)
         except OSError as error:
             if _is_natural_exit_error(error):
                 continue
@@ -109,7 +272,7 @@ def request_shutdown_for_update(
             saw_candidate_failure = True
             continue
         try:
-            process_context = api.open_verified_process(pid)
+            process_context = control_api.open_verified_process(pid)
         except OSError as error:
             if _is_natural_exit_error(error):
                 continue
@@ -126,7 +289,7 @@ def request_shutdown_for_update(
                     saw_candidate_failure = True
                     continue
                 try:
-                    current_pid = api.window_process_id(hwnd)
+                    current_pid = control_api.window_process_id(hwnd)
                 except OSError as error:
                     if _is_natural_exit_error(error):
                         continue
@@ -139,14 +302,19 @@ def request_shutdown_for_update(
                     saw_candidate_failure = True
                     continue
                 try:
-                    api.post_message(hwnd, message)
+                    event_context = event_api.open_shutdown_event(shutdown_event_name(pid))
+                except OSError:
+                    return _failed("open-event")
+                try:
+                    with event_context as event:
+                        event_api.set_shutdown_event(event)
                 except (OSError, ProcessLookupError):
                     try:
                         if process.wait_for_exit(timeout_ms):
                             return 0
                     except OSError:
                         pass
-                    return _failed("post")
+                    return _failed("signal")
                 try:
                     if process.wait_for_exit(timeout_ms):
                         return 0
@@ -158,123 +326,84 @@ def request_shutdown_for_update(
     return _failed("candidate") if saw_candidate_failure else 0
 
 
-class _MSG(ctypes.Structure):
-    _fields_ = [
-        ("hwnd", wintypes.HWND),
-        ("message", wintypes.UINT),
-        ("wParam", wintypes.WPARAM),
-        ("lParam", wintypes.LPARAM),
-        ("time", wintypes.DWORD),
-        ("pt", wintypes.POINT),
-    ]
-
-
-class _ShutdownEventFilter(QAbstractNativeEventFilter):
-    def __init__(self, owner: WindowsShutdownListener) -> None:
-        super().__init__()
-        self._owner = owner
-
-    def nativeEventFilter(
-        self,
-        event_type: QByteArray | bytes | bytearray | memoryview[int],
-        message: int,
-    ) -> bool:
-        raw_event_type = (
-            bytes(event_type.data()) if isinstance(event_type, QByteArray) else bytes(event_type)
-        )
-        if raw_event_type not in _WINDOWS_EVENT_TYPES or not message:
-            return False
-        msg = ctypes.cast(int(message), ctypes.POINTER(_MSG)).contents
-        self._owner.dispatch_message(
-            event_type=raw_event_type,
-            hwnd=int(msg.hwnd or 0),
-            message=int(msg.message),
-            w_param=int(msg.wParam),
-            l_param=int(msg.lParam),
-        )
-        return False
-
-
 class WindowsShutdownListener:
-    """Independent Qt native filter for the Setup shutdown message."""
+    """Poll a protected per-process event from the Qt main thread."""
 
-    def __init__(self, *, win32_module: Any | None = None) -> None:
-        if win32_module is None:
-            from aacc import win32
-
-            self._win32: Any = win32
-        else:
-            self._win32 = win32_module
-
+    def __init__(
+        self,
+        *,
+        win32_module: Any | None = None,
+        timer_factory: Any = QTimer,
+    ) -> None:
+        self._event_api: _ShutdownEventApi = cast(
+            _ShutdownEventApi,
+            WindowsShutdownEventApi() if win32_module is None else win32_module,
+        )
+        self._timer_factory = timer_factory
         self._qt_app: Any | None = None
         self._window: Any | None = None
-        self._hwnd = 0
-        self._message = 0
-        self._filter: _ShutdownEventFilter | None = None
+        self._timer: Any | None = None
+        self._event: _ShutdownEventHandle | None = None
         self._quit_scheduled = False
 
     def start(self, qt_app: Any, window: Any) -> None:
-        if self._filter is not None:
+        if self._event is not None or self._timer is not None:
             return
-        message = self._win32.register_window_message(SHUTDOWN_MESSAGE_NAME)
-        if not message:
-            raise OSError("RegisterWindowMessageW failed")
-        hwnd = int(window.winId())
-        if not hwnd:
-            raise OSError("MainWindow HWND is unavailable")
-        event_filter = _ShutdownEventFilter(self)
-        self._qt_app = qt_app
-        self._window = window
-        self._hwnd = hwnd
-        self._message = int(message)
-        self._filter = event_filter
-        self._quit_scheduled = False
+        event = self._event_api.create_shutdown_event(shutdown_event_name(os.getpid()))
         try:
-            qt_app.installNativeEventFilter(event_filter)
+            timer = self._timer_factory(qt_app)
+            timer.setInterval(100)
+            timer.timeout.connect(self._poll)
+            self._qt_app = qt_app
+            self._window = window
+            self._timer = timer
+            self._event = event
+            self._quit_scheduled = False
+            timer.start()
         except Exception:
-            try:
-                qt_app.removeNativeEventFilter(event_filter)
-            except Exception:  # noqa: BLE001 - preserve original install failure
-                _logger.error("Shutdown listener rollback failed stage=remove-filter")
+            event.close()
             self._clear_state()
             raise
 
-    def dispatch_message(
-        self,
-        *,
-        event_type: bytes,
-        hwnd: int,
-        message: int,
-        w_param: int,
-        l_param: int,
-    ) -> bool:
-        if (
-            self._filter is None
-            or event_type not in _WINDOWS_EVENT_TYPES
-            or hwnd != self._hwnd
-            or message != self._message
-            or w_param != 0
-            or l_param != 0
-            or self._quit_scheduled
-        ):
-            return False
+    def _poll(self) -> None:
+        event = self._event
+        if event is None or self._quit_scheduled:
+            return
+        try:
+            signaled = self._event_api.is_shutdown_event_signaled(event)
+        except Exception:  # noqa: BLE001 - a broken listener must fail safe
+            _logger.error("Shutdown listener failed stage=poll")
+            self._request_quit()
+            return
+        if signaled:
+            self._request_quit()
+
+    def _request_quit(self) -> None:
+        if self._quit_scheduled:
+            return
         self._quit_scheduled = True
         window = self._window
+        self._release_resources()
         if window is not None:
-            QTimer.singleShot(0, window.quit_application)
-        return True
+            window.quit_application()
 
     def stop(self) -> None:
-        event_filter = self._filter
-        qt_app = self._qt_app
+        self._release_resources()
         self._clear_state()
-        if event_filter is not None and qt_app is not None:
-            qt_app.removeNativeEventFilter(event_filter)
+
+    def _release_resources(self) -> None:
+        timer = self._timer
+        event = self._event
+        self._timer = None
+        self._event = None
+        if timer is not None:
+            timer.stop()
+        if event is not None:
+            event.close()
 
     def _clear_state(self) -> None:
-        self._filter = None
         self._qt_app = None
         self._window = None
-        self._hwnd = 0
-        self._message = 0
+        self._timer = None
+        self._event = None
         self._quit_scheduled = False
