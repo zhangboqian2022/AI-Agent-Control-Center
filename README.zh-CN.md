@@ -1,12 +1,14 @@
 # AI Agent Control Center（AACC）
 
-> 面向本机 AI Coding Agent 的 macOS 桌面状态与控制中心。
+> 面向本机 AI Coding Agent 的桌面状态与控制中心，支持 macOS 13+ 与 Windows 10+。
 
 [English README](README.md) · [下载 AACC 1.4.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg) · [发布说明](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.1) · [产品设计](docs/product-design.zh-CN.md)
 
-AACC 是一个本机优先的 macOS 悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
+AACC 是一个本机优先的跨平台悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
 
 ![AACC 面板：不同状态的任务卡片](docs/images/panel-overview.png)
+
+![平台](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![许可证](https://img.shields.io/badge/license-MIT-blue) ![本机优先](https://img.shields.io/badge/privacy-local--first-18a999)
 
 ## 核心能力
 
@@ -16,7 +18,7 @@ AACC 是一个本机优先的 macOS 悬浮面板，用于查看你选择监控�
 - **紧凑多工具卡片：** Codex 或已配置 Adapter 以小徽标标识，任务名称更大，并显示完整运行计时与一行短状态。
 - **面板自动伸缩：** 任务增加或移除时窗口自动拉长或收短；达到当前屏幕可用高度的 80% 后改为内部滚动。
 - **及时且克制的概括：** 每 5 秒检查 Codex 元数据，用“正在修改代码”“正在运行测试”等固定短语反馈活动，不展示原始载荷。
-- **Codex 周额度一眼可见：** 从本机 Codex 结构化额度元数据读取当前 10080 分钟周窗口；不会展示 Codex 五小时限制。
+- **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示。每个可用重置时间都直接写在行内，缺失数据保持 `--`。
 - **本机优先：** 只读取判断状态所需的本机任务元数据，不上传对话内容。
 - **可靠的完成判断：** 优先依据 Codex `task_started` 与 `task_complete` 会话事件，避免任务完成后仍错误显示“执行中”。
 - **发现故障可见：** Codex 元数据连续读取失败时显示可恢复的黄色告警条，不再静默冻结旧状态。
@@ -96,7 +98,7 @@ cd AI-Agent-Control-Center
 
 对已选择的 Codex 会话，AACC 读取任务 ID、标题、更新时间、会话文件修改时间、事件名、匹配进程标识及有界的近期工具事件类别。为了区分测试与构建，它可能检查命令类别标记，但不会把原始提示词、回答、命令、凭证、代码或文件内容复制到面板、任务历史或日志。只有历史 `task_started` 且没有近期活动时会诚实显示未知状态，不会误报为运行。详见[中文用户指南](docs/user-guide.md)或 [English user guide](docs/user-guide.en.md)。
 
-Codex 额度条只显示周额度。它仅扫描近期本机会话文件的有界尾部，从结构化 `rate_limits` 对象接受当前 10080 分钟周窗口，并忽略旧版较短窗口；不登录 Codex、不调用私有额度接口，也不保留提示词或回答正文。元数据缺失、过期或格式变化时显示“数据不可用”，不会误报成 `0%`。
+Codex 额度条只显示周额度。主要数据源是在本机启动已安装的 Codex `app-server`，仅使用 Codex 已配置账户调用只读 `account/rateLimits/read`；不会启动任务、发送提示词或发起登录。AACC 只接受未来有效的 10080 分钟周窗口。可执行文件或该方法不可用时，才回退扫描近期本机会话文件的有界尾部，并忽略旧版较短窗口。AACC 不保留原始响应、提示词或任务正文；数据缺失、过期或格式变化时显示 `--`，不会误报成 `0%`。
 
 ## CLI 与本地 API
 

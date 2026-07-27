@@ -267,3 +267,24 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "300 分钟" not in content
         assert "shasum -a 256 AACC-1.4.1.dmg" in content
         assert "xattr -cr /Applications/AACC.app" in content
+
+
+def test_readme_first_screen_and_windows_checklists_are_cross_platform() -> None:
+    for name in ("README.md", "README.zh-CN.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        first_screen = "\n".join(text.splitlines()[:30])
+        assert "macOS 13+" in first_screen
+        assert "Windows 10+" in first_screen
+
+    for name in (
+        "windows-verification-checklist.en.md",
+        "windows-verification-checklist.zh-CN.md",
+    ):
+        text = (ROOT / "docs" / name).read_text(encoding="utf-8")
+        assert "WEEK" in text
+        assert "5H" in text
+        assert "MONTH" in text
+        assert "config.yaml" in text
+        assert "kimi-credentials.json" in text
+        assert "icacls" in text
+        assert "unprivileged" in text or "无特权" in text

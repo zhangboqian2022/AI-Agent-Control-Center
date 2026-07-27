@@ -1,14 +1,14 @@
 # AI Agent Control Center (AACC)
 
-> A local-first macOS desktop control center for the AI coding agents you choose to monitor.
+> A local-first desktop control center for the AI coding agents you choose to monitor, supporting macOS 13+ and Windows 10+.
 
 [中文文档](README.zh-CN.md) · [Download AACC 1.4.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.1) · [Product design](docs/product-design.md)
 
-AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative focus/input automation.
+AACC is a floating cross-platform panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative platform-specific focus/input automation.
 
 ![AACC panel with tasks in different states](docs/images/panel-overview.png)
 
-![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-black) ![License](https://img.shields.io/badge/license-MIT-blue) ![Local first](https://img.shields.io/badge/privacy-local--first-18a999)
+![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![License](https://img.shields.io/badge/license-MIT-blue) ![Local first](https://img.shields.io/badge/privacy-local--first-18a999)
 
 ## Highlights
 
@@ -18,7 +18,7 @@ AACC is a floating macOS panel for monitoring local AI coding-agent tasks. It di
 - **Compact multi-agent cards.** A small agent badge identifies Codex or a configured adapter, while the larger task name, whole-run timer, and short activity label remain easy to scan.
 - **Adaptive desktop footprint.** The panel grows or shrinks with monitored tasks and switches to internal scrolling at 80% of the current screen's available height.
 - **Timely private summaries.** Codex metadata is checked every five seconds and reduced to fixed labels such as “editing code” or “running tests,” without displaying raw payload content.
-- **Codex weekly quota at a glance.** AACC reads the current 10080-minute weekly window from bounded local Codex rate-limit metadata; it never displays a five-hour Codex limit.
+- **Quota resets at a glance.** Codex shows its 10080-minute `WEEK` window; Kimi shows `5H`, `WEEK`, and `MONTH`. Every available reset is an absolute local date and time inside the row, and missing data stays `--`.
 - **Local-first by design.** AACC reads only the local task metadata needed for status detection and never uploads task content.
 - **Reliable status boundaries.** Codex session `task_started` and `task_complete` events take priority over file activity to avoid stale “running” indicators.
 - **Visible discovery health.** Repeated Codex metadata errors show a recoverable warning banner with sanitized diagnostics instead of silently freezing task state.
@@ -98,7 +98,7 @@ A single click selects a card and keeps AACC visible. Use the card’s context m
 
 For selected Codex sessions, AACC reads task IDs, titles, timestamps, session-file modification times, event names, matching process identifiers, and a bounded recent tool-event category. It may inspect command category markers to distinguish tests and builds, but never copies raw prompts, responses, commands, credentials, code, or file contents into the panel, task history, or logs. A historical `task_started` event without recent activity is deliberately treated as unknown rather than running. See the [English user guide](docs/user-guide.en.md) or [中文用户指南](docs/user-guide.md).
 
-The Codex quota strip is weekly-only. It scans bounded tails of recent local session files for the structured `rate_limits` object, accepts only the current 10080-minute window, and ignores legacy shorter windows. It does not authenticate to Codex, call a private quota API, or retain prompt/response text. Missing, expired, or changed metadata is shown as unavailable rather than `0%`.
+The Codex quota strip is weekly-only. Its primary source starts the installed Codex `app-server` locally and calls only the read-only `account/rateLimits/read` method using the account already configured in Codex; it does not start a task, send a prompt, or initiate a login. AACC accepts only a future 10080-minute window. If that method or executable is unavailable, it falls back to bounded tails of recent local session files and ignores legacy shorter windows. No raw response, prompt, or task content is retained. Missing, expired, or changed metadata is shown as `--` rather than `0%`.
 
 ## CLI and local API
 
