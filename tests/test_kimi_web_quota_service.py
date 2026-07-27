@@ -19,6 +19,7 @@ class FakeSession(QObject):
         self.logins = 0
         self.logouts = 0
         self.closed = 0
+        self.logout_result: bool | None = None
 
     def refresh(self) -> None:
         self.refreshes += 1
@@ -27,8 +28,9 @@ class FakeSession(QObject):
         del parent
         self.logins += 1
 
-    def logout(self) -> None:
+    def logout(self) -> bool | None:
         self.logouts += 1
+        return self.logout_result
 
     def close(self) -> None:
         self.closed += 1
@@ -121,9 +123,22 @@ def test_web_quota_service_delegates_login_logout_and_close(qapp, tmp_path: Path
     service = KimiWebQuotaService(tmp_path, session=session)
 
     service.open_login()
-    service.logout()
+    logout_succeeded = service.logout()
     service.stop()
 
+    assert logout_succeeded is True
     assert session.logins == 1
     assert session.logouts == 1
     assert session.closed == 1
+
+
+def test_web_quota_service_propagates_false_logout_and_always_clears_quota(qapp, tmp_path: Path):
+    session = FakeSession()
+    session.logout_result = False
+    service = KimiWebQuotaService(tmp_path, session=session)
+    service.last_quota = object()  # type: ignore[assignment]
+
+    logout_succeeded = service.logout()
+
+    assert logout_succeeded is False
+    assert service.last_quota is None

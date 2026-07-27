@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 
 from PySide6.QtCore import QUrl
 from PySide6.QtWebView import QWebViewLoadingInfo
 
 import aacc.kimi_web_session as web_session
+from aacc.file_security import FileProtectionError
 
 KIMI_MEMBERSHIP_URL = web_session.KIMI_MEMBERSHIP_URL
 KimiWebSession = web_session.KimiWebSession
@@ -46,6 +48,7 @@ class FakeView:
         self.scripts = []
         self.script_result = None
         self.respond_to_scripts = True
+        self.pending_script_callbacks = []
         self.cookies_deleted = False
         self.deleted = False
 
@@ -62,6 +65,8 @@ class FakeView:
         self.scripts.append(script)
         if self.respond_to_scripts:
             callback(self.script_result)
+        else:
+            self.pending_script_callbacks.append(callback)
 
     def deleteAllCookies(self):
         self.cookies_deleted = True
@@ -76,6 +81,26 @@ class FakeLoadingInfo:
 
     def status(self):
         return self._status
+
+
+class ExistingFakeDialog:
+    def __init__(self):
+        self.accepted = False
+
+    def show(self):
+        pass
+
+    def raise_(self):
+        pass
+
+    def activateWindow(self):
+        pass
+
+    def accept(self):
+        self.accepted = True
+
+    def close(self):
+        pass
 
 
 def make_session(monkeypatch, tmp_path):
@@ -199,12 +224,12 @@ def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path
     assert generation is not None
     session._handle_bridge({"kind": "unauthorized", "generation": generation})
     assert session.login_state.may_reuse() is False
-    session.login_state.set_may_reuse(True)
-    session.refresh()
+    session._login_dialog = ExistingFakeDialog()  # type: ignore[assignment]
+    session.open_login()
     generation = session._active_refresh_generation
     assert generation is not None
     session._handle_bridge({"kind": "error", "generation": generation, "message": "network"})
-    session.refresh()
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
     generation = session._active_refresh_generation
     assert generation is not None
     session.view.script_result = "{"
@@ -266,6 +291,39 @@ def test_logout_waits_for_kimi_origin_before_clearing_webview_data(monkeypatch, 
     assert session.login_state.may_reuse() is False
 
 
+def test_logout_navigation_timeout_ends_cleanup_and_ignores_late_load(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl("https://example.com/account")
+    errors = []
+    session.error_occurred.connect(errors.append)
+
+    session.logout()
+
+    generation = session._logout_cleanup_generation
+    assert generation is not None
+    assert session._logout_after_load is True
+    assert session._logout_cleanup_watchdog.isActive() is True
+
+    session._logout_cleanup_watchdog_fired(generation)
+
+    assert session._logout_cleanup_generation is None
+    assert session._logout_after_load is False
+    assert session._logout_cleanup_watchdog.isActive() is False
+    assert session.login_state.may_reuse() is False
+    assert session.view.scripts == []
+    assert session.view.cookies_deleted is False
+
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
+
+    assert session.view.scripts == []
+    assert session.view.cookies_deleted is False
+    assert session.login_state.may_reuse() is False
+    assert errors == []
+
+
 def test_logout_cleanup_callback_loss_keeps_reuse_gate_closed(monkeypatch, tmp_path):
     session = make_session(monkeypatch, tmp_path)
     session.login_state.set_may_reuse(True)
@@ -276,6 +334,323 @@ def test_logout_cleanup_callback_loss_keeps_reuse_gate_closed(monkeypatch, tmp_p
 
     assert session.login_state.may_reuse() is False
     assert session.view.cookies_deleted is True
+    generation = session._logout_cleanup_generation
+    assert generation is not None
+    assert session._logout_cleanup_watchdog.isSingleShot() is True
+    assert session._logout_cleanup_watchdog.interval() == web_session.LOGOUT_CLEANUP_TIMEOUT_MS
+
+    session._logout_cleanup_watchdog_fired(generation)
+
+    assert session._logout_cleanup_generation is None
+    assert session._logout_cleanup_watchdog.isActive() is False
+    assert session.login_state.may_reuse() is False
+
+
+def test_logout_javascript_timeout_ignores_late_failed_load(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    session.view.respond_to_scripts = False
+    errors = []
+    session.error_occurred.connect(errors.append)
+
+    session.logout()
+    generation = session._logout_cleanup_generation
+    assert generation is not None
+    assert session._logout_after_load is False
+
+    session._logout_cleanup_watchdog_fired(generation)
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
+
+    assert session._logout_cleanup_generation is None
+    assert session.login_state.may_reuse() is False
+    assert errors == []
+
+
+def test_open_login_cancels_pending_logout_before_starting_new_refresh(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl("https://example.com/account")
+    session._login_dialog = ExistingFakeDialog()  # type: ignore[assignment]
+
+    session.logout()
+    logout_generation = session._logout_cleanup_generation
+    assert logout_generation is not None
+    assert session._logout_after_load is True
+
+    session.open_login()
+    refresh_generation = session._active_refresh_generation
+    assert refresh_generation is not None
+    assert refresh_generation > logout_generation
+    assert session._logout_cleanup_generation is None
+    assert session._logout_after_load is False
+    assert session._logout_cleanup_watchdog.isActive() is False
+
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+
+    assert "GetSubscriptionStats" in session.view.scripts[-1]
+    assert all("localStorage.clear" not in script for script in session.view.scripts)
+    session._logout_cleanup_watchdog_fired(logout_generation)
+    assert session._active_refresh_generation == refresh_generation
+    assert session._refreshing is True
+
+
+def test_stale_logout_watchdog_cannot_finish_newer_cleanup(monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    session.view.respond_to_scripts = False
+
+    session.logout()
+    old_generation = session._logout_cleanup_generation
+    assert old_generation is not None
+    session.logout()
+    active_generation = session._logout_cleanup_generation
+    assert active_generation is not None
+    assert active_generation > old_generation
+
+    session._logout_cleanup_watchdog_fired(old_generation)
+
+    assert session._logout_cleanup_generation == active_generation
+    assert session._logout_cleanup_watchdog.isActive() is True
+
+
+def test_close_cancels_logout_cleanup_and_ignores_all_late_callbacks(monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    session.view.respond_to_scripts = False
+    login_states = []
+    session.login_state_changed.connect(login_states.append)
+
+    session.logout()
+    generation = session._logout_cleanup_generation
+    assert generation is not None
+    pending_callback = session.view.pending_script_callbacks[-1]
+    script_count = len(session.view.scripts)
+    login_states.clear()
+
+    session.close()
+    pending_callback(True)
+    session._logout_cleanup_watchdog_fired(generation)
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{generation}:ready:late")
+
+    assert session._closed is True
+    assert session._logout_cleanup_generation is None
+    assert session._logout_after_load is False
+    assert session._logout_cleanup_watchdog.isActive() is False
+    assert len(session.view.scripts) == script_count
+    assert session.login_state.may_reuse() is False
+    assert login_states == []
+    assert session.view.deleted is True
+
+
+def test_refresh_logging_never_records_webview_query_or_fragment(caplog, monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(
+        f"{KIMI_MEMBERSHIP_URL}?code=oauth-code&state=oauth-state"
+        "#access_token=fragment-token&password=fragment-password"
+    )
+
+    with caplog.at_level(logging.INFO, logger="aacc.kimi_web_session"):
+        session.refresh()
+
+    logs = caplog.text
+    for secret in (
+        "oauth-code",
+        "oauth-state",
+        "fragment-token",
+        "fragment-password",
+    ):
+        assert secret not in logs
+    assert "Authorization" not in logs
+
+
+def test_bridge_error_logging_redacts_remote_secrets(caplog, monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    errors = []
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    message = "password=remote-password token=remote-token Authorization: Bearer remote-bearer"
+
+    with caplog.at_level(logging.WARNING, logger="aacc.kimi_web_session"):
+        session._handle_bridge({"kind": "error", "generation": generation, "message": message})
+
+    assert errors == [message]
+    logs = caplog.text
+    assert "remote-password" not in logs
+    assert "remote-token" not in logs
+    assert "remote-bearer" not in logs
+    assert "Authorization" not in logs
+
+
+def test_stale_generation_logging_never_formats_remote_value(caplog, monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    remote_generation = "Authorization: Bearer remote-generation-secret"
+
+    with caplog.at_level(logging.INFO, logger="aacc.kimi_web_session"):
+        session._handle_bridge({"kind": "error", "generation": remote_generation})
+
+    assert "remote-generation-secret" not in caplog.text
+    assert "Authorization" not in caplog.text
+
+
+def test_login_dialog_retries_after_initial_unauthorized_page(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    dialog = ExistingFakeDialog()
+    session._login_dialog = dialog  # type: ignore[assignment]
+
+    session.open_login()
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    first_generation = session._active_refresh_generation
+    assert first_generation is not None
+    first_script_count = len(session.view.scripts)
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    assert len(session.view.scripts) == first_script_count
+    session._handle_bridge({"kind": "unauthorized", "generation": first_generation})
+    assert session._active_refresh_generation is None
+    assert session.login_state.may_reuse() is False
+
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+
+    retry_generation = session._active_refresh_generation
+    assert retry_generation is not None
+    assert retry_generation > first_generation
+    assert "GetSubscriptionStats" in session.view.scripts[-1]
+    session._handle_bridge(
+        {
+            "kind": "quota",
+            "generation": retry_generation,
+            "stats": {},
+            "subscription": {},
+        }
+    )
+    assert session.login_state.may_reuse() is True
+    assert dialog.accepted is True
+
+
+def test_quota_success_fails_closed_when_reuse_gate_write_fails(
+    caplog, qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    login_states = []
+    quotas = []
+    errors = []
+    session.login_state_changed.connect(login_states.append)
+    session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+
+    def fail_gate_write(_value):
+        raise FileProtectionError("/Users/private/account-state.json password=gate-secret")
+
+    monkeypatch.setattr(session.login_state, "set_may_reuse", fail_gate_write)
+    with caplog.at_level(logging.ERROR, logger="aacc.kimi_web_session"):
+        session._handle_bridge(
+            {
+                "kind": "quota",
+                "generation": generation,
+                "stats": {"value": 1},
+                "subscription": {"value": 2},
+            }
+        )
+
+    assert session._reuse_blocked is True
+    assert login_states == []
+    assert quotas == []
+    assert errors == ["Kimi 网页登录状态保存失败"]
+    assert "account-state.json" not in caplog.text
+    assert "gate-secret" not in caplog.text
+
+
+def test_unauthorized_fails_closed_when_reuse_gate_write_fails(caplog, qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    login_states = []
+    errors = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+
+    def fail_gate_write(_value):
+        raise FileProtectionError("C:\\private\\state.json token=gate-secret")
+
+    monkeypatch.setattr(session.login_state, "set_may_reuse", fail_gate_write)
+    with caplog.at_level(logging.ERROR, logger="aacc.kimi_web_session"):
+        session._handle_bridge({"kind": "unauthorized", "generation": generation})
+
+    script_count = len(session.view.scripts)
+    session.refresh()
+
+    assert session._reuse_blocked is True
+    assert session._active_refresh_generation is None
+    assert login_states == [False]
+    assert errors == ["Kimi 网页登录状态保存失败"]
+    assert len(session.view.scripts) == script_count
+    assert "state.json" not in caplog.text
+    assert "gate-secret" not in caplog.text
+
+
+def test_logout_gate_write_failure_still_invalidates_and_cleans_up(
+    caplog, qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    login_states = []
+    quotas = []
+    errors = []
+    session.login_state_changed.connect(login_states.append)
+    session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    old_generation = session._active_refresh_generation
+    assert old_generation is not None
+
+    def fail_gate_write(_value):
+        raise FileProtectionError("/private/logout-state.json Authorization: Bearer gate-secret")
+
+    monkeypatch.setattr(session.login_state, "set_may_reuse", fail_gate_write)
+    with caplog.at_level(logging.ERROR, logger="aacc.kimi_web_session"):
+        logout_succeeded = session.logout()
+        session._handle_bridge(
+            {
+                "kind": "quota",
+                "generation": old_generation,
+                "stats": {"late": True},
+                "subscription": {},
+            }
+        )
+
+    assert session._reuse_blocked is True
+    assert logout_succeeded is False
+    assert session._active_refresh_generation is None
+    assert login_states == [False]
+    assert quotas == []
+    assert errors == ["Kimi 网页登录状态保存失败"]
+    assert "localStorage.clear" in session.view.scripts[-1]
+    assert session.view.cookies_deleted is True
+    assert "logout-state.json" not in caplog.text
+    assert "gate-secret" not in caplog.text
 
 
 def test_refresh_watchdog_releases_request_and_allows_new_generation(qapp, monkeypatch, tmp_path):
