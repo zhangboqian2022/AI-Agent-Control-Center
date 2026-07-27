@@ -144,13 +144,20 @@ def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
     login_states = []
     quotas = []
     errors = []
-    session.login_state_changed.connect(login_states.append)
+    session.login_state_changed.connect(
+        lambda value: login_states.append((value, session.login_state.may_reuse()))
+    )
     session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
     session.error_occurred.connect(errors.append)
 
     assert session.storage_path.is_dir()
     assert len(session.view.settings().attributes) == 2
 
+    session.refresh()
+    assert session.view.url().isEmpty()
+    assert session.view.scripts == []
+
+    session.login_state.set_may_reuse(True)
     session.refresh()
     assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
     assert session._refresh_after_load is True
@@ -163,18 +170,21 @@ def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
         "stats": {"value": 1, "large": "x" * 100_000},
         "subscription": {"value": 2},
     }
+    session.login_state.set_may_reuse(False)
     session.view.script_result = json.dumps(payload)
     session._on_title_changed(web_session.BRIDGE_PREFIX + "ready")
-    assert login_states == [True]
+    assert login_states == [(True, True)]
+    assert session.login_state.may_reuse() is True
     assert quotas == [({"value": 1, "large": "x" * 100_000}, {"value": 2})]
     assert web_session.BRIDGE_PAYLOAD_KEY in session.view.scripts[-1]
 
     session._handle_bridge({"kind": "unauthorized"})
+    assert session.login_state.may_reuse() is False
     session._handle_bridge({"kind": "error", "message": "network"})
     session._handle_bridge("invalid")
     session.view.script_result = "{"
     session._on_title_changed(web_session.BRIDGE_PREFIX + "ready")
-    assert login_states[-1] is False
+    assert login_states[-1] == (False, False)
     assert errors == [
         "network",
         "Kimi 会员响应格式无效",
@@ -182,6 +192,7 @@ def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
     ]
 
     session.logout()
+    assert session.login_state.may_reuse() is False
     assert session.view.cookies_deleted is True
     assert "localStorage.clear" in session.view.scripts[-1]
     session.close()
@@ -255,6 +266,7 @@ def test_web_session_loading_failure_and_login_dialog(monkeypatch, tmp_path):
     session.open_login()
     dialog = session._login_dialog
     assert dialog is not None
+    assert session.login_state.may_reuse() is False
     assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
 
     session._handle_bridge({"kind": "quota", "stats": {}, "subscription": {}})
