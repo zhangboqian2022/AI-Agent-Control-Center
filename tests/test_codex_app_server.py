@@ -199,11 +199,7 @@ def test_parse_app_server_truncates_plan_type() -> None:
 def _fake_server(tmp_path: Path, body: str) -> Path:
     server = tmp_path / "fake-codex"
     server.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json\n"
-        "import sys\n"
-        "import time\n"
-        f"{textwrap.dedent(body)}",
+        f"#!/usr/bin/env python3\nimport json\nimport sys\nimport time\n{textwrap.dedent(body)}",
         encoding="utf-8",
     )
     server.chmod(0o755)
