@@ -63,7 +63,8 @@
 **Interfaces:**
 - Produces: `protect_windows_path(path: Path, *, directory: bool = False, api: WindowsSecurityApi | None = None) -> None`
 - Produces: `WindowsSecurityApi.current_user_sid() -> object`
-- Produces: `WindowsSecurityApi.replace_and_verify_dacl(path: Path, principals: tuple[object, ...], *, directory: bool) -> None`
+- Produces: `WindowsSecurityApi.replace_dacl(path: Path, entries: tuple[tuple[object, int, int], ...]) -> None`
+- Produces: `WindowsSecurityApi.verify_dacl(path: Path, expected_sids: tuple[object, ...], *, directory: bool) -> None`
 - Consumed by: `file_security.protect_file()` and `file_security.protect_directory()`
 
 - [ ] **Step 1: Add failing native-ACL contract tests**
@@ -254,8 +255,10 @@ Add these Windows hidden imports:
 "pywintypes",
 ```
 
-Extend packaging tests to require these modules and the `pywintypes312.dll`
-payload.
+Extend packaging tests to require these modules and the ABI-matching
+`pywintypes{major}{minor}.dll` payload. The dependency release remains pinned
+to pywin32 312; the DLL suffix follows the active supported Python ABI (for
+example, `312` for Python 3.12 and `313` for Python 3.13).
 
 - [ ] **Step 8: Run the ACL slice and quality checks**
 
