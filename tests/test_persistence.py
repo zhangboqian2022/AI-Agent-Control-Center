@@ -148,6 +148,119 @@ def test_database_protection_failure_is_not_swallowed(
     assert connection.closed
 
 
+class _ConnectionProxy:
+    def __init__(self, connection: sqlite3.Connection, *, close_raises: bool = False) -> None:
+        self._connection = connection
+        self.close_raises = close_raises
+        self.closed = False
+
+    def __enter__(self) -> "_ConnectionProxy":
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> object:
+        return self._connection.__exit__(*args)
+
+    def execute(self, *args: object) -> sqlite3.Cursor:
+        return self._connection.execute(*args)
+
+    def close(self) -> None:
+        self.closed = True
+        self._connection.close()
+        if self.close_raises:
+            raise RuntimeError("unsafe close detail")
+
+
+@pytest.mark.parametrize("sidecar_suffix", ["-wal", "-shm"])
+def test_initialize_closes_connection_when_sidecar_protection_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sidecar_suffix: str,
+) -> None:
+    path = tmp_path / "aacc.db"
+    store = StateStore(path)
+    connection = _ConnectionProxy(store._connection)
+    store._connection = connection  # type: ignore[assignment]
+    protected_while_present: list[Path] = []
+
+    def protect(candidate: Path) -> None:
+        assert candidate.exists()
+        protected_while_present.append(candidate)
+        if candidate == Path(f"{path}{sidecar_suffix}"):
+            raise FileProtectionError("safe sidecar protection failure")
+
+    monkeypatch.setattr(persistence_module, "protect_file", protect)
+
+    with pytest.raises(FileProtectionError, match="safe sidecar protection failure"):
+        store.initialize(default_config().tasks)
+
+    assert Path(f"{path}{sidecar_suffix}") in protected_while_present
+    assert connection.closed
+
+
+def test_initialize_preserves_protection_error_when_connection_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "aacc.db"
+    store = StateStore(path)
+    connection = _ConnectionProxy(store._connection, close_raises=True)
+    store._connection = connection  # type: ignore[assignment]
+
+    def fail_wal_protection(candidate: Path) -> None:
+        if candidate == Path(f"{path}-wal"):
+            raise FileProtectionError("safe original protection failure")
+
+    monkeypatch.setattr(persistence_module, "protect_file", fail_wal_protection)
+
+    with pytest.raises(FileProtectionError, match="safe original protection failure") as exc:
+        store.initialize(default_config().tasks)
+
+    assert "unsafe close detail" not in str(exc.value)
+    assert connection.closed
+
+
+def test_update_closes_connection_and_preserves_sidecar_protection_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "aacc.db"
+    store = StateStore(path)
+    store.initialize(default_config().tasks)
+    connection = _ConnectionProxy(store._connection, close_raises=True)
+    store._connection = connection  # type: ignore[assignment]
+
+    def fail_wal_protection(candidate: Path) -> None:
+        if candidate == Path(f"{path}-wal"):
+            raise FileProtectionError("safe update protection failure")
+
+    monkeypatch.setattr(persistence_module, "protect_file", fail_wal_protection)
+
+    with pytest.raises(FileProtectionError, match="safe update protection failure") as exc:
+        store.update(TaskState.new("task-1", "running", source="api"))
+
+    assert "unsafe close detail" not in str(exc.value)
+    assert connection.closed
+    assert not store._initialized
+
+
+def test_read_before_initialize_does_not_create_wal_sidecars(tmp_path: Path) -> None:
+    path = tmp_path / "aacc.db"
+    initialized = StateStore(path)
+    initialized.initialize(default_config().tasks)
+    initialized.close()
+    assert not Path(f"{path}-wal").exists()
+    assert not Path(f"{path}-shm").exists()
+
+    uninitialized = StateStore(path)
+    with pytest.raises(RuntimeError, match="not initialized"):
+        uninitialized.get("task-1")
+
+    assert not Path(f"{path}-wal").exists()
+    assert not Path(f"{path}-shm").exists()
+    uninitialized.close()
+
+
 def test_heartbeat_updates_current_without_growing_history(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "aacc.db")
     store.initialize(default_config().tasks)
