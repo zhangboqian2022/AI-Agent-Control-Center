@@ -19,6 +19,19 @@ def _png_size(path: Path) -> tuple[int, int]:
     return struct.unpack(">II", header[16:24])
 
 
+def _png_chunk_types(path: Path) -> list[bytes]:
+    data = path.read_bytes()
+    chunks: list[bytes] = []
+    offset = 8
+    while offset < len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        chunk_type = data[offset + 4 : offset + 8]
+        chunks.append(chunk_type)
+        offset += 12 + length
+    assert offset == len(data)
+    return chunks
+
+
 def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     script = _read("scripts/capture_panel_screenshot.py")
 
@@ -28,8 +41,18 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     assert "KIMI_WEEK = 72" in script
     assert "KIMI_MONTH = 31" in script
     assert "window.resize(420," in script
-    assert "/Users/" not in script
+    lowered = script.casefold()
+    for forbidden in (
+        "/users/",
+        "c:\\users\\",
+        "/home/",
+        "zhangboqian",
+        Path.home().name.casefold(),
+        "sk-",
+    ):
+        assert forbidden not in lowered
     assert _png_size(SCREENSHOT) == (420, 577)
+    assert set(_png_chunk_types(SCREENSHOT)) <= {b"IHDR", b"pHYs", b"IDAT", b"IEND"}
 
 
 def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
@@ -95,3 +118,13 @@ def test_bilingual_guides_describe_setup_lifecycle_and_preserved_appdata() -> No
         text = _read(name)
         for term in required_terms:
             assert term in text
+
+
+def test_bilingual_guides_make_desktop_controls_platform_specific() -> None:
+    english = _read("docs/user-guide.en.md")
+    chinese = _read("docs/user-guide.md")
+
+    for term in ("Win+H", "system tray", "Accessibility", "no startup entry"):
+        assert term in english
+    for term in ("Win+H", "系统托盘", "辅助功能", "不添加开机启动项"):
+        assert term in chinese

@@ -4,7 +4,7 @@
 
 ## Panel controls
 
-Clicking a card selects it and leaves AACC visible. Double-clicking focuses the configured target and starts macOS dictation. The context menu contains **Switch to task**, allowed-key actions, manual state controls, reset, and copy-task-info. The top arrow switches compact/full mode, the gear opens settings, and the dash hides the panel to the menu bar. Drag the panel to move it and use the lower-right corner to resize it.
+Clicking a card selects it and leaves AACC visible. Double-clicking focuses the configured target and starts the platform voice input: macOS dictation on Mac or Win+H on Windows. The context menu contains **Switch to task**, manual state controls, reset, rename, and copy-task-info. The top arrow switches compact/full mode, the gear opens settings, and the dash hides the panel to the macOS menu bar or Windows system tray. Drag the panel to move it and use the lower-right corner to resize it.
 
 ## Codex task discovery
 
@@ -44,10 +44,10 @@ The most reliable integration is an agent hook that calls the local API. Without
 
 ## Global shortcuts
 
-F13–F16 focus tasks 1–4; F17 sends Enter; F18/F19 send `1`/`2`; F20 starts dictation. Karabiner-Elements or keyboard firmware can map physical keys to these function keys. Global listening and key injection require macOS Accessibility permission; AACC offers a direct System Settings link when it is missing. Set `keyboard_injection: false` to disable input actions completely.
+F13–F16 focus tasks 1–4; F17 sends Enter; F18/F19 send `1`/`2`; F20 starts macOS dictation or Windows Win+H voice input. Karabiner-Elements, an Fn layer, or keyboard firmware can map physical keys to these function keys. On macOS, global listening and key injection require Accessibility permission, and AACC offers a direct System Settings link when it is missing. Windows uses native global-hotkey and window APIs and requires no Accessibility permission. Set `keyboard_injection: false` to disable input actions completely on either platform.
 
 Use **Settings → Reset API credentials** to replace the localhost API token. The old token becomes invalid immediately and the new token is copied once.
 
 ## Launch at login
 
-The installer does not change Login Items. Add `~/Applications/AACC.app` yourself in **System Settings → General → Login Items** and remove it there at any time.
+On macOS, the installer does not change Login Items. Add `~/Applications/AACC.app` yourself in **System Settings → General → Login Items** and remove it there at any time. On Windows, Setup adds no startup entry; launch AACC from the Start Menu or manage a separate startup shortcut yourself.
