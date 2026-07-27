@@ -296,10 +296,16 @@ def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
     # shared ACL helper instead.
     monkeypatch.setattr(sys, "platform", "win32")
     protected = []
+    protected_directories = []
     monkeypatch.setattr(
         kimi_oauth_module,
         "protect_file",
         lambda path, **_kwargs: protected.append(path),
+    )
+    monkeypatch.setattr(
+        kimi_oauth_module,
+        "protect_directory",
+        lambda path, **_kwargs: protected_directories.append(path),
     )
 
     def raise_attribute_error(_descriptor: int, _mode: int) -> None:
@@ -313,21 +319,29 @@ def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
     assert len(protected) == 2
     assert protected[0].name.startswith(".kimi-credentials.json.")
     assert protected[1] == protected[0]
+    assert protected_directories == [tmp_path]
 
 
 def test_save_credentials_protects_empty_windows_temp_before_secret(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     protected_sizes = []
+    protected_directories = []
     monkeypatch.setattr(
         kimi_oauth_module,
         "protect_file",
         lambda path, **_kwargs: protected_sizes.append(path.stat().st_size),
+    )
+    monkeypatch.setattr(
+        kimi_oauth_module,
+        "protect_directory",
+        lambda path, **_kwargs: protected_directories.append(path),
     )
 
     save_credentials(tmp_path, {"api_key": "private-token"})
 
     assert protected_sizes[0] == 0
     assert protected_sizes[1] > 0
+    assert protected_directories == [tmp_path]
 
 
 def test_load_credentials_republishes_unseen_windows_file_once(tmp_path, monkeypatch):

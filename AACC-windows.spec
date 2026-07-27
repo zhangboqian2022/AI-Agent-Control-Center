@@ -1,16 +1,31 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 
 ROOT = os.path.abspath(os.getcwd())
+PYWIN32_SYSTEM32 = os.path.join(
+    sys.prefix,
+    'Lib',
+    'site-packages',
+    'pywin32_system32',
+)
+PYWINTYPES_DLL_NAME = (
+    f'pywintypes{sys.version_info.major}{sys.version_info.minor}.dll'
+)
 
 a = Analysis(
     [os.path.join(ROOT, 'src', 'aacc', '__main__.py')],
     pathex=[os.path.join(ROOT, 'src')],
-    binaries=[],
+    binaries=[(os.path.join(PYWIN32_SYSTEM32, PYWINTYPES_DLL_NAME), '.')],
     datas=[(os.path.join(ROOT, 'src', 'aacc', 'styles.qss'), 'aacc')],
     hiddenimports=[
         'aacc.adapters',
         'PySide6.QtWebView',
+        'win32api',
+        'win32con',
+        'win32security',
+        'ntsecuritycon',
+        'pywintypes',
     ],
     hookspath=[os.path.join(ROOT, 'hooks')],
     hooksconfig={},
