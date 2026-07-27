@@ -274,7 +274,7 @@ def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
 
     assert "6.7.1" in text
     assert "4d11e8050b6185e0d49bd9e8cc661a7a59f44959a621d31d11033124c4e8a7b0" in text
-    assert "AACC_ISCC_PATH" in text
+    assert "AACC_ISCC_PATH" not in text
     assert "innosetup-6.7.1.exe" in text
     assert (
         "https://github.com/jrsoftware/issrc/releases/download/is-6_7_1/innosetup-6.7.1.exe"
@@ -295,6 +295,16 @@ def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
     assert "Compiler engine version: Inno Setup $InnoVersion" in text
     assert '"/O-"' in text
     assert "ISCC version probe failed" in text
+    assert "[Guid]::NewGuid().ToString(" in text
+    assert "iscc-version-probe-" in text
+    assert "inno-$InnoVersion-" in text
+    assert "$ProbeRootOwned = $false" in text
+    assert "$InnoRootOwned = $false" in text
+    assert "$InnoRootOwned -and (Test-Path -LiteralPath $InnoRoot)" in text
+    assert "-LiteralPath $InnoRoot" in text
+    assert "AACC_INNO_CLEANUP" in text
+    assert "cleanup_failed=true" in text
+    assert "if (Test-Path -LiteralPath $InnoRoot)" in text
     assert "Get-Command ISCC.exe" not in text
     assert "/PORTABLE=1" in text
     assert "/CURRENTUSER" in text
@@ -302,8 +312,7 @@ def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
     assert "$IsccCandidates.Count -ne 1" in text
     assert 'Join-Path $InnoRoot "ISCC.exe"' not in text
     assert "AACC_INNO_LAYOUT candidate_count=" in text
-    assert "AACC_INNO_DEFAULT_DESKTOP candidate_count=" in text
-    assert "$IsccCandidates = $DefaultDesktopCandidates" not in text
+    assert "AACC_INNO_DEFAULT_DESKTOP" not in text
 
 
 def test_windows_installer_build_validates_inputs_and_fresh_output() -> None:
