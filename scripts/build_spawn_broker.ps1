@@ -34,7 +34,7 @@ if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
 }
 
 $InstallationPath = ((
-    & $VsWhere -latest -products * `
+    & $VsWhere -prerelease -latest -products * `
         -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
         -property installationPath |
         Select-Object -First 1
