@@ -39,6 +39,62 @@ def emit_failure(
     return code
 
 
+def validate_response(
+    response_bytes: bytes, payload_bytes: bytes, request_id: int
+) -> tuple[int, int | None]:
+    try:
+        response = json.loads(response_bytes.decode("utf-8"))
+    except UnicodeDecodeError:
+        return emit_failure(3, "response-encoding", response_bytes, payload_bytes), None
+    except json.JSONDecodeError as error:
+        byte = response_bytes[error.pos] if error.pos < len(response_bytes) else None
+        previous_byte = response_bytes[error.pos - 1] if error.pos > 0 else None
+        return (
+            emit_failure(
+                3,
+                "response-json",
+                response_bytes,
+                payload_bytes,
+                position=error.pos,
+                byte=byte,
+                previous_byte=previous_byte,
+            ),
+            None,
+        )
+    try:
+        payload = payload_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return emit_failure(2, "payload-encoding", response_bytes, payload_bytes), None
+
+    if not isinstance(response, dict):
+        return emit_failure(4, "response-type", response_bytes, payload_bytes), None
+    if response.get("args") != ["app-server", "--stdio"]:
+        return emit_failure(4, "args", response_bytes, payload_bytes), None
+    if response.get("bundle_in_path") is not False:
+        return emit_failure(4, "bundle-in-path", response_bytes, payload_bytes), None
+    if response.get("preserved_path_present") is not True:
+        return emit_failure(4, "preserved-path", response_bytes, payload_bytes), None
+    if response.get("broker_target_matches_expected") is not True:
+        return emit_failure(4, "broker-target", response_bytes, payload_bytes), None
+    if type(response.get("pid")) is not int:
+        return emit_failure(4, "pid-type", response_bytes, payload_bytes), None
+    if response["pid"] <= 0:
+        return emit_failure(4, "pid-range", response_bytes, payload_bytes), None
+
+    request = response.get("request")
+    if not isinstance(request, dict):
+        return emit_failure(4, "request-type", response_bytes, payload_bytes), None
+    if type(request.get("id")) is not int:
+        return emit_failure(4, "request-id-type", response_bytes, payload_bytes), None
+    if request["id"] != request_id:
+        return emit_failure(4, "request-id", response_bytes, payload_bytes), None
+    if request.get("method") != "account/rateLimits/read":
+        return emit_failure(4, "request-method", response_bytes, payload_bytes), None
+    if request.get("payload") != payload:
+        return emit_failure(4, "request-payload", response_bytes, payload_bytes), None
+    return 0, response["pid"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--response", required=True)
@@ -57,56 +113,14 @@ def main() -> int:
         payload_bytes = Path(args.payload).read_bytes()
     except OSError:
         return emit_failure(2, "payload-read", response_bytes, payload_bytes)
-    try:
-        response = json.loads(response_bytes.decode("utf-8"))
-    except UnicodeDecodeError:
-        return emit_failure(3, "response-encoding", response_bytes, payload_bytes)
-    except json.JSONDecodeError as error:
-        byte = response_bytes[error.pos] if error.pos < len(response_bytes) else None
-        previous_byte = response_bytes[error.pos - 1] if error.pos > 0 else None
-        return emit_failure(
-            3,
-            "response-json",
-            response_bytes,
-            payload_bytes,
-            position=error.pos,
-            byte=byte,
-            previous_byte=previous_byte,
-        )
-    try:
-        payload = payload_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        return emit_failure(2, "payload-encoding", response_bytes, payload_bytes)
 
-    if not isinstance(response, dict):
-        return emit_failure(4, "response-type", response_bytes, payload_bytes)
-    if response.get("args") != ["app-server", "--stdio"]:
-        return emit_failure(4, "args", response_bytes, payload_bytes)
-    if response.get("bundle_in_path") is not False:
-        return emit_failure(4, "bundle-in-path", response_bytes, payload_bytes)
-    if response.get("preserved_path_present") is not True:
-        return emit_failure(4, "preserved-path", response_bytes, payload_bytes)
-    if response.get("broker_target_matches_expected") is not True:
-        return emit_failure(4, "broker-target", response_bytes, payload_bytes)
-    if type(response.get("pid")) is not int:
-        return emit_failure(4, "pid-type", response_bytes, payload_bytes)
-    if response["pid"] <= 0:
-        return emit_failure(4, "pid-range", response_bytes, payload_bytes)
-
-    request = response.get("request")
-    if not isinstance(request, dict):
-        return emit_failure(4, "request-type", response_bytes, payload_bytes)
-    if type(request.get("id")) is not int:
-        return emit_failure(4, "request-id-type", response_bytes, payload_bytes)
-    if request["id"] != args.request_id:
-        return emit_failure(4, "request-id", response_bytes, payload_bytes)
-    if request.get("method") != "account/rateLimits/read":
-        return emit_failure(4, "request-method", response_bytes, payload_bytes)
-    if request.get("payload") != payload:
-        return emit_failure(4, "request-payload", response_bytes, payload_bytes)
+    exit_code, pid = validate_response(response_bytes, payload_bytes, args.request_id)
+    if exit_code != 0:
+        return exit_code
+    assert pid is not None
     if args.pid_file:
         try:
-            Path(args.pid_file).write_text(str(response["pid"]), encoding="ascii")
+            Path(args.pid_file).write_text(str(pid), encoding="ascii")
         except OSError:
             return emit_failure(2, "pid-write", response_bytes, payload_bytes)
     return 0
