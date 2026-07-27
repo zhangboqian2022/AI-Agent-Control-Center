@@ -4,6 +4,8 @@ param([switch]$FrozenOnly)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $OwnedProcessRegistry = New-Object System.Collections.ArrayList
+# CIM_DATETIME stores six fractional digits; one microsecond is ten .NET ticks.
+$CreationTickTolerance = 10
 
 function Assert-True {
     param([Parameter(Mandatory = $true)][bool]$Condition, [string]$Message = "assertion failed")
@@ -194,6 +196,107 @@ function Test-OwnedProcessEdge {
     )
 }
 
+function Convert-CimCreationDateToUtcTicks {
+    param([Parameter(Mandatory = $true)][AllowNull()]$CreationDate)
+    if ($null -eq $CreationDate) {
+        return $null
+    }
+    try {
+        if ($CreationDate -is [DateTime]) {
+            return ([DateTime]$CreationDate).ToUniversalTime().Ticks
+        }
+        if ($CreationDate -is [string] -and
+            -not [string]::IsNullOrWhiteSpace([string]$CreationDate)) {
+            return (
+                [System.Management.ManagementDateTimeConverter]::ToDateTime(
+                    [string]$CreationDate
+                ).ToUniversalTime().Ticks
+            )
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
+function Get-CimProcessRecordById {
+    param([Parameter(Mandatory = $true)][int]$Id)
+    try {
+        $Records = @(
+            Get-CimInstance -ClassName Win32_Process `
+                -Filter ("ProcessId = {0}" -f $Id) -ErrorAction Stop
+        )
+    }
+    catch {
+        return $null
+    }
+    if ($Records.Count -ne 1) {
+        return $null
+    }
+    return $Records[0]
+}
+
+function Test-CimChildRecordBound {
+    param(
+        [Parameter(Mandatory = $true)]$SnapshotRecord,
+        [Parameter(Mandatory = $true)]$FreshRecord,
+        [Parameter(Mandatory = $true)]$ParentIdentity,
+        [Parameter(Mandatory = $true)]$ChildIdentity
+    )
+    try {
+        if (
+            $null -eq $SnapshotRecord.ProcessId -or
+            $null -eq $SnapshotRecord.ParentProcessId -or
+            $null -eq $FreshRecord.ProcessId -or
+            $null -eq $FreshRecord.ParentProcessId -or
+            [string]::IsNullOrWhiteSpace([string]$SnapshotRecord.ExecutablePath) -or
+            [string]::IsNullOrWhiteSpace([string]$FreshRecord.ExecutablePath) -or
+            $null -eq $SnapshotRecord.CreationDate -or
+            $null -eq $FreshRecord.CreationDate
+        ) {
+            return $false
+        }
+        if (
+            [int]$SnapshotRecord.ProcessId -ne $ChildIdentity.Id -or
+            [int]$FreshRecord.ProcessId -ne $ChildIdentity.Id -or
+            [int]$SnapshotRecord.ParentProcessId -ne $ParentIdentity.Id -or
+            [int]$FreshRecord.ParentProcessId -ne $ParentIdentity.Id -or
+            -not ([string]$SnapshotRecord.ExecutablePath).Equals(
+                [string]$FreshRecord.ExecutablePath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -or
+            -not ([string]$FreshRecord.ExecutablePath).Equals(
+                $ChildIdentity.Path,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            return $false
+        }
+        $SnapshotCreationTicks = Convert-CimCreationDateToUtcTicks `
+            -CreationDate $SnapshotRecord.CreationDate
+        $FreshCreationTicks = Convert-CimCreationDateToUtcTicks `
+            -CreationDate $FreshRecord.CreationDate
+        if (
+            $null -eq $SnapshotCreationTicks -or
+            $null -eq $FreshCreationTicks -or
+            $SnapshotCreationTicks -ne $FreshCreationTicks
+        ) {
+            return $false
+        }
+        $CreationDelta = if ($FreshCreationTicks -ge $ChildIdentity.CreationTimeUtc) {
+            $FreshCreationTicks - $ChildIdentity.CreationTimeUtc
+        }
+        else {
+            $ChildIdentity.CreationTimeUtc - $FreshCreationTicks
+        }
+        return ($CreationDelta -le $CreationTickTolerance)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Get-OwnedProcessTree {
     param(
         [Parameter(Mandatory = $true)][int]$RootId,
@@ -249,6 +352,18 @@ function Get-OwnedProcessTree {
                 }
                 if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity)) {
                     break
+                }
+                $FreshChildRecord = Get-CimProcessRecordById -Id $ChildIdentity.Id
+                if ($null -eq $FreshChildRecord) {
+                    continue
+                }
+                if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity)) {
+                    break
+                }
+                if (-not (Test-CimChildRecordBound -SnapshotRecord $ChildRecord `
+                    -FreshRecord $FreshChildRecord -ParentIdentity $ParentIdentity `
+                    -ChildIdentity $ChildIdentity)) {
+                    continue
                 }
                 if (-not (Test-OwnedProcessEdge -ParentIdentity $ParentIdentity `
                     -ChildIdentity $ChildIdentity)) {
@@ -398,6 +513,67 @@ function Assert-ReusedParentExitSequenceRejected {
         $AcceptedIdentities.Count -eq 0 -and
         $TemporaryClones.Count -eq 0
     ) "a later child of a reused parent PID entered the owned tree"
+}
+
+function Assert-ChildPidReuseSequenceRejected {
+    $Parent = [pscustomobject]@{
+        Id = 6161
+        Path = "C:\fixture\exact-parent.exe"
+        CreationTimeUtc = 1000
+    }
+    $AStarted = [DateTime]::new(
+        2026, 7, 28, 10, 0, 0, [DateTimeKind]::Utc
+    )
+    $BStarted = $AStarted.AddSeconds(1)
+    $SnapshotA = [pscustomobject]@{
+        ProcessId = 6262
+        ParentProcessId = $Parent.Id
+        ExecutablePath = "C:\fixture\snapshot-child-a.exe"
+        CreationDate = $AStarted
+    }
+    $ReusedB = [pscustomobject]@{
+        Id = 6262
+        Path = (Join-Path ([System.IO.Path]::GetTempPath()) "unrelated-b.exe")
+        CreationTimeUtc = $BStarted.Ticks
+    }
+    $FreshB = [pscustomobject]@{
+        ProcessId = $ReusedB.Id
+        ParentProcessId = 9999
+        ExecutablePath = $ReusedB.Path
+        CreationDate = $BStarted
+    }
+    $ParentExact = Test-ProcessIdentityExactMatch -ExpectedIdentity $Parent `
+        -CurrentIdentity $Parent
+    $ChildBound = Test-CimChildRecordBound -SnapshotRecord $SnapshotA `
+        -FreshRecord $FreshB -ParentIdentity $Parent -ChildIdentity $ReusedB
+    $Accepted = $ParentExact -and $ChildBound
+    $AcceptedIdentities = @()
+    if ($Accepted) {
+        $AcceptedIdentities += $ReusedB
+    }
+    $TemporaryClones = @($AcceptedIdentities)
+    Write-SmokeEvidence -Category "process-tree" `
+        -Name "child-pid-reuse-sequence.json" `
+        -Value ([ordered]@{
+            sequence = @(
+                "snapshot-child-a",
+                "child-a-exited",
+                "pid-reused-by-unrelated-b"
+            )
+            exactParent = $Parent
+            snapshotA = $SnapshotA
+            freshB = $FreshB
+            currentIdentityB = $ReusedB
+            parentExactAlive = $ParentExact
+            childRecordBound = $ChildBound
+            acceptedIdentities = $AcceptedIdentities
+            temporaryClones = $TemporaryClones
+        })
+    Assert-True (
+        -not $Accepted -and
+        $AcceptedIdentities.Count -eq 0 -and
+        $TemporaryClones.Count -eq 0
+    ) "a reused child PID entered the owned tree"
 }
 
 function Stop-OwnedProcessTree {
@@ -1343,6 +1519,7 @@ foreach ($Category in @("frozen", "installed", "reinstall", "uninstall")) {
 }
 Assert-StaleParentPidEdgeRejected
 Assert-ReusedParentExitSequenceRejected
+Assert-ChildPidReuseSequenceRejected
 $FixtureRoot = Join-Path $SmokeRoot "fixtures\$SpecialLeaf\native &() %! [x]"
 [System.IO.Directory]::CreateDirectory($FixtureRoot) | Out-Null
 foreach ($Fixture in @("fake-codex.cmd", "fake_codex_server.py", "fake_codex_timeout.py")) {

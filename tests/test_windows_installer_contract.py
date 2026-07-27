@@ -182,9 +182,13 @@ def test_windows_smoke_discovers_only_from_captured_exact_live_parents() -> None
     )[0]
     assert "ParentProcessId" in tree
     assert "if (-not (Test-ProcessIdentityExactAlive -Identity $ExpectedRootIdentity))" in tree
-    assert tree.count("if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity))") >= 3
+    assert tree.count("if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity))") >= 4
     assert "continue" in tree
     assert "break" in tree
+    assert "Get-CimProcessRecordById -Id $ChildIdentity.Id" in tree
+    assert "Test-CimChildRecordBound" in tree
+    assert "-SnapshotRecord $ChildRecord" in tree
+    assert "-FreshRecord $FreshChildRecord" in tree
     assert "Test-OwnedProcessEdge -ParentIdentity" in tree
     assert "$Pending.Push($ChildIdentity)" in tree
     assert "CreationTimeUtc -ge $ParentIdentity.CreationTimeUtc" in text
@@ -211,6 +215,31 @@ def test_windows_smoke_rejects_later_child_after_parent_pid_reuse_and_exit() -> 
     assert "acceptedIdentities = $AcceptedIdentities" in text
     assert "temporaryClones = $TemporaryClones" in text
     assert "later child of a reused parent PID entered the owned tree" in text
+
+
+def test_windows_smoke_binds_snapshot_child_to_fresh_cim_identity() -> None:
+    text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+    binding = text.split("function Test-CimChildRecordBound", 1)[1].split(
+        "function Get-OwnedProcessTree", 1
+    )[0]
+
+    assert "Convert-CimCreationDateToUtcTicks" in text
+    assert "Get-CimProcessRecordById" in text
+    assert "ProcessId" in binding
+    assert "ParentProcessId" in binding
+    assert "ExecutablePath" in binding
+    assert "CreationDate" in binding
+    assert "SnapshotCreationTicks" in binding
+    assert "FreshCreationTicks" in binding
+    assert "CreationTimeUtc" in binding
+    assert "CreationTickTolerance = 10" in text
+    assert "function Assert-ChildPidReuseSequenceRejected" in text
+    assert "child-pid-reuse-sequence.json" in text
+    assert "snapshot-child-a" in text
+    assert "pid-reused-by-unrelated-b" in text
+    assert "acceptedIdentities = $AcceptedIdentities" in text
+    assert "temporaryClones = $TemporaryClones" in text
+    assert "reused child PID entered the owned tree" in text
 
 
 def test_windows_smoke_keeps_temp_clone_filter_structurally_closed() -> None:
