@@ -349,30 +349,29 @@ def test_load_config_removes_unrelated_explicit_windows_ace(tmp_path: Path) -> N
     )
     current_sid_match = re.search(r"\bS-\d+(?:-\d+)+\b", sid_result.stdout)
     assert current_sid_match is not None
-    access_result = subprocess.run(
+    acl_dump = tmp_path / "config-acl.txt"
+    subprocess.run(
         [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            (
-                "(Get-Acl -LiteralPath $env:AACC_ACL_TEST_PATH).Access | "
-                "ForEach-Object { "
-                "$_.IdentityReference.Translate("
-                "[System.Security.Principal.SecurityIdentifier]).Value }"
-            ),
+            "icacls",
+            str(path),
+            "/save",
+            str(acl_dump),
         ],
-        env={**os.environ, "AACC_ACL_TEST_PATH": str(path)},
         capture_output=True,
         text=True,
         timeout=5,
         check=True,
         shell=False,
     )
-    access_sids = {line.strip() for line in access_result.stdout.splitlines() if line.strip()}
-    assert "S-1-1-0" not in access_sids
+    raw_acl = acl_dump.read_bytes()
+    saved_acl = raw_acl.decode("utf-16") if raw_acl.startswith(b"\xff\xfe") else raw_acl.decode()
+    access_sids = set(re.findall(r"\([^)]*;;;([^)]+)\)", saved_acl))
+    assert "S-1-1-0" not in saved_acl
+    assert access_sids
     assert access_sids <= {
         current_sid_match.group(0),
+        "SY",
+        "BA",
         "S-1-5-18",
         "S-1-5-32-544",
     }
