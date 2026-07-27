@@ -8,8 +8,8 @@ ROOT = Path(__file__).parents[1]
 
 
 def safe_broker_failure_summary(stderr: str) -> str:
-    reason = re.search(r"\bAACC_BROKER_VALIDATOR code=\d+ reason=([a-z-]+)\b", stderr)
-    exit_code = re.search(r"\bbroker JSON validation failed exit=(\d+)\b", stderr)
+    reason = re.search(r"\bAACC_BROKER_(?:VALIDATOR|PROBE) code=\d+ reason=([a-z-]+)\b", stderr)
+    exit_code = re.search(r"\bbroker (?:JSON validation|probe) failed exit=(\d+)\b", stderr)
     position = re.search(r"\bpos=(none|\d+)\b", stderr)
     byte = re.search(r"\bbyte=(none|\d+)\b", stderr)
     previous_byte = re.search(r"\bprev=(none|\d+)\b", stderr)
@@ -39,9 +39,24 @@ def test_safe_broker_failure_summary_keeps_only_reason_and_exit_tokens() -> None
     assert "AACC_SECRET_MARKER_4ce1" not in summary
 
 
+def test_safe_broker_failure_summary_accepts_fixed_driver_diagnostics() -> None:
+    summary = safe_broker_failure_summary(
+        "broker probe failed exit=5 "
+        "diagnostic=AACC_BROKER_PROBE code=5 reason=timeout "
+        "AACC_SECRET_MARKER_4ce1"
+    )
+
+    assert summary == (
+        "reason=timeout exit=5 pos=unavailable byte=unavailable "
+        "prev=unavailable response_len=unavailable"
+    )
+    assert "AACC_SECRET_MARKER_4ce1" not in summary
+
+
 def test_windows_build_compiles_static_spawn_broker() -> None:
     script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
     toolchain = (ROOT / "scripts" / "windows_toolchain.ps1").read_text(encoding="utf-8")
+    driver = (ROOT / "tests" / "native" / "run_broker_probe.py").read_text(encoding="utf-8")
 
     for compiler_flag in ("/std:c++17", "/O2", "/MT", "/GS", "/guard:cf", "/W4", "/WX"):
         assert compiler_flag in script
@@ -59,24 +74,31 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     assert "ConvertTo-AaccLocalPath" in toolchain
     assert "OrdinalIgnoreCase" in toolchain
     assert "Get-AaccToolPaths -Candidate $candidate" in toolchain
-    assert "validate_broker_response.py" in script
+    assert "validate_broker_response" in driver
+    assert "run_broker_probe.py" in script
     assert "ConvertFrom-Json" not in script
     assert "Get-SafeBrokerValidatorDiagnostic" in script
+    assert "Get-SafeBrokerProbeDiagnostic" in script
     assert "RedirectStandardOutput" in script
     assert "RedirectStandardError" in script
     assert "$StartInfo.StandardInputEncoding" not in script
     assert "$Process.StandardInput.WriteLine($Request)" not in script
-    assert '[System.Text.UTF8Encoding]::new($false).GetBytes($Request + "`n")' in script
-    assert "$Process.StandardInput.BaseStream.Write" in script
-    assert "$Process.StandardInput.BaseStream.Close()" in script
+    assert '[System.Text.UTF8Encoding]::new($false).GetBytes($Request + "`n")' not in script
+    assert "$Process.StandardInput.BaseStream.Write" not in script
     assert "$DescendantBroker.StandardInput.BaseStream.Close()" in script
-    assert "broker JSON validation failed exit=" in script
-    validator_function = script.index("function Assert-BrokerResponseJson")
-    validator_try = script.index("try {", validator_function)
-    assert validator_try < script.index("$ResponsePath, $Output", validator_function)
-    assert "$ValidatorStarted" in script
+    assert "broker probe failed exit=" in script
+    assert "function Assert-BrokerResponseJson" not in script
+    probe_start = script.index("function Invoke-BrokerProbe")
+    probe_end = script.index("$IntegrationParent =", probe_start)
+    probe_body = script[probe_start:probe_end]
+    assert "New-BrokerTestProcess" not in probe_body
+    assert ".StandardInput" not in probe_body
+    assert "--broker" in probe_body
+    assert "--expected-exit-code" in probe_body
+    assert "$PythonExecutable" in probe_body
+    assert "$DriverStarted" in probe_body
     assert "WaitForExit(5000)" in script
-    assert "Remove-Item -LiteralPath $ResponsePath, $PayloadPath, $PidPath" in script
+    assert "Remove-Item -LiteralPath $PayloadPath, $PidPath" in probe_body
     for variable in ("VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH"):
         assert variable in toolchain
     for root in ("VCToolsInstallDir", "WindowsSdkDir"):

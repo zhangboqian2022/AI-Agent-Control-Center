@@ -345,84 +345,22 @@ function Get-SafeBrokerValidatorDiagnostic {
     return "unavailable"
 }
 
-function Assert-BrokerResponseJson {
-    param(
-        [Parameter(Mandatory = $true)][string]$Output,
-        [Parameter(Mandatory = $true)][string]$Payload,
-        [Parameter(Mandatory = $true)][int]$RequestId
-    )
+function Get-SafeBrokerProbeDiagnostic {
+    param([string]$Diagnostic)
 
-    $ResponsePath = Join-Path $IntegrationRoot ("broker-response-" + [guid]::NewGuid() + ".json")
-    $PayloadPath = Join-Path $IntegrationRoot ("broker-payload-" + [guid]::NewGuid() + ".txt")
-    $PidPath = Join-Path $IntegrationRoot ("broker-pid-" + [guid]::NewGuid() + ".txt")
-    $ValidatorPath = Join-Path $Root "tests\native\validate_broker_response.py"
-    $Validator = $null
-    $ValidatorStarted = $false
-    try {
-        if (-not (Test-Path -LiteralPath $ValidatorPath -PathType Leaf)) {
-            throw "broker JSON validator is unavailable"
-        }
-        [System.IO.File]::WriteAllText(
-            $ResponsePath, $Output, [System.Text.UTF8Encoding]::new($false)
-        )
-        [System.IO.File]::WriteAllText(
-            $PayloadPath, $Payload, [System.Text.UTF8Encoding]::new($false)
-        )
-        $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $StartInfo.FileName = $PythonExecutable
-        $StartInfo.Arguments = (
-            "`"$ValidatorPath`" --response `"$ResponsePath`" --payload `"$PayloadPath`" " +
-            "--request-id $RequestId --pid-file `"$PidPath`""
-        )
-        $StartInfo.UseShellExecute = $false
-        $StartInfo.CreateNoWindow = $true
-        $StartInfo.RedirectStandardOutput = $true
-        $StartInfo.RedirectStandardError = $true
-        $Validator = New-Object System.Diagnostics.Process
-        $Validator.StartInfo = $StartInfo
-        if (-not $Validator.Start()) {
-            throw "broker JSON validation failed exit=start-failed diagnostic=unavailable"
-        }
-        $ValidatorStarted = $true
-        $ValidatorOutputTask = $Validator.StandardOutput.ReadToEndAsync()
-        $ValidatorErrorTask = $Validator.StandardError.ReadToEndAsync()
-        if (-not $Validator.WaitForExit(10000)) {
-            throw "broker JSON validation failed exit=timeout diagnostic=timeout"
-        }
-        $ValidatorOutput = $ValidatorOutputTask.GetAwaiter().GetResult().Trim()
-        $ValidatorError = $ValidatorErrorTask.GetAwaiter().GetResult().Trim()
-        $ValidatorExitCode = $Validator.ExitCode
-        $SafeDiagnostic = Get-SafeBrokerValidatorDiagnostic -Diagnostic $ValidatorError
-        if ($ValidatorExitCode -ne 0) {
-            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=$SafeDiagnostic"
-        }
-        if (-not [string]::IsNullOrEmpty($ValidatorOutput)) {
-            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=validator-stdout"
-        }
-        if (-not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
-            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=pid-file-missing"
-        }
-        $ChildPid = 0
-        $ChildPidText = Get-Content -LiteralPath $PidPath -Raw
-        if (-not [int]::TryParse($ChildPidText, [ref]$ChildPid) -or $ChildPid -le 0) {
-            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=pid-file-invalid"
-        }
-        return $ChildPid
+    $ValidatorDiagnostic = Get-SafeBrokerValidatorDiagnostic -Diagnostic $Diagnostic
+    if ($ValidatorDiagnostic -ne "unavailable") {
+        return $ValidatorDiagnostic
     }
-    finally {
-        if ($null -ne $Validator) {
-            if ($ValidatorStarted) {
-                $ValidatorExited = $false
-                try { $ValidatorExited = $Validator.HasExited } catch {}
-                if (-not $ValidatorExited) {
-                    try { $Validator.Kill() } catch {}
-                    try { $null = $Validator.WaitForExit(5000) } catch {}
-                }
-            }
-            $Validator.Dispose()
-        }
-        Remove-Item -LiteralPath $ResponsePath, $PayloadPath, $PidPath -Force -ErrorAction SilentlyContinue
+    $Pattern = (
+        '^AACC_BROKER_PROBE code=(?:5|6) reason=(?:' +
+        'launch|communicate|timeout|timeout-reap|target-exit|target-stderr)$'
+    )
+    $Match = [regex]::Match($Diagnostic.Trim(), $Pattern)
+    if ($Match.Success) {
+        return $Match.Value
     }
+    return "unavailable"
 }
 
 function Invoke-BrokerProbe {
@@ -438,47 +376,74 @@ function Invoke-BrokerProbe {
         [int]$ExpectedExitCode = 0
     )
 
-    $Process = New-BrokerTestProcess -CodexPath $CodexPath -BundleDir $BundleDir
-    $Started = $false
+    $PayloadPath = Join-Path $IntegrationRoot ("broker-payload-" + [guid]::NewGuid() + ".txt")
+    $PidPath = Join-Path $IntegrationRoot ("broker-pid-" + [guid]::NewGuid() + ".txt")
+    $DriverPath = Join-Path $Root "tests\native\run_broker_probe.py"
+    $Driver = $null
+    $DriverStarted = $false
     try {
-        if (-not $Process.Start()) {
-            throw "failed to start aacc-spawn integration probe"
+        if (-not (Test-Path -LiteralPath $DriverPath -PathType Leaf)) {
+            throw "broker probe driver is unavailable"
         }
-        $Started = $true
-        $OutputTask = $Process.StandardOutput.ReadToEndAsync()
-        $ErrorTask = $Process.StandardError.ReadToEndAsync()
-        $Request = @{
-            jsonrpc = "2.0"
-            id = $RequestId
-            method = "account/rateLimits/read"
-            payload = $Payload
-        } | ConvertTo-Json -Compress
-        $RequestBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Request + "`n")
-        $Process.StandardInput.BaseStream.Write($RequestBytes, 0, $RequestBytes.Length)
-        $Process.StandardInput.BaseStream.Flush()
-        $Process.StandardInput.BaseStream.Close()
-
-        if (-not $Process.WaitForExit(15000)) {
-            throw "aacc-spawn integration probe timed out"
+        [System.IO.File]::WriteAllText(
+            $PayloadPath, $Payload, [System.Text.UTF8Encoding]::new($false)
+        )
+        $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $StartInfo.FileName = $PythonExecutable
+        $StartInfo.Arguments = (
+            "`"$DriverPath`" --broker `"$BrokerPath`" --codex `"$CodexPath`" " +
+            "--bundle-dir `"$BundleDir`" --payload `"$PayloadPath`" " +
+            "--request-id $RequestId --expected-exit-code $ExpectedExitCode " +
+            "--pid-file `"$PidPath`""
+        )
+        $StartInfo.UseShellExecute = $false
+        $StartInfo.CreateNoWindow = $true
+        $StartInfo.RedirectStandardOutput = $true
+        $StartInfo.RedirectStandardError = $true
+        $Driver = New-Object System.Diagnostics.Process
+        $Driver.StartInfo = $StartInfo
+        if (-not $Driver.Start()) {
+            throw "broker probe failed exit=start-failed diagnostic=unavailable"
         }
-        $Process.WaitForExit()
-        $Output = $OutputTask.GetAwaiter().GetResult().Trim()
-        $ErrorOutput = $ErrorTask.GetAwaiter().GetResult().Trim()
-        if ($Process.ExitCode -ne $ExpectedExitCode) {
-            throw "aacc-spawn did not propagate the target exit code"
+        $DriverStarted = $true
+        $DriverOutputTask = $Driver.StandardOutput.ReadToEndAsync()
+        $DriverErrorTask = $Driver.StandardError.ReadToEndAsync()
+        if (-not $Driver.WaitForExit(25000)) {
+            throw "broker probe failed exit=timeout diagnostic=timeout"
         }
-        if (-not [string]::IsNullOrEmpty($ErrorOutput)) {
-            throw "aacc-spawn emitted unexpected diagnostics on a successful launch"
+        $DriverOutput = $DriverOutputTask.GetAwaiter().GetResult().Trim()
+        $DriverError = $DriverErrorTask.GetAwaiter().GetResult().Trim()
+        $DriverExitCode = $Driver.ExitCode
+        $SafeDiagnostic = Get-SafeBrokerProbeDiagnostic -Diagnostic $DriverError
+        if ($DriverExitCode -ne 0) {
+            throw "broker probe failed exit=$DriverExitCode diagnostic=$SafeDiagnostic"
         }
-
-        $ChildPid = Assert-BrokerResponseJson -Output $Output -Payload $Payload -RequestId $RequestId
+        if (-not [string]::IsNullOrEmpty($DriverOutput)) {
+            throw "broker probe failed exit=$DriverExitCode diagnostic=driver-stdout"
+        }
+        if (-not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
+            throw "broker probe failed exit=$DriverExitCode diagnostic=pid-file-missing"
+        }
+        $ChildPid = 0
+        $ChildPidText = Get-Content -LiteralPath $PidPath -Raw
+        if (-not [int]::TryParse($ChildPidText, [ref]$ChildPid) -or $ChildPid -le 0) {
+            throw "broker probe failed exit=$DriverExitCode diagnostic=pid-file-invalid"
+        }
         Assert-ProcessExited -Id $ChildPid
     }
     finally {
-        if ($Started -and -not $Process.HasExited) {
-            Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        if ($null -ne $Driver) {
+            if ($DriverStarted) {
+                $DriverExited = $false
+                try { $DriverExited = $Driver.HasExited } catch {}
+                if (-not $DriverExited) {
+                    try { $Driver.Kill() } catch {}
+                    try { $null = $Driver.WaitForExit(5000) } catch {}
+                }
+            }
+            $Driver.Dispose()
         }
-        $Process.Dispose()
+        Remove-Item -LiteralPath $PayloadPath, $PidPath -Force -ErrorAction SilentlyContinue
     }
 }
 
