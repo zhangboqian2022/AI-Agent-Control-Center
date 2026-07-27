@@ -18,6 +18,7 @@ UsePreviousAppDir=yes
 UninstallLogMode=append
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+MinVersion=10.0.17763
 CloseApplications=no
 RestartApplications=no
 OutputDir=..\dist\installer
@@ -46,9 +47,13 @@ Name: "{autodesktop}\AACC"; Filename: "{app}\AACC.exe"; WorkingDir: "{app}"; Tas
 Filename: "{app}\AACC.exe"; Description: "启动 AACC / Launch AACC"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent
 
 [Code]
+const
+  AACCWindowTitle = 'AI Agent Control Center';
+
 function ShutdownExistingAACC(var ErrorMessage: String): Boolean;
 var
   AACCPath: String;
+  AACCWindow: HWND;
   ResultCode: Integer;
 begin
   Result := True;
@@ -57,14 +62,28 @@ begin
   if not FileExists(ExpandConstant('{app}\AACC.exe')) then
     Exit;
 
-  if (not Exec(
+  AACCWindow := FindWindowByWindowName(AACCWindowTitle);
+  if AACCWindow = 0 then
+    Exit;
+
+  if not Exec(
     AACCPath,
     '--shutdown-for-update',
     ExpandConstant('{app}'),
     SW_HIDE,
     ewWaitUntilTerminated,
     ResultCode
-  )) or (ResultCode <> 0) then
+  ) then
+  begin
+    ErrorMessage :=
+      'AACC 无法安全退出。请从系统托盘退出 AACC，然后重试。' + #13#10 +
+      'AACC could not exit safely. Exit AACC from the system tray and retry.';
+    Result := False;
+    Exit;
+  end;
+
+  if (ResultCode <> 0) or
+     (FindWindowByWindowName(AACCWindowTitle) <> 0) then
   begin
     ErrorMessage :=
       'AACC 无法安全退出。请从系统托盘退出 AACC，然后重试。' + #13#10 +
