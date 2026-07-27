@@ -145,6 +145,41 @@ function Stop-OwnedProcessIdentity {
     }
 }
 
+function Restore-LiteralFileAfterProcessExit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)]$Identity,
+        [int]$TimeoutSeconds = 5
+    )
+    Assert-True (-not (Test-ProcessIdentityAlive -Identity $Identity)) `
+        "refusing to restore a fixture while its exact process identity is alive"
+    $SourceHash = (
+        Get-FileHash -LiteralPath $Source -Algorithm SHA256
+    ).Hash
+    $Deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ($true) {
+        try {
+            [System.IO.File]::Copy($Source, $Destination, $true)
+            $DestinationHash = (
+                Get-FileHash -LiteralPath $Destination -Algorithm SHA256
+            ).Hash
+            Assert-True ($DestinationHash -ceq $SourceHash) `
+                "restored fixture hash does not match its saved source"
+            return
+        }
+        catch [System.IO.IOException] {
+            $Win32Code = $_.Exception.HResult -band 0xFFFF
+            if ($Win32Code -notin @(32, 33) -or [DateTime]::UtcNow -ge $Deadline) {
+                throw
+            }
+            # Windows can retain a terminated image mapping briefly while
+            # Defender or another filter driver closes its final handle.
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
+
 function Register-OwnedIdentity {
     param([Parameter(Mandatory = $true)]$Identity)
     [void]$OwnedProcessRegistry.Add($Identity)
@@ -1482,7 +1517,8 @@ function Test-InstalledControlRefusal {
     finally {
         Stop-OwnedProcessIdentity -Identity $Legacy.Identity
         $Legacy.Process.Dispose()
-        Copy-Item -LiteralPath $SavedAacc -Destination $InstalledAacc -Force
+        Restore-LiteralFileAfterProcessExit -Source $SavedAacc `
+            -Destination $InstalledAacc -Identity $Legacy.Identity
         [System.IO.Directory]::CreateDirectory((Split-Path -Parent $CapabilityPath)) | Out-Null
         [System.IO.File]::WriteAllText($CapabilityPath, "AACC shutdown protocol v1`n")
         Remove-Item Env:AACC_LEGACY_CONTROL_MODE -ErrorAction SilentlyContinue
