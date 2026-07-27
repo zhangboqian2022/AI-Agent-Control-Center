@@ -209,7 +209,6 @@ function New-BrokerTestProcess {
     $StartInfo.RedirectStandardInput = $true
     $StartInfo.RedirectStandardOutput = $true
     $StartInfo.RedirectStandardError = $true
-    $StartInfo.StandardInputEncoding = New-Object System.Text.UTF8Encoding($false)
     $StartInfo.EnvironmentVariables["AACC_BROKER_CODEX_TARGET"] = (
         "C:\malicious inherited target\not-codex.cmd"
     )
@@ -454,8 +453,10 @@ function Invoke-BrokerProbe {
             method = "account/rateLimits/read"
             payload = $Payload
         } | ConvertTo-Json -Compress
-        $Process.StandardInput.WriteLine($Request)
-        $Process.StandardInput.Close()
+        $RequestBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Request + "`n")
+        $Process.StandardInput.BaseStream.Write($RequestBytes, 0, $RequestBytes.Length)
+        $Process.StandardInput.BaseStream.Flush()
+        $Process.StandardInput.BaseStream.Close()
 
         if (-not $Process.WaitForExit(15000)) {
             throw "aacc-spawn integration probe timed out"
@@ -633,7 +634,7 @@ try {
         throw "failed to start descendant-tree broker probe"
     }
     $DescendantBrokerStarted = $true
-    $DescendantBroker.StandardInput.Close()
+    $DescendantBroker.StandardInput.BaseStream.Close()
 
     $Deadline = [DateTime]::UtcNow.AddSeconds(15)
     $DescendantPids = @()

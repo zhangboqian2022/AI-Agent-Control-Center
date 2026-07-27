@@ -64,8 +64,12 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     assert "Get-SafeBrokerValidatorDiagnostic" in script
     assert "RedirectStandardOutput" in script
     assert "RedirectStandardError" in script
-    assert "$StartInfo.StandardInputEncoding" in script
-    assert "New-Object System.Text.UTF8Encoding($false)" in script
+    assert "$StartInfo.StandardInputEncoding" not in script
+    assert "$Process.StandardInput.WriteLine($Request)" not in script
+    assert '[System.Text.UTF8Encoding]::new($false).GetBytes($Request + "`n")' in script
+    assert "$Process.StandardInput.BaseStream.Write" in script
+    assert "$Process.StandardInput.BaseStream.Close()" in script
+    assert "$DescendantBroker.StandardInput.BaseStream.Close()" in script
     assert "broker JSON validation failed exit=" in script
     validator_function = script.index("function Assert-BrokerResponseJson")
     validator_try = script.index("try {", validator_function)
