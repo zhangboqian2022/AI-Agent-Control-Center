@@ -14,6 +14,7 @@ _SID_PATTERN = re.compile(r"\bS-\d+(?:-\d+)+\b")
 _COMMAND_TIMEOUT_SECONDS = 5.0
 _LOCAL_SYSTEM_SID = "S-1-5-18"
 _ADMINISTRATORS_SID = "S-1-5-32-544"
+_OWNER_RIGHTS_SID = "S-1-3-4"
 
 
 class FileProtectionError(RuntimeError):
@@ -40,6 +41,8 @@ def protect_file(
                 "icacls",
                 str(path),
                 "/inheritance:r",
+                "/remove:g",
+                f"*{_OWNER_RIGHTS_SID}",
                 "/grant:r",
                 f"*{user_sid}:(F)",
                 f"*{_LOCAL_SYSTEM_SID}:(F)",

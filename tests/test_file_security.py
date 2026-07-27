@@ -34,6 +34,8 @@ def test_windows_acl_uses_numeric_sids_without_shell(tmp_path: Path) -> None:
             "icacls",
             str(path),
             "/inheritance:r",
+            "/remove:g",
+            "*S-1-3-4",
             "/grant:r",
             "*S-1-5-21-1-2-3-1001:(F)",
             "*S-1-5-18:(F)",
