@@ -19,6 +19,12 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from aacc.automation import MacAutomation  # noqa: E402
 from aacc.automation_executor import AutomationExecutor  # noqa: E402
+from aacc.codex_quota import (  # noqa: E402
+    CodexQuotaSnapshot,
+    CodexQuotaStatus,
+    CodexQuotaWindow,
+)
+from aacc.codex_quota_service import CodexQuotaService  # noqa: E402
 from aacc.config import default_config  # noqa: E402
 from aacc.gui import MainWindow  # noqa: E402
 from aacc.kimi_oauth import save_credentials  # noqa: E402
@@ -85,7 +91,13 @@ def _demo_quota() -> KimiQuota:
             reset_at=datetime.now(UTC) + timedelta(hours=2, minutes=40),
             percentage=30,
         ),
-        total_quota=QuotaDetail(used=0, limit=0, remaining=0, reset_at=None, percentage=0),
+        monthly=QuotaDetail(
+            used=36,
+            limit=100,
+            remaining=64,
+            reset_at=datetime.now(UTC) + timedelta(days=28),
+            percentage=36,
+        ),
         membership_level="LEVEL_ADVANCED",
         booster=BoosterWallet(status="STATUS_ACTIVE", is_enabled=True, balance_yuan=3.15),
     )
@@ -103,12 +115,29 @@ def main() -> int:
     quota_config_dir = tmp / "quota"
     save_credentials(quota_config_dir, {"auth_method": "api_key", "api_key": "sk-demo"})
     quota_service = QuotaService(quota_config_dir, version="demo", interval_seconds=3600)
+    codex_snapshot = CodexQuotaSnapshot(
+        weekly=CodexQuotaWindow(
+            used_percent=9,
+            window_minutes=10_080,
+            resets_at=datetime.now(UTC) + timedelta(days=6),
+        ),
+        observed_at=datetime.now(UTC),
+        status=CodexQuotaStatus.OK,
+        plan_type="prolite",
+    )
+
+    class DemoCodexReader:
+        def read_latest(self) -> CodexQuotaSnapshot:
+            return codex_snapshot
+
+    codex_quota_service = CodexQuotaService(DemoCodexReader(), interval_seconds=3600)
     window = MainWindow(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
         settings=QSettings(str(tmp / "s.ini"), QSettings.Format.IniFormat),
         quota_service=quota_service,
+        codex_quota_service=codex_quota_service,
         open_url=lambda _url: None,
     )
 
@@ -138,6 +167,7 @@ def main() -> int:
 
     window.show()
     quota_service.quota_updated.emit(_demo_quota())
+    codex_quota_service.quota_updated.emit(codex_snapshot)
     window.resize(window.sizeHint())
     app.processEvents()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

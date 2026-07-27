@@ -10,7 +10,7 @@ from aacc.codex_quota import (
     CodexQuotaStatus,
     CodexQuotaWindow,
 )
-from aacc.gui import CodexQuotaBar
+from aacc.gui import CodexQuotaBar, format_quota_reset
 
 NOW = datetime(2026, 7, 24, 14, 0, tzinfo=UTC)
 
@@ -33,7 +33,10 @@ def test_codex_bar_shows_weekly_window_only(qapp):
 
     bar.show_quota(snapshot())
 
-    assert bar.weekly_label.text() == "周 9%"
+    assert bar.period_labels() == ["WEEK"]
+    assert bar.percent_labels() == ["9%"]
+    assert bar.reset_labels() == [format_quota_reset(snapshot().weekly.resets_at)]
+    assert bar.metric_row_count() == 1
     assert bar.weekly_bar.value() == 9
     assert not hasattr(bar, "five_hour_label")
     assert "prolite" in bar.toolTip()
@@ -51,7 +54,9 @@ def test_codex_bar_unknown_does_not_display_zero_percent(qapp):
     bar.show_quota(unknown)
 
     assert "数据不可用" in bar.summary_label.text()
-    assert bar.weekly_label.text() == "周 --"
+    assert bar.period_labels() == ["WEEK"]
+    assert bar.percent_labels() == ["--"]
+    assert bar.reset_labels() == ["--"]
     assert "0%" not in bar.toolTip()
 
 
@@ -62,7 +67,7 @@ def test_codex_bar_error_preserves_last_value_and_marks_stale(qapp):
     bar.show_error("read failed")
 
     assert "数据过期" in bar.summary_label.text()
-    assert bar.weekly_label.text() == "周 27%"
+    assert bar.percent_labels() == ["27%"]
     assert "read failed" in bar.toolTip()
 
 
@@ -74,3 +79,16 @@ def test_codex_bar_click_emits_refresh(qapp):
     QTest.mouseClick(bar, Qt.MouseButton.LeftButton)
 
     assert clicks == [True]
+
+
+def test_codex_metric_labels_do_not_overlap_at_default_panel_width(qapp):
+    bar = CodexQuotaBar()
+    bar.resize(420, bar.sizeHint().height())
+    bar.show_quota(snapshot())
+    bar.show()
+    qapp.processEvents()
+
+    for percent_label, reset_label in bar.metric_label_pairs():
+        percent_right = percent_label.mapTo(bar, percent_label.rect().topRight()).x()
+        reset_left = reset_label.mapTo(bar, reset_label.rect().topLeft()).x()
+        assert percent_right < reset_left

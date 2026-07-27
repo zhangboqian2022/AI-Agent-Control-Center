@@ -29,6 +29,9 @@
 #quotaBar { background: rgba(255, 255, 255, 0.04); border-radius: 8px; }
 #quotaSummary { color: #d9e2ef; font-size: 11px; font-weight: 700; }
 #quotaText { color: #8997aa; font-size: 10px; }
+#quotaPeriod { color: #a8b5c8; font-size: 9px; font-weight: 800; }
+#quotaPercent { color: #d9e2ef; font-family: Menlo; font-size: 9px; font-weight: 700; }
+#quotaReset { color: #8997aa; font-size: 9px; }
 #quotaBalance { color: #e5c07b; font-size: 10px; font-weight: 700; }
 #quotaProgress { background: rgba(255, 255, 255, 0.08); border: none; border-radius: 2px; }
 #quotaProgress::chunk { background: #4d9fff; border-radius: 2px; }

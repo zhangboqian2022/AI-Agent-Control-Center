@@ -4,7 +4,8 @@ import json
 import logging
 from collections.abc import Callable
 from concurrent.futures import Future
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, tzinfo
 from importlib import resources
 from pathlib import PurePath
 
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QGraphicsOpacityEffect,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -115,6 +117,17 @@ STATUS_NAMES = {
 STATUS_LIGHT_FONT_SIZE = 64
 
 
+def format_quota_reset(
+    reset_at: datetime | None,
+    *,
+    local_zone: tzinfo | None = None,
+) -> str:
+    if reset_at is None:
+        return "--"
+    local = reset_at.astimezone(local_zone)
+    return f"{local.month}月{local.day}日 {local.hour:02d}:{local.minute:02d} 重置"
+
+
 def load_stylesheet() -> str:
     return resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
 
@@ -168,6 +181,56 @@ class ElidedLabel(QLabel):
         )
 
 
+@dataclass(frozen=True)
+class _QuotaMetricRow:
+    period_label: QLabel
+    percent_label: QLabel
+    progress_bar: QProgressBar
+    reset_label: QLabel
+
+
+def _add_quota_metric_row(
+    layout: QGridLayout,
+    row_index: int,
+    period: str,
+) -> _QuotaMetricRow:
+    period_label = QLabel(period)
+    period_label.setObjectName("quotaPeriod")
+    period_label.setMinimumWidth(38)
+    percent_label = QLabel("--")
+    percent_label.setObjectName("quotaPercent")
+    percent_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    percent_label.setMinimumWidth(30)
+    progress_bar = QProgressBar()
+    progress_bar.setObjectName("quotaProgress")
+    progress_bar.setRange(0, 100)
+    progress_bar.setTextVisible(False)
+    progress_bar.setFixedHeight(5)
+    progress_bar.setMinimumWidth(64)
+    progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    reset_label = QLabel("--")
+    reset_label.setObjectName("quotaReset")
+    reset_label.setMinimumWidth(112)
+    reset_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    layout.addWidget(period_label, row_index, 0)
+    layout.addWidget(percent_label, row_index, 1)
+    layout.addWidget(progress_bar, row_index, 2)
+    layout.addWidget(reset_label, row_index, 3)
+    return _QuotaMetricRow(period_label, percent_label, progress_bar, reset_label)
+
+
+def _set_quota_metric(
+    row: _QuotaMetricRow,
+    percentage: int | None,
+    reset_at: datetime | None,
+) -> None:
+    unknown = percentage is None
+    row.percent_label.setText("--" if unknown else f"{percentage}%")
+    row.progress_bar.setValue(0 if percentage is None else percentage)
+    row.progress_bar.setProperty("unknown", unknown)
+    row.reset_label.setText(format_quota_reset(reset_at) if not unknown else "--")
+
+
 class QuotaBar(QFrame):
     """Kimi account quota strip shown above the task list."""
 
@@ -179,84 +242,99 @@ class QuotaBar(QFrame):
         self._last_quota_tooltip = ""
         self.setObjectName("quotaBar")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout = QHBoxLayout(self)
+        layout = QGridLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(7)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(2)
         self.dot = QLabel("●")
         self.dot.setObjectName("quotaDot")
-        layout.addWidget(self.dot)
+        layout.addWidget(self.dot, 0, 0, Qt.AlignmentFlag.AlignTop)
         self.summary_label = QLabel("Kimi 额度")
         self.summary_label.setObjectName("quotaSummary")
-        layout.addWidget(self.summary_label)
-        layout.addSpacing(4)
-        self.weekly_label = QLabel("周 --")
-        self.weekly_label.setObjectName("quotaText")
-        layout.addWidget(self.weekly_label)
-        self.weekly_bar = QProgressBar()
-        self.weekly_bar.setObjectName("quotaProgress")
-        self.weekly_bar.setRange(0, 100)
-        self.weekly_bar.setTextVisible(False)
-        self.weekly_bar.setFixedSize(56, 5)
-        layout.addWidget(self.weekly_bar)
-        self.five_hour_label = QLabel("5h --")
-        self.five_hour_label.setObjectName("quotaText")
-        layout.addWidget(self.five_hour_label)
-        self.five_hour_bar = QProgressBar()
-        self.five_hour_bar.setObjectName("quotaProgress")
-        self.five_hour_bar.setRange(0, 100)
-        self.five_hour_bar.setTextVisible(False)
-        self.five_hour_bar.setFixedSize(56, 5)
-        layout.addWidget(self.five_hour_bar)
-        layout.addStretch()
+        self.summary_label.setFixedWidth(66)
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label, 0, 1, Qt.AlignmentFlag.AlignTop)
         self.balance_label = QLabel("")
         self.balance_label.setObjectName("quotaBalance")
-        layout.addWidget(self.balance_label)
+        layout.addWidget(self.balance_label, 1, 1, 1, 1, Qt.AlignmentFlag.AlignTop)
+
+        metric_layout = QGridLayout()
+        metric_layout.setContentsMargins(0, 0, 0, 0)
+        metric_layout.setHorizontalSpacing(6)
+        metric_layout.setVerticalSpacing(2)
+        metric_layout.setColumnMinimumWidth(0, 38)
+        metric_layout.setColumnMinimumWidth(1, 30)
+        metric_layout.setColumnMinimumWidth(2, 64)
+        metric_layout.setColumnMinimumWidth(3, 112)
+        metric_layout.setColumnStretch(2, 1)
+        layout.addLayout(metric_layout, 0, 2, 3, 1)
+        layout.setColumnStretch(2, 1)
+
+        self._five_hour_row = _add_quota_metric_row(metric_layout, 0, "5H")
+        self._weekly_row = _add_quota_metric_row(metric_layout, 1, "WEEK")
+        self._monthly_row = _add_quota_metric_row(metric_layout, 2, "MONTH")
+        self._metric_rows = [
+            self._five_hour_row,
+            self._weekly_row,
+            self._monthly_row,
+        ]
+        self.five_hour_label = self._five_hour_row.percent_label
+        self.five_hour_bar = self._five_hour_row.progress_bar
+        self.weekly_label = self._weekly_row.percent_label
+        self.weekly_bar = self._weekly_row.progress_bar
+        self.monthly_label = self._monthly_row.percent_label
+        self.monthly_bar = self._monthly_row.progress_bar
         self.show_unauthorized()
+
+    def period_labels(self) -> list[str]:
+        return [row.period_label.text() for row in self._metric_rows]
+
+    def percent_labels(self) -> list[str]:
+        return [row.percent_label.text() for row in self._metric_rows]
+
+    def reset_labels(self) -> list[str]:
+        return [row.reset_label.text() for row in self._metric_rows]
+
+    def metric_row_count(self) -> int:
+        return len(self._metric_rows)
+
+    def metric_label_pairs(self) -> list[tuple[QLabel, QLabel]]:
+        return [(row.percent_label, row.reset_label) for row in self._metric_rows]
 
     def show_unauthorized(self) -> None:
         self._has_known_quota = False
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #e06c75;")
-        self.summary_label.setText("Kimi 额度 · 点击授权")
-        self.weekly_label.setText("周 --")
-        self.five_hour_label.setText("5h --")
-        self.weekly_bar.setValue(0)
-        self.five_hour_bar.setValue(0)
+        self.summary_label.setText("Kimi 额度\n点击授权")
+        for row in self._metric_rows:
+            _set_quota_metric(row, None, None)
         self.balance_label.setText("")
         self.setToolTip("点击通过 Kimi 官方设备授权登录，查询账户额度")
 
     def show_pending(self) -> None:
         self.dot.setStyleSheet("color: #e5c07b;")
-        self.summary_label.setText("Kimi 额度 · 授权中…")
+        self.summary_label.setText("Kimi 额度\n授权中…")
 
     def show_quota(self, quota: KimiQuota) -> None:
         self._has_known_quota = quota.status is not QuotaStatus.UNKNOWN
         if quota.status is QuotaStatus.UNKNOWN:
             self.dot.setStyleSheet("color: #8997aa;")
-            self.summary_label.setText("Kimi 额度 · 数据不可用")
+            self.summary_label.setText("Kimi 额度\n数据不可用")
         elif quota.status is QuotaStatus.PARTIAL:
             self.dot.setStyleSheet("color: #e5c07b;")
-            self.summary_label.setText("Kimi 额度 · 部分数据")
+            self.summary_label.setText("Kimi 额度\n部分数据")
         else:
             self.dot.setStyleSheet("color: #98c379;")
             self.summary_label.setText("Kimi 额度")
-        self._show_detail(
-            self.weekly_label,
-            self.weekly_bar,
-            "周",
-            quota.weekly,
-        )
-        self._show_detail(
-            self.five_hour_label,
-            self.five_hour_bar,
-            "5h",
-            quota.five_hour,
-        )
+        self._show_detail(self._five_hour_row, quota.five_hour)
+        self._show_detail(self._weekly_row, quota.weekly)
+        self._show_detail(self._monthly_row, quota.monthly)
         balance = format_balance(quota.booster.balance_yuan) if quota.booster is not None else ""
         self.balance_label.setText(balance)
         tooltip_lines = [
-            self._detail_tooltip("每周额度", quota.weekly),
             self._detail_tooltip("5 小时额度", quota.five_hour),
+            self._detail_tooltip("每周额度", quota.weekly),
+            self._detail_tooltip("每月额度", quota.monthly),
         ]
         if quota.membership_level:
             tooltip_lines.append(f"会员等级：{quota.membership_level}")
@@ -271,25 +349,18 @@ class QuotaBar(QFrame):
     def show_error(self, message: str) -> None:
         self.dot.setStyleSheet("color: #8997aa;")
         if self._has_known_quota:
-            self.summary_label.setText("Kimi 额度 · 数据过期")
+            self.summary_label.setText("Kimi 额度\n数据过期")
         else:
-            self.summary_label.setText("Kimi 额度 · 数据不可用")
+            self.summary_label.setText("Kimi 额度\n数据不可用")
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         self.setToolTip(f"{previous}额度刷新失败：{message}\n点击重试")
 
     @staticmethod
-    def _show_detail(
-        label: QLabel,
-        progress: QProgressBar,
-        prefix: str,
-        detail: QuotaDetail | None,
-    ) -> None:
+    def _show_detail(row: _QuotaMetricRow, detail: QuotaDetail | None) -> None:
         if detail is None:
-            label.setText(f"{prefix} --")
-            progress.setValue(0)
+            _set_quota_metric(row, None, None)
             return
-        label.setText(f"{prefix} {detail.percentage}%")
-        progress.setValue(detail.percentage)
+        _set_quota_metric(row, detail.percentage, detail.reset_at)
 
     @staticmethod
     def _detail_tooltip(name: str, detail: QuotaDetail | None) -> str:
@@ -304,7 +375,7 @@ class QuotaBar(QFrame):
 
 
 class CodexQuotaBar(QFrame):
-    """Read-only Codex weekly quota sourced from local session metadata."""
+    """Read-only Codex weekly quota from live account data or local metadata."""
 
     clicked = Signal()
 
@@ -314,36 +385,56 @@ class CodexQuotaBar(QFrame):
         self._last_quota_tooltip = ""
         self.setObjectName("quotaBar")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout = QHBoxLayout(self)
+        layout = QGridLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(7)
+        layout.setHorizontalSpacing(6)
         self.dot = QLabel("●")
         self.dot.setObjectName("quotaDot")
-        layout.addWidget(self.dot)
+        layout.addWidget(self.dot, 0, 0)
         self.summary_label = QLabel("Codex 额度")
         self.summary_label.setObjectName("quotaSummary")
-        layout.addWidget(self.summary_label)
-        layout.addSpacing(4)
-        self.weekly_label = QLabel("周 --")
-        self.weekly_label.setObjectName("quotaText")
-        layout.addWidget(self.weekly_label)
-        self.weekly_bar = QProgressBar()
-        self.weekly_bar.setObjectName("quotaProgress")
-        self.weekly_bar.setRange(0, 100)
-        self.weekly_bar.setTextVisible(False)
-        self.weekly_bar.setFixedSize(56, 5)
-        layout.addWidget(self.weekly_bar)
-        layout.addStretch()
+        self.summary_label.setFixedWidth(66)
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label, 0, 1)
+
+        metric_layout = QGridLayout()
+        metric_layout.setContentsMargins(0, 0, 0, 0)
+        metric_layout.setHorizontalSpacing(6)
+        metric_layout.setColumnMinimumWidth(0, 38)
+        metric_layout.setColumnMinimumWidth(1, 30)
+        metric_layout.setColumnMinimumWidth(2, 64)
+        metric_layout.setColumnMinimumWidth(3, 112)
+        metric_layout.setColumnStretch(2, 1)
+        layout.addLayout(metric_layout, 0, 2)
+        layout.setColumnStretch(2, 1)
+        self._weekly_row = _add_quota_metric_row(metric_layout, 0, "WEEK")
+        self._metric_rows = [self._weekly_row]
+        self.weekly_label = self._weekly_row.percent_label
+        self.weekly_bar = self._weekly_row.progress_bar
         self.show_unknown()
+
+    def period_labels(self) -> list[str]:
+        return [row.period_label.text() for row in self._metric_rows]
+
+    def percent_labels(self) -> list[str]:
+        return [row.percent_label.text() for row in self._metric_rows]
+
+    def reset_labels(self) -> list[str]:
+        return [row.reset_label.text() for row in self._metric_rows]
+
+    def metric_row_count(self) -> int:
+        return len(self._metric_rows)
+
+    def metric_label_pairs(self) -> list[tuple[QLabel, QLabel]]:
+        return [(row.percent_label, row.reset_label) for row in self._metric_rows]
 
     def show_unknown(self) -> None:
         self._has_known_quota = False
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #8997aa;")
-        self.summary_label.setText("Codex 额度 · 数据不可用")
-        self.weekly_label.setText("周 --")
-        self.weekly_bar.setValue(0)
-        self.setToolTip("尚未在本机 Codex 会话中发现有效周额度；点击重新扫描")
+        self.summary_label.setText("Codex 额度\n数据不可用")
+        _set_quota_metric(self._weekly_row, None, None)
+        self.setToolTip("尚未发现有效 Codex 周额度；点击重新读取")
 
     def show_quota(self, quota: CodexQuotaSnapshot) -> None:
         if quota.status is CodexQuotaStatus.UNKNOWN or quota.weekly is None:
@@ -352,8 +443,11 @@ class CodexQuotaBar(QFrame):
         self._has_known_quota = True
         self.dot.setStyleSheet("color: #98c379;")
         self.summary_label.setText("Codex 额度")
-        self.weekly_label.setText(f"周 {quota.weekly.used_percent}%")
-        self.weekly_bar.setValue(quota.weekly.used_percent)
+        _set_quota_metric(
+            self._weekly_row,
+            quota.weekly.used_percent,
+            quota.weekly.resets_at,
+        )
         tooltip_lines = [
             f"每周已用：{quota.weekly.used_percent}%"
             f"（{format_reset_countdown(quota.weekly.resets_at)}）"
@@ -362,16 +456,16 @@ class CodexQuotaBar(QFrame):
             tooltip_lines.append(f"套餐：{quota.plan_type}")
         if quota.observed_at is not None:
             tooltip_lines.append(f"本机观测：{quota.observed_at.astimezone().strftime('%H:%M:%S')}")
-        tooltip_lines.append("点击重新扫描本机 Codex 额度元数据")
+        tooltip_lines.append("点击刷新 Codex 周额度")
         self._last_quota_tooltip = "\n".join(tooltip_lines)
         self.setToolTip(self._last_quota_tooltip)
 
     def show_error(self, message: str) -> None:
         self.dot.setStyleSheet("color: #8997aa;")
         if self._has_known_quota:
-            self.summary_label.setText("Codex 额度 · 数据过期")
+            self.summary_label.setText("Codex 额度\n数据过期")
         else:
-            self.summary_label.setText("Codex 额度 · 数据不可用")
+            self.summary_label.setText("Codex 额度\n数据不可用")
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         self.setToolTip(f"{previous}额度读取失败：{message}\n点击重试")
 
