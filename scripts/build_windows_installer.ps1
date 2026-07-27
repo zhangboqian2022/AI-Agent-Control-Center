@@ -126,6 +126,57 @@ foreach ($RootItem in $RootItems) {
     }
 }
 
+$InternalRoot = Join-Path $OnedirRoot "_internal"
+$ManifestBuildRoot = Join-Path $Root "build\installer"
+$InternalManifestPath = Join-Path $ManifestBuildRoot "internal-manifest-v1.txt"
+[System.IO.Directory]::CreateDirectory($ManifestBuildRoot) | Out-Null
+$ManifestLines = New-Object System.Collections.Generic.List[string]
+$ManifestPathKeys = New-Object 'System.Collections.Generic.HashSet[string]' `
+    -ArgumentList ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($InternalItem in @(Get-ChildItem -LiteralPath $InternalRoot -Force -Recurse)) {
+    if (($InternalItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Windows internal payload contains a reparse point"
+    }
+    $Relative = $InternalItem.FullName.Substring($InternalRoot.Length + 1).Replace("\", "/")
+    if (
+        [string]::IsNullOrWhiteSpace($Relative) -or
+        $Relative.Contains("`r") -or
+        $Relative.Contains("`n")
+    ) {
+        throw "Windows internal payload contains an invalid manifest path"
+    }
+    if (-not $ManifestPathKeys.Add($Relative)) {
+        throw "Windows internal payload contains a case-insensitive path collision"
+    }
+    if ($InternalItem.PSIsContainer) {
+        $ManifestLines.Add("D $Relative/")
+    }
+    else {
+        $ManifestLines.Add("F $Relative")
+    }
+}
+if ($ManifestLines.Count -eq 0) {
+    throw "Windows internal payload manifest is empty"
+}
+[string[]]$SortedManifestLines = $ManifestLines.ToArray()
+[Array]::Sort($SortedManifestLines, [System.StringComparer]::Ordinal)
+$ManifestEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+$ManifestText = ($SortedManifestLines -join "`n") + "`n"
+[System.IO.File]::WriteAllText($InternalManifestPath, $ManifestText, $ManifestEncoding)
+$ManifestBytes = [System.IO.File]::ReadAllBytes($InternalManifestPath)
+if (
+    $ManifestBytes.Length -eq 0 -or
+    (
+        $ManifestBytes.Length -ge 3 -and
+        $ManifestBytes[0] -eq 0xEF -and
+        $ManifestBytes[1] -eq 0xBB -and
+        $ManifestBytes[2] -eq 0xBF
+    ) -or
+    $ManifestText.Contains("`r")
+) {
+    throw "Windows internal payload manifest encoding is invalid"
+}
+
 $VersionOutput = @(& uv version --short)
 if ($LASTEXITCODE -ne 0) {
     throw "project version query failed"
@@ -184,15 +235,35 @@ else {
         Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse
     )
     if ($IsccCandidates.Count -eq 0) {
-        & $BootstrapPath `
-            /PORTABLE=1 `
-            /VERYSILENT `
-            /CURRENTUSER `
-            /NOICONS `
-            /NORESTART `
-            /SP- `
-            "/DIR=$InnoRoot"
-        if ($LASTEXITCODE -ne 0) {
+        $BootstrapArguments = @(
+            "/PORTABLE=1"
+            "/VERYSILENT"
+            "/CURRENTUSER"
+            "/NOICONS"
+            "/NORESTART"
+            "/SP-"
+            ('/DIR="' + $InnoRoot + '"')
+        )
+        $BootstrapProcess = Start-Process -FilePath $BootstrapPath `
+            -ArgumentList $BootstrapArguments -PassThru
+        try {
+            if (-not $BootstrapProcess.WaitForExit(120000)) {
+                if (-not $BootstrapProcess.HasExited) {
+                    $BootstrapProcess.Kill()
+                    if (-not $BootstrapProcess.WaitForExit(5000)) {
+                        throw "Inno Setup bootstrap cleanup timed out"
+                    }
+                }
+                throw "Inno Setup bootstrap timed out"
+            }
+            if ($BootstrapProcess.ExitCode -ne 0) {
+                throw "Inno Setup bootstrap failed"
+            }
+        }
+        finally {
+            $BootstrapProcess.Dispose()
+        }
+        if (-not (Test-Path -LiteralPath $InnoRoot -PathType Container)) {
             throw "Inno Setup bootstrap failed"
         }
         $IsccCandidates = @(

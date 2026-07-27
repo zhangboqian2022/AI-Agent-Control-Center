@@ -100,13 +100,19 @@ def verify_portable(portable_path: Path, built_root: Path) -> None:
             seen_windows_keys.add(windows_key)
             if member.parts[0] != "AACC":
                 raise ValueError("unexpected ZIP top-level entry")
+            mode = (info.external_attr >> 16) & 0xFFFF
+            file_type = stat.S_IFMT(mode)
+            if stat.S_ISLNK(mode):
+                raise ValueError("ZIP symlink is forbidden")
+            if file_type and not (
+                (info.is_dir() and file_type == stat.S_IFDIR)
+                or (not info.is_dir() and file_type == stat.S_IFREG)
+            ):
+                raise ValueError("ZIP member type is unsupported")
             if len(member.parts) == 1:
                 if not info.is_dir():
                     raise ValueError("AACC ZIP root must be a directory")
                 continue
-            mode = (info.external_attr >> 16) & 0xFFFF
-            if stat.S_ISLNK(mode):
-                raise ValueError("ZIP symlink is forbidden")
             relative = PurePosixPath(*member.parts[1:])
             if info.is_dir():
                 archive_directories.add(relative.as_posix())

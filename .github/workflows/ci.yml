@@ -49,13 +49,9 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: test -d dist/AACC.app
 
-  windows-package:
+  windows-frozen-2022:
     needs: [quality]
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2022, windows-2025-vs2026]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-2022
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -67,17 +63,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
       - name: Build Windows app without Setup
-        if: matrix.os == 'windows-2022'
         shell: pwsh
         env:
           AACC_SKIP_INSTALLER: 1
         run: ./scripts/build_windows.ps1
-      - name: Build Windows app and Setup
-        if: matrix.os == 'windows-2025-vs2026'
-        shell: pwsh
-        run: ./scripts/build_windows.ps1
       - name: Assert Windows executable and modules
-        if: startsWith(matrix.os, 'windows-')
         shell: pwsh
         run: |
           if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
@@ -87,67 +77,59 @@ jobs:
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
       - name: Smoke frozen Windows product
-        if: matrix.os == 'windows-2022'
         shell: pwsh
         run: ./scripts/test_windows_package.ps1 -FrozenOnly
-      - name: Smoke frozen and installed Windows product
-        if: matrix.os == 'windows-2025-vs2026'
-        shell: pwsh
-        run: ./scripts/test_windows_package.ps1
-      - name: Package verified Windows portable app
-        shell: pwsh
-        run: |
-          $version = uv version --short
-          $archive = "AACC-$version-windows-x64-${{ matrix.os }}.zip"
-          Compress-Archive -Path "dist\AACC" -DestinationPath $archive -Force
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $entries = [System.IO.Compression.ZipFile]::OpenRead($archive).Entries.FullName
-          if ($entries -notcontains "AACC/AACC.exe") { throw "AACC.exe missing from $archive" }
-      - name: Stage verified Windows outputs
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path "build\verified-output\dist" -Force | Out-Null
-          Copy-Item -LiteralPath "dist\AACC" -Destination "build\verified-output\dist" -Recurse
-          Copy-Item -Path "AACC-*-windows-x64-${{ matrix.os }}.zip" -Destination "build\verified-output"
-          if ("${{ matrix.os }}" -eq "windows-2025-vs2026") {
-            Copy-Item -Path "dist\installer\AACC-*-Setup.exe" -Destination "build\verified-output"
-            Copy-Item -Path "dist\installer\AACC-*-Setup.exe.sha256" -Destination "build\verified-output"
-          }
-      - name: Upload verified matrix output
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-verified-${{ matrix.os }}
-          path: build/verified-output
-          if-no-files-found: error
       - name: Upload Windows smoke diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-smoke-${{ matrix.os }}
+          name: windows-smoke-windows-2022
           path: |
             build/windows-smoke
             build/native/*.txt
-            dist/installer/*.log
           if-no-files-found: warn
 
-  publish-windows-artifacts:
-    needs: [windows-package]
+  windows-package-2025:
+    needs: [quality, windows-frozen-2022]
     runs-on: windows-2025-vs2026
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-      - name: Download verified Windows Server output
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-verified-windows-2025-vs2026
-          path: verified
-      - name: Revalidate checksum, ZIP layout, and onedir hashes
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+      - name: Build Windows app and Setup
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Assert Windows executable and modules
         shell: pwsh
         run: |
-          $setup = @(Get-ChildItem -LiteralPath "verified" -Filter "AACC-*-Setup.exe" -File)
-          $checksum = @(Get-ChildItem -LiteralPath "verified" -Filter "AACC-*-Setup.exe.sha256" -File)
-          $portable = @(Get-ChildItem -LiteralPath "verified" -Filter "AACC-*-windows-x64-windows-2025-vs2026.zip" -File)
+          if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
+          if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
+          $listing = (uv run pyi-archive_viewer -r "dist\AACC\AACC.exe" | Out-String)
+          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker")) {
+            if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
+          }
+      - name: Smoke frozen and installed Windows product
+        shell: pwsh
+        run: ./scripts/test_windows_package.ps1
+      - name: Package and strictly verify primary artifacts
+        shell: pwsh
+        run: |
+          $version = uv version --short
+          $artifactRoot = "build\windows-smoke\artifact 验证 &() %! [x]"
+          New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
+          $portablePath = Join-Path $artifactRoot "AACC-$version-windows-x64-windows-2025-vs2026.zip"
+          Compress-Archive -Path "dist\AACC" -DestinationPath $portablePath -Force
+          Copy-Item -LiteralPath "dist\installer\AACC-$version-Setup.exe" -Destination $artifactRoot
+          Copy-Item -LiteralPath "dist\installer\AACC-$version-Setup.exe.sha256" -Destination $artifactRoot
+          $setup = @(Get-ChildItem -LiteralPath $artifactRoot -Filter "AACC-*-Setup.exe" -File)
+          $checksum = @(Get-ChildItem -LiteralPath $artifactRoot -Filter "AACC-*-Setup.exe.sha256" -File)
+          $portable = @(Get-ChildItem -LiteralPath $artifactRoot -Filter "AACC-*-windows-x64-windows-2025-vs2026.zip" -File)
           if ($setup.Count -ne 1 -or $checksum.Count -ne 1 -or $portable.Count -ne 1) {
             throw "verified primary artifact set is incomplete"
           }
@@ -155,14 +137,28 @@ jobs:
             --setup $setup[0].FullName `
             --checksum $checksum[0].FullName `
             --portable $portable[0].FullName `
-            --built-root "verified\dist\AACC"
+            --built-root "dist\AACC"
+          New-Item -ItemType Directory -Path "build\verified-output" -Force | Out-Null
+          Copy-Item -LiteralPath $setup[0].FullName -Destination "build\verified-output"
+          Copy-Item -LiteralPath $checksum[0].FullName -Destination "build\verified-output"
+          Copy-Item -LiteralPath $portable[0].FullName -Destination "build\verified-output"
           Write-Host "Hosted Windows Server evidence only; consumer Windows 10/11 not claimed"
       - name: Upload primary Windows Setup artifacts
         uses: actions/upload-artifact@v4
         with:
           name: AACC-Windows-Setup
           path: |
-            verified/AACC-*-Setup.exe
-            verified/AACC-*-Setup.exe.sha256
-            verified/AACC-*-windows-x64-windows-2025-vs2026.zip
+            build/verified-output/AACC-*-Setup.exe
+            build/verified-output/AACC-*-Setup.exe.sha256
+            build/verified-output/AACC-*-windows-x64-windows-2025-vs2026.zip
           if-no-files-found: error
+      - name: Upload Windows smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-windows-2025-vs2026
+          path: |
+            build/windows-smoke
+            build/native/*.txt
+            dist/installer/*.log
+          if-no-files-found: warn

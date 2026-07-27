@@ -37,15 +37,18 @@ def test_inno_setup_is_per_user_and_upgrade_stable() -> None:
 def test_inno_setup_packages_only_the_reviewed_onedir_roots() -> None:
     text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     files = _section(text, "Files")
-    install_delete = _section(text, "InstallDelete")
 
     assert 'Source: "..\\dist\\AACC\\AACC.exe"; DestDir: "{app}"' in files
     assert 'Source: "..\\dist\\AACC\\aacc-spawn.exe"; DestDir: "{app}"' in files
     assert 'Source: "..\\dist\\AACC\\_internal\\*"; DestDir: "{app}\\_internal"' in files
-    assert len(re.findall(r"(?m)^Source:", files)) == 3
-    assert 'Name: "{app}\\_internal"' in install_delete
-    assert 'Name: "{app}\\*"' not in install_delete
-    assert 'Name: "{app}"' not in install_delete
+    assert 'Source: "..\\build\\installer\\internal-manifest-v1.txt"' in files
+    assert 'Source: "shutdown-v1.capability"' in files
+    assert len(re.findall(r"(?m)^Source:", files)) == 5
+    internal = files.index('Source: "..\\dist\\AACC\\_internal\\*"')
+    aacc = files.index('Source: "..\\dist\\AACC\\AACC.exe"')
+    broker = files.index('Source: "..\\dist\\AACC\\aacc-spawn.exe"')
+    assert internal < aacc < broker
+    assert "[InstallDelete]" not in text
 
 
 def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
@@ -68,6 +71,8 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert "WaitForSingleObject(" in code
     assert "WaitResult = WAIT_TIMEOUT" in code
     assert "TerminateProcess(ProcessInfo.hProcess, 124)" in code
+    assert "if not TerminateProcess(ProcessInfo.hProcess, 124) then" in code
+    assert "WaitForSingleObject(ProcessInfo.hProcess, 5000) <> WAIT_OBJECT_0" in code
     assert "newly created control invocation" in code
     assert "never a handle to the existing main AACC process" in code
     assert "OpenProcess(" not in code
@@ -80,6 +85,8 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert "stop-process" not in lowered
     assert "wm_close" not in lowered
     assert "forcecloseapplications" not in lowered
+    assert "bInheritHandles: BOOL" in code
+    assert "pinned Inno Setup 6.7.1" in code
 
 
 def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
@@ -104,6 +111,43 @@ def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
     assert "postinstall" in run
     assert "nowait" in run
     assert "skipifsilent" in run
+
+
+def test_inno_setup_cleans_only_manifest_extras_after_commit() -> None:
+    text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
+    code = _section(text, "Code")
+
+    assert "internal-manifest-v1.txt" in code
+    assert "LoadStringsFromFile" in code
+    assert "CleanupInternalExtras" in code
+    assert "CurStep = ssPostInstall" in code
+    assert "DeleteFile(" in code
+    assert "RemoveDir(" in code
+    assert "FILE_ATTRIBUTE_REPARSE_POINT" in code
+    reparse_branch = code.split(
+        "if (FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then", 1
+    )[1].split("else if (FindRec.Attributes and faDirectory) <> 0 then", 1)[0]
+    assert "RemoveDir(FullPath)" in reparse_branch
+    assert "DeleteFile(FullPath)" in reparse_branch
+    assert "DelTree(" not in reparse_branch
+    assert "CleanupInternalExtras(" not in reparse_branch
+    assert "Log(" in code
+    assert "RaiseException" not in code
+
+
+def test_windows_smoke_closes_uninstaller_clone_capture_race() -> None:
+    text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+    function = text.split("function Wait-UninstallerTreeGone", 1)[1].split(
+        "function Invoke-Uninstaller", 1
+    )[0]
+
+    initial = function.index("$InitialSnapshot = @(Get-OwnedProcessTree")
+    polling = function.index("while (-not $Process.HasExited")
+    final = function.index("$FinalSnapshot = @(Get-OwnedProcessTree")
+    waiting = function.index("Assert-ProcessExitedByDeadline")
+    assert initial < polling < final < waiting
+    assert "ParentProcessId" in function
+    assert "Register-OwnedIdentity -Identity $Identity" in function
 
 
 def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
@@ -158,6 +202,15 @@ def test_windows_installer_build_validates_inputs_and_fresh_output() -> None:
     assert '"/DMyAppVersion=$Version"' in text
     assert "$IssPath" in text
     assert "Length -lt" in text
+    assert "internal-manifest-v1.txt" in text
+    assert '"D $Relative/"' in text
+    assert '"F $Relative"' in text
+    assert "[System.Text.UTF8Encoding]::new($false)" in text
+    assert "WriteAllText" in text
+    assert "ReparsePoint" in text
+    assert "Start-Process" in text
+    assert "WaitForExit" in text
+    assert "Inno Setup bootstrap timed out" in text
 
 
 def test_windows_installer_checksum_is_strict_and_bom_free() -> None:
