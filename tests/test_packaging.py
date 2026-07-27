@@ -568,11 +568,16 @@ def test_windows_fake_codex_commits_marker_before_quota_reply(tmp_path: Path) ->
         marker_record = json.loads(marker_bytes)
         assert marker_bytes
         assert quota_reply["id"] == 2
-        assert marker_record["pid"] == process.pid
+        # A Windows virtual-environment launcher may spawn the base Python
+        # interpreter, so the fixture identity need not equal the Popen wrapper.
+        assert isinstance(marker_record["pid"], int)
+        assert marker_record["pid"] > 0
         assert marker_record["initialize"] == "initialize"
         assert marker_record["request"] == "account/rateLimits/read"
+        assert Path(marker_record["image_path"]).is_absolute()
         assert Path(marker_record["image_path"]).is_file()
         assert isinstance(marker_record["creation_time"], float)
+        assert marker_record["creation_time"] > 0
 
         process.stdin.close()
         assert process.wait(timeout=5) == 0
