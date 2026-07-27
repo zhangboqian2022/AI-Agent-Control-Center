@@ -1,8 +1,20 @@
 # Kimi Web Quota and Readable Quota Bars Implementation Plan
 
+**Status: Superseded by
+`2026-07-27-kimi-web-session-correction.md`.**
+
+Do not execute this plan. Qt's native `QWebView` does not expose a configurable
+profile path, HTTP-cache clearing API, or persistent-storage clearing API. Use
+the correction plan for the protected reuse gate, bounded correct-origin
+cleanup, one five-minute coordinator, request deadlines, fallback freshness,
+and trustworthy MONTH reset rules. The task list below is retained only as a
+historical record of the initial implementation.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Enlarge both quota strips and add a cached Kimi web session that refreshes 5H, WEEK, and MONTH together every five minutes.
+**Historical goal:** Enlarge both quota strips and display Kimi 5H, WEEK, and
+MONTH from membership metadata. Current session and refresh behavior is
+defined only by the correction plan above.
 
 **Architecture:** Keep `QuotaService` as the Kimi Code fallback and add a GUI-thread `KimiWebQuotaService` around Qt's native system `QWebView`. Parse the web Connect responses in a pure module, merge sources deterministically, and expose one `KimiQuota` stream to the existing bar.
 
@@ -12,7 +24,9 @@
 
 - Use TDD: every production behavior starts with a failing test.
 - Support both macOS and Windows.
-- Never store or log the Kimi account password, cookies, or bearer tokens.
+- For native website-session reuse, do not copy the Kimi password, cookies, or
+  website bearer token into AACC's protected reuse gate. Kimi Code OAuth
+  credentials remain separately protected.
 - Poll web membership metadata every 300 seconds while AACC is running.
 - Clear cached web and Kimi Code authorization only on explicit logout or server rejection.
 - Preserve the existing A-format row order: Codex WEEK; Kimi 5H, WEEK, MONTH.
@@ -98,7 +112,7 @@ is retained.
 
 Run the command from Step 2. Expected: all parser and merge tests pass.
 
-### Task 3: Persistent native Kimi web session and page bridge
+### Task 3: Native Kimi web session and page bridge (historical)
 
 **Files:**
 - Create: `src/aacc/kimi_web_session.py`
@@ -112,14 +126,16 @@ Run the command from Step 2. Expected: all parser and merge tests pass.
   `login_state_changed(bool)`, `quota_received(object, object)`, and
   `error_occurred(str)`, plus methods `open_login(parent)`, `refresh()`, and
   `logout()`.
-- The session owns a native `QWebView`; its cookies and local storage are kept
-  by the operating system's per-application web store.
+- The session owns a native `QWebView`; the operating system's per-application
+  WebView store owns its first-party website session. AACC owns only the
+  protected reuse decision described by the correction plan.
 
 - [ ] **Step 1: Write failing bridge tests with fake page/profile objects**
 
-Assert the profile path is protected, refresh runs only from a
-`https://www.kimi.com/` origin, the generated script calls both membership
-methods, and logout clears cookies, HTTP cache, and persistent storage.
+This historical step is invalid and must not be executed: native `QWebView`
+does not provide the profile/cache/storage APIs it assumed. The correction
+plan instead tests a protected reuse decision, exact-origin bounded cleanup,
+refresh generations, and logout that fails closed across restart.
 
 - [ ] **Step 2: Run tests and verify RED**
 

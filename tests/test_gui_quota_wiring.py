@@ -159,6 +159,7 @@ def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp
     web_service = FakeWebQuotaService()
     window, _, _ = make_window(qtbot, tmp_path, web_quota_service=web_service)
     reset = datetime(2026, 8, 20, tzinfo=UTC)
+    fetched_at = datetime.now(UTC)
 
     def item(percent: int) -> QuotaDetail:
         return QuotaDetail(percent, 100, 100 - percent, reset, percent)
@@ -171,7 +172,7 @@ def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp
             membership_level=None,
             booster=None,
             status=QuotaStatus.PARTIAL,
-            fetched_at=reset,
+            fetched_at=fetched_at,
         )
     )
     web_service.quota_updated.emit(
@@ -182,7 +183,7 @@ def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp
             membership_level="ALLEGRO",
             booster=None,
             status=QuotaStatus.PARTIAL,
-            fetched_at=reset,
+            fetched_at=fetched_at,
         )
     )
 

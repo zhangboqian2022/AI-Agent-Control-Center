@@ -259,10 +259,11 @@ Installer contract:
 - It never recursively deletes `{app}` during upgrade.
 - Uninstall uses the same graceful shutdown path and removes the installed
   program, shortcuts, and uninstall registration.
-- `%APPDATA%\AACC` is never listed in `UninstallDelete`; configuration,
-  database, task history, and the cached Kimi login survive upgrade,
-  reinstall, and uninstall until the user explicitly logs out or deletes
-  their data.
+- `%APPDATA%\AACC` is never listed in `UninstallDelete`; AACC-owned
+  configuration, database, task history, protected reuse decision, and Kimi
+  Code OAuth credentials survive upgrade, reinstall, and uninstall. The
+  operating system owns the native WebView store separately, so there is no
+  claim that Setup preserves or removes the Kimi website session.
 - The unsigned installer honestly retains the Windows Unknown
   publisher/SmartScreen warning.
 - Silent smoke adds `/NOCLOSEAPPLICATIONS`,
