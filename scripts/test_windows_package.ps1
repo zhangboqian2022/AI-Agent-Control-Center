@@ -1668,8 +1668,7 @@ Assert-StableAppDataState -Expected $StableAppData -EvidenceCategory "installed"
 
 $InstalledInternalRoot = Join-Path $InstallRoot "_internal"
 $InternalBackupRoot = Join-Path $CandidateRoot "product-smoke\internal-root-backup"
-$ExternalJunctionRoot = Join-Path $CandidateRoot `
-    "product-smoke\junction target $SpecialLeaf"
+$ExternalJunctionRoot = Join-Path $CandidateRoot "product-smoke\junction-target"
 [System.IO.Directory]::CreateDirectory($ExternalJunctionRoot) | Out-Null
 $ExternalPreserveMarker = Join-Path `
     $ExternalJunctionRoot "junction-external-preserve.txt"

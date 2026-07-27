@@ -128,6 +128,13 @@ def test_windows_smoke_fixtures_use_only_command_line_unicode_definitions() -> N
         assert "#define _UNICODE" not in source
 
 
+def test_windows_smoke_junction_target_avoids_provider_wildcards() -> None:
+    script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+
+    assert '"product-smoke\\junction-target"' in script
+    assert '"product-smoke\\junction target $SpecialLeaf"' not in script
+
+
 def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
     text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     lowered = text.lower()
