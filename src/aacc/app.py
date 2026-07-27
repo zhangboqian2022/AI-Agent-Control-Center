@@ -41,6 +41,7 @@ from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
 from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
+from aacc.shutdown_windows import WindowsShutdownListener, request_shutdown_for_update
 from aacc.task_manager import TaskManager
 from aacc.windows_broker import build_broker_command, packaged_broker_path
 
@@ -62,17 +63,34 @@ class Runtime:
     kimi_web_quota_service: KimiWebQuotaService | None = None
 
     def close(self) -> None:
-        if self.codex_quota_service is not None:
-            self.codex_quota_service.stop()
-        if self.quota_service is not None:
-            self.quota_service.stop()
-        if self.kimi_web_quota_service is not None:
-            self.kimi_web_quota_service.stop()
-        self.kimi_desktop_discovery.stop()
-        self.kimi_discovery.stop()
-        self.discovery.stop()
-        self.automation_executor.close()
-        self.manager.close()
+        operations: tuple[tuple[str, Callable[[], None]], ...] = (
+            (
+                "codex-quota",
+                self.codex_quota_service.stop
+                if self.codex_quota_service is not None
+                else lambda: None,
+            ),
+            (
+                "kimi-quota",
+                self.quota_service.stop if self.quota_service is not None else lambda: None,
+            ),
+            (
+                "kimi-web-quota",
+                self.kimi_web_quota_service.stop
+                if self.kimi_web_quota_service is not None
+                else lambda: None,
+            ),
+            ("kimi-desktop-discovery", self.kimi_desktop_discovery.stop),
+            ("kimi-discovery", self.kimi_discovery.stop),
+            ("discovery", self.discovery.stop),
+            ("automation-executor", self.automation_executor.close),
+            ("manager", self.manager.close),
+        )
+        for stage, operation in operations:
+            try:
+                operation()
+            except Exception:  # noqa: BLE001 - cleanup must reach SQLite close
+                _logger.error("Runtime cleanup failed stage=%s", stage)
 
 
 def _default_quota_service_factory(config_dir: Path, config: AppConfig) -> QuotaService | None:
@@ -263,6 +281,21 @@ def _show_startup_security_error(data_dir: Path, error: FileProtectionError) -> 
     return 1
 
 
+def _show_startup_shutdown_error(data_dir: Path, error: BaseException) -> int:
+    category = type(error).__name__
+    _logger.critical("Startup shutdown-listener failed: %s", category)
+    QMessageBox.critical(
+        None,
+        "AACC 启动失败 / Startup failed",
+        "AACC 无法安装 Windows 更新退出监听器，已安全停止启动。\n"
+        "AACC could not install its Windows update shutdown listener and "
+        "stopped safely.\n\n"
+        f"日志 / Log: {data_dir / 'logs' / 'app.log'}\n"
+        f"诊断 / Diagnostic: STARTUP-SHUTDOWN-{category}",
+    )
+    return 1
+
+
 def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
     initialize_native_webview()
@@ -308,6 +341,21 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         accessibility_trusted=trusted,
         open_accessibility_settings_callback=open_accessibility_settings,
     )
+    shutdown_listener: WindowsShutdownListener | None = None
+    if sys.platform == "win32":
+        shutdown_listener = WindowsShutdownListener()
+        try:
+            shutdown_listener.start(qt_app, window)
+        except (OSError, RuntimeError) as error:
+            try:
+                shutdown_listener.stop()
+            except Exception:  # noqa: BLE001 - runtime/SQLite still must close
+                _logger.error("Application cleanup failed stage=shutdown-listener")
+            try:
+                runtime.close()
+            except Exception:  # noqa: BLE001 - preserve the sanitized startup error
+                _logger.error("Application cleanup failed stage=runtime")
+            return _show_startup_shutdown_error(data_dir, error)
     window.show()
     if not trusted:
         QTimer.singleShot(0, window.show_accessibility_guidance)
@@ -356,10 +404,20 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         if cleaned:
             return
         cleaned = True
-        hotkeys.stop()
-        if api_server is not None:
-            api_server.stop()
-        runtime.close()
+        operations: tuple[tuple[str, Callable[[], None]], ...] = (
+            (
+                "shutdown-listener",
+                shutdown_listener.stop if shutdown_listener is not None else lambda: None,
+            ),
+            ("hotkeys", hotkeys.stop),
+            ("api-server", api_server.stop if api_server is not None else lambda: None),
+            ("runtime", runtime.close),
+        )
+        for stage, operation in operations:
+            try:
+                operation()
+            except Exception:  # noqa: BLE001 - all remaining cleanup must run
+                _logger.error("Application cleanup failed stage=%s", stage)
 
     qt_app.aboutToQuit.connect(cleanup)
     try:
@@ -369,6 +427,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
 
 
 def main() -> int:
+    if sys.platform == "win32" and sys.argv[1:] == ["--shutdown-for-update"]:
+        return request_shutdown_for_update()
     config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
     database_path = resolve_database_path()
     data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
