@@ -46,7 +46,7 @@ function ConvertTo-ProcessArgument {
 function New-ProcessStartInfo {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$Arguments
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments
     )
     $Info = New-Object System.Diagnostics.ProcessStartInfo
     $Info.FileName = $FilePath
@@ -673,7 +673,10 @@ function Invoke-ExternalDeadline {
 }
 
 function Start-OwnedProcess {
-    param([Parameter(Mandatory = $true)][string]$FilePath, [string[]]$Arguments = @())
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [AllowEmptyCollection()][string[]]$Arguments = @()
+    )
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = New-ProcessStartInfo -FilePath $FilePath -Arguments $Arguments
     $StartedId = 0
