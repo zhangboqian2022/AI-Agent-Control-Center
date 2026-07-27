@@ -97,10 +97,20 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert __version__ == project["project"]["version"]
+    design = (
+        ROOT
+        / "docs"
+        / "superpowers"
+        / "specs"
+        / "2026-07-27-v1.4.2-quota-and-windows-hardening-design.md"
+    ).read_text(encoding="utf-8")
+    target = re.search(r"\*\*Target release:\*\* (\d+\.\d+\.\d+)", design)
+    assert target is not None
+    assert __version__ == target.group(1)
+    assert (ROOT / "docs" / f"release-notes-{__version__}.md").exists()
     for name in ("build_app.sh", "build_dmg.sh"):
         script = (ROOT / "scripts" / name).read_text(encoding="utf-8")
         assert 'AACC_VERSION="${AACC_VERSION:-$(uv version --short)}"' in script
-    assert f"**{__version__} 正式版已发布**" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_installer_quits_running_copy_before_replacement() -> None:
@@ -155,19 +165,20 @@ def test_partial_release_credentials_fail_before_build() -> None:
         assert "AACC_NOTARY_PROFILE" in completed.stderr
 
 
-def test_documentation_download_links_match_package_version() -> None:
-    match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:rc(\d+))?", __version__)
-    assert match, __version__
-    public_version = f"{match.group(1)}-rc.{match.group(2)}" if match.group(2) else match.group(1)
-    release_tag = f"v{public_version}"
-    dmg_name = f"AACC-{public_version}.dmg"
-
+def test_documentation_download_links_match_latest_published_release() -> None:
     readme_paths = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
+    published_versions: set[str] = set()
     for path in readme_paths:
         content = path.read_text(encoding="utf-8")
         download_links = re.findall(r"releases/download/\S+", content)
         assert download_links, path.name
-        assert all(release_tag in link for link in download_links), path.name
+        for link in download_links:
+            match = re.search(r"/v(\d+\.\d+\.\d+(?:-rc\.\d+)?)/", link)
+            assert match is not None, path.name
+            published_versions.add(match.group(1))
+    assert len(published_versions) == 1
+    (published_version,) = published_versions
+    dmg_name = f"AACC-{published_version}.dmg"
 
     documentation_paths = readme_paths + [
         ROOT / "docs" / "user-guide.md",
