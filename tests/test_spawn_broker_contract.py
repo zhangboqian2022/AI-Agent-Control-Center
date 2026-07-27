@@ -7,6 +7,26 @@ import pytest
 ROOT = Path(__file__).parents[1]
 
 
+def safe_broker_failure_summary(stderr: str) -> str:
+    reason = re.search(r"\bdiagnostic=AACC_BROKER_VALIDATOR code=\d+ reason=([a-z-]+)\b", stderr)
+    exit_code = re.search(r"\bbroker JSON validation failed exit=(\d+)\b", stderr)
+    reason_token = reason.group(1) if reason else "unavailable"
+    exit_token = exit_code.group(1) if exit_code else "unavailable"
+    return f"reason={reason_token} exit={exit_token}"
+
+
+def test_safe_broker_failure_summary_keeps_only_reason_and_exit_tokens() -> None:
+    summary = safe_broker_failure_summary(
+        "broker JSON validation failed exit=4 "
+        "diagnostic=AACC_BROKER_VALIDATOR code=4 reason=request-payload "
+        "pos=none response_len=1 response_sha256=0 payload_len=1 "
+        "payload_sha256=0 AACC_SECRET_MARKER_4ce1"
+    )
+
+    assert summary == "reason=request-payload exit=4"
+    assert "AACC_SECRET_MARKER_4ce1" not in summary
+
+
 def test_windows_build_compiles_static_spawn_broker() -> None:
     script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
     toolchain = (ROOT / "scripts" / "windows_toolchain.ps1").read_text(encoding="utf-8")
@@ -183,5 +203,6 @@ def test_spawn_broker_windows_integration() -> None:
     )
     assert completed.returncode == 0, (
         "broker integration failed "
-        f"(stdout={len(completed.stdout)} bytes, stderr={len(completed.stderr)} bytes)"
+        f"({safe_broker_failure_summary(completed.stderr)}, "
+        f"stdout={len(completed.stdout)} bytes, stderr={len(completed.stderr)} bytes)"
     )
