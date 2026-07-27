@@ -82,14 +82,15 @@ def make_session(monkeypatch, tmp_path):
     return KimiWebSession(tmp_path)
 
 
-def test_membership_script_reads_both_connect_services_without_credentials():
+def test_membership_script_uses_cached_web_token_for_both_connect_services():
     script = membership_fetch_script()
 
     assert "GetSubscriptionStats" in script
     assert "GetSubscription" in script
     assert "credentials: 'include'" in script
-    assert "Authorization" not in script
-    assert "access_token" not in script
+    assert "localStorage.getItem('access_token')" in script
+    assert "'Authorization': 'Bearer ' + accessToken" in script
+    assert "emit({kind: 'quota', stats, subscription})" in script
     assert KIMI_MEMBERSHIP_URL.startswith("https://www.kimi.com/")
 
 

@@ -43,11 +43,22 @@ def membership_fetch_script() -> str:
     document.title = prefix + encoded;
   }};
   const request = async (method) => {{
+    let accessToken = localStorage.getItem('access_token');
+    if (accessToken) {{
+      try {{
+        const parsed = JSON.parse(accessToken);
+        if (typeof parsed === 'string') accessToken = parsed;
+      }} catch (_) {{}}
+    }}
+    if (!accessToken) {{
+      throw new Error('UNAUTHORIZED:NO_TOKEN');
+    }}
     const response = await fetch({json.dumps(base)} + method, {{
       method: 'POST',
       headers: {{
         'Content-Type': 'application/json',
-        'Connect-Protocol-Version': '1'
+        'Connect-Protocol-Version': '1',
+        'Authorization': 'Bearer ' + accessToken
       }},
       credentials: 'include',
       body: '{{}}'
