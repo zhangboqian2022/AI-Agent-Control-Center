@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
 from aacc.kimi_web_quota import merge_kimi_quota, parse_membership_quota
@@ -146,7 +146,7 @@ def test_merge_web_quota_wins_and_code_only_fills_missing_windows():
         fetched_at=NOW,
     )
 
-    result = merge_kimi_quota(web, code)
+    result = merge_kimi_quota(web, code, now=web.fetched_at)
 
     assert result.five_hour is web.five_hour
     assert result.weekly is code.weekly
@@ -162,9 +162,80 @@ def test_merge_never_uses_kimi_code_monthly_value():
         monthly=detail(99),
     )
 
-    result = merge_kimi_quota(None, code)
+    result = merge_kimi_quota(None, code, now=NOW)
 
     assert result.five_hour is code.five_hour
     assert result.weekly is code.weekly
     assert result.monthly is None
     assert result.status is QuotaStatus.PARTIAL
+
+
+def test_merge_rejects_code_fallback_older_than_330_seconds():
+    web = quota(
+        five_hour=None,
+        weekly=None,
+        monthly=detail(31),
+        fetched_at=NOW,
+    )
+    code = quota(
+        five_hour=detail(2),
+        weekly=detail(72),
+        monthly=detail(99),
+        fetched_at=NOW - timedelta(seconds=331),
+    )
+
+    result = merge_kimi_quota(web, code)
+
+    assert result.five_hour is None
+    assert result.weekly is None
+    assert result.monthly is web.monthly
+
+
+def test_merge_accepts_code_fallback_exactly_330_seconds_old():
+    web = quota(
+        five_hour=None,
+        weekly=None,
+        monthly=detail(31),
+        fetched_at=NOW,
+    )
+    code = quota(
+        five_hour=detail(2),
+        weekly=detail(72),
+        monthly=detail(99),
+        fetched_at=NOW - timedelta(seconds=330),
+    )
+
+    result = merge_kimi_quota(web, code)
+
+    assert result.five_hour is code.five_hour
+    assert result.weekly is code.weekly
+    assert result.monthly is web.monthly
+
+
+def test_merge_rejects_code_fallback_without_timestamp_or_from_future():
+    web = quota(
+        five_hour=None,
+        weekly=None,
+        monthly=detail(31),
+        fetched_at=NOW,
+    )
+    without_timestamp = quota(
+        five_hour=detail(2),
+        weekly=detail(72),
+        monthly=detail(99),
+        fetched_at=None,
+    )
+    future = quota(
+        five_hour=detail(3),
+        weekly=detail(73),
+        monthly=detail(98),
+        fetched_at=NOW + timedelta(seconds=1),
+    )
+
+    missing_result = merge_kimi_quota(web, without_timestamp)
+    future_result = merge_kimi_quota(web, future)
+
+    assert missing_result.five_hour is None
+    assert missing_result.weekly is None
+    assert future_result.five_hour is None
+    assert future_result.weekly is None

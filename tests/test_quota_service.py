@@ -23,6 +23,61 @@ def test_default_kimi_code_fallback_poll_interval_is_five_minutes(qapp, tmp_path
     assert service._interval == 300.0
 
 
+def test_externally_scheduled_service_waits_for_explicit_refresh(qapp, tmp_path):
+    save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
+    calls: list[str] = []
+    service = make_service(
+        tmp_path,
+        quota_handler(calls),
+        externally_scheduled=True,
+    )
+    received: list[object] = []
+    service.quota_updated.connect(received.append)
+
+    service.start()
+    time.sleep(0.3)
+    QApplication.processEvents()
+
+    assert calls == []
+    assert received == []
+
+    service.refresh_now()
+    assert wait_for(lambda: len(received) == 1)
+    assert calls == ["/coding/v1/usages"]
+    service.stop()
+
+
+def test_external_scheduling_can_only_change_before_start(tmp_path):
+    service = QuotaService(tmp_path, version="test")
+    service.set_externally_scheduled(True)
+    service.start()
+
+    with pytest.raises(RuntimeError, match="before start"):
+        service.set_externally_scheduled(False)
+
+    service.stop()
+
+
+def test_stop_join_timeout_does_not_depend_on_poll_interval(tmp_path):
+    class FakeThread:
+        def __init__(self) -> None:
+            self.join_timeouts: list[float | None] = []
+
+        def is_alive(self) -> bool:
+            return True
+
+        def join(self, timeout: float | None = None) -> None:
+            self.join_timeouts.append(timeout)
+
+    service = QuotaService(tmp_path, version="test", interval_seconds=3600)
+    thread = FakeThread()
+    service._thread = thread  # type: ignore[assignment]
+
+    service.stop()
+
+    assert thread.join_timeouts == [2.0]
+
+
 VALID_TOKEN = {
     "access_token": "at",
     "refresh_token": "rt",

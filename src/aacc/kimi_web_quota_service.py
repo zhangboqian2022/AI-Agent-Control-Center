@@ -55,6 +55,7 @@ class KimiWebQuotaService(QObject):
         self.timer.timeout.connect(self.refresh_now)
         if self._session is not None:
             self._connect_session(self._session)
+        self._fallback_refresh: Callable[[], None] | None = None
         self._stopped = False
 
     def start(self) -> None:
@@ -72,7 +73,12 @@ class KimiWebQuotaService(QObject):
             self._session.close()
 
     def refresh_now(self) -> None:
+        if self._fallback_refresh is not None:
+            self._fallback_refresh()
         self._ensure_session().refresh()
+
+    def set_fallback_refresh(self, callback: Callable[[], None]) -> None:
+        self._fallback_refresh = callback
 
     def open_login(self, parent: QWidget | None = None) -> None:
         self._ensure_session().open_login(parent)
