@@ -197,10 +197,6 @@ def load_config(path: Path) -> AppConfig:
             changed = True
         if changed:
             save_config(path, config)
-        elif sys.platform == "win32":
-            # Re-publish through a newly created, already protected file.
-            # Editing a legacy DACL in place can leave unrelated explicit ACEs.
-            save_config(path, config)
         else:
             protect_file(path, platform=sys.platform)
         return config

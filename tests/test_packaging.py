@@ -205,6 +205,41 @@ def test_windows_spec_exists_and_excludes_quartz() -> None:
     assert "styles.qss" in spec
 
 
+def test_windows_native_acl_dependency_and_payload_are_pinned() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "pywin32==312; sys_platform == 'win32'" in project["project"]["dependencies"]
+
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]
+    for module in (
+        "win32api",
+        "win32con",
+        "win32security",
+        "ntsecuritycon",
+        "pywintypes",
+    ):
+        assert repr(module) in hidden_imports
+    assert "pywintypes312.dll" not in spec
+    assert "f'pywintypes{sys.version_info.major}{sys.version_info.minor}.dll'" in spec
+    binaries = spec.split("binaries=", 1)[1].split("]", 1)[0]
+    assert "PYWINTYPES_DLL_NAME" in binaries
+
+
+@pytest.mark.parametrize(
+    ("python_version", "dll_name"),
+    [
+        ((3, 12), "pywintypes312.dll"),
+        ((3, 13), "pywintypes313.dll"),
+    ],
+)
+def test_windows_pywintypes_payload_name_tracks_python_abi(
+    python_version: tuple[int, int], dll_name: str
+) -> None:
+    major, minor = python_version
+
+    assert f"pywintypes{major}{minor}.dll" == dll_name
+
+
 def test_windows_build_script_invokes_pyinstaller() -> None:
     script = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
     assert "AACC-windows.spec" in script

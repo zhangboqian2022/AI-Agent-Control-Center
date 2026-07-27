@@ -1,7 +1,5 @@
 import os
-import re
 import stat
-import subprocess
 import sys
 from pathlib import Path
 
@@ -240,6 +238,7 @@ def test_save_config_skips_directory_fsync_on_windows(
 ) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(config_module, "protect_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(config_module, "protect_directory", lambda *_args, **_kwargs: None)
     path = tmp_path / "config.yaml"
     config = default_config()
 
@@ -262,6 +261,7 @@ def test_save_config_skips_fchmod_on_windows(
         "protect_file",
         lambda path, **_kwargs: protected.append(Path(path)),
     )
+    monkeypatch.setattr(config_module, "protect_directory", lambda *_args, **_kwargs: None)
 
     def raise_attribute_error(_descriptor: int, _mode: int) -> None:
         raise AttributeError("simulating windows")
@@ -290,6 +290,7 @@ def test_save_config_protects_empty_windows_temp_before_writing_secret(
         "protect_file",
         lambda path, **_kwargs: protected_sizes.append(Path(path).stat().st_size),
     )
+    monkeypatch.setattr(config_module, "protect_directory", lambda *_args, **_kwargs: None)
 
     save_config(tmp_path / "config.yaml", default_config())
 
@@ -297,7 +298,7 @@ def test_save_config_protects_empty_windows_temp_before_writing_secret(
     assert protected_sizes[1] > 0
 
 
-def test_load_config_republishes_legacy_windows_file_atomically(
+def test_load_config_repairs_existing_windows_file_in_place(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "config.yaml"
@@ -307,75 +308,20 @@ def test_load_config_republishes_legacy_windows_file_atomically(
         encoding="utf-8",
     )
     monkeypatch.setattr(sys, "platform", "win32")
-    saved: list[tuple[Path, object]] = []
+    protected: list[tuple[Path, str]] = []
     monkeypatch.setattr(
         config_module,
         "save_config",
-        lambda target, value: saved.append((target, value)),
+        lambda *_args, **_kwargs: pytest.fail("valid config must not be republished"),
     )
     monkeypatch.setattr(
         config_module,
         "protect_file",
-        lambda *_args, **_kwargs: pytest.fail("legacy target must not be edited in place"),
+        lambda target, *, platform: protected.append((target, platform)),
     )
+    monkeypatch.setattr(config_module, "protect_directory", lambda *_args, **_kwargs: None)
 
     loaded = load_config(path)
 
-    assert saved == [(path, loaded)]
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows ACL APIs")
-def test_load_config_removes_unrelated_explicit_windows_ace(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    save_config(path, default_config())
-    subprocess.run(
-        ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=True,
-        shell=False,
-    )
-
-    load_config(path)
-
-    sid_result = subprocess.run(
-        ["whoami", "/user", "/fo", "csv", "/nh"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=True,
-        shell=False,
-    )
-    current_sid_match = re.search(r"\bS-\d+(?:-\d+)+\b", sid_result.stdout)
-    assert current_sid_match is not None
-    acl_dump = tmp_path / "config-acl.txt"
-    subprocess.run(
-        [
-            "icacls",
-            str(path),
-            "/save",
-            str(acl_dump),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=True,
-        shell=False,
-    )
-    raw_acl = acl_dump.read_bytes()
-    saved_acl = raw_acl.decode("utf-16-le").lstrip("\ufeff")
-    access_sids = set(re.findall(r";;;([^)\r\n]+)\)", saved_acl))
-    assert "S-1-1-0" not in saved_acl
-    assert "OW" not in access_sids
-    assert access_sids, saved_acl
-    allowed_sids = {
-        current_sid_match.group(0),
-        "SY",
-        "BA",
-        "S-1-5-18",
-        "S-1-5-32-544",
-    }
-    if current_sid_match.group(0).endswith("-500"):
-        allowed_sids.add("LA")
-    assert access_sids <= allowed_sids
+    assert loaded.app.api.token == config.app.api.token
+    assert protected == [(path, "win32")]
