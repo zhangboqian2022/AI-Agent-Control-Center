@@ -86,6 +86,9 @@ class QuotaService(QObject):
         self._oauth_cancel_event: threading.Event | None = None
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._lifecycle_lock = threading.RLock()
+        self._one_shot_inflight = False
+        self._one_shot_thread: threading.Thread | None = None
         self._refresh_lock = threading.Lock()
         self._poll_lock = threading.Lock()
         self._last_fetch_monotonic = 0.0
@@ -100,35 +103,53 @@ class QuotaService(QObject):
             return self._state
 
     def start(self) -> None:
-        if self._stop.is_set():
-            raise RuntimeError("cannot start a stopped quota service")
-        self._started = True
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._stop.is_set():
+                raise RuntimeError("cannot start a stopped quota service")
+            self._started = True
+            self._thread.start()
 
     def stop(self) -> None:
-        self._stop.set()
+        with self._lifecycle_lock:
+            self._stop.set()
+            one_shot_thread = self._one_shot_thread
         with self._state_lock:
             if self._oauth_cancel_event is not None:
                 self._oauth_cancel_event.set()
         self._wake.set()
         if self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        if one_shot_thread is not None and one_shot_thread is not threading.current_thread():
+            one_shot_thread.join(timeout=2.0)
 
     def set_externally_scheduled(self, enabled: bool) -> None:
-        if self._started:
-            raise RuntimeError("external scheduling must be configured before start")
-        self._externally_scheduled = enabled
+        with self._lifecycle_lock:
+            if self._started:
+                raise RuntimeError("external scheduling must be configured before start")
+            self._externally_scheduled = enabled
 
     def refresh_now(self) -> None:
-        if self._stop.is_set():
-            return
-        self._wake.set()
-        if not self._thread.is_alive():
+        with self._lifecycle_lock:
+            if self._stop.is_set():
+                return
+            self._wake.set()
+            if self._thread.is_alive() or self._one_shot_inflight:
+                return
             # start() was never called: run a one-shot poll so explicit
             # refreshes (login, settings changes) still take effect.
-            threading.Thread(
-                target=self._poll_guarded, name="aacc-kimi-quota-refresh", daemon=True
-            ).start()
+            self._one_shot_inflight = True
+            try:
+                thread = threading.Thread(
+                    target=self._run_one_shot,
+                    name="aacc-kimi-quota-refresh",
+                    daemon=True,
+                )
+                self._one_shot_thread = thread
+                thread.start()
+            except Exception:
+                self._one_shot_inflight = False
+                self._one_shot_thread = None
+                raise
 
     def begin_oauth(self) -> None:
         with self._state_lock:
@@ -214,6 +235,17 @@ class QuotaService(QObject):
                 self.error_occurred.emit(message)
             except RuntimeError:
                 return  # application shutting down
+
+    def _run_one_shot(self) -> None:
+        try:
+            with self._lifecycle_lock:
+                if self._stop.is_set():
+                    return
+            self._poll_guarded()
+        finally:
+            with self._lifecycle_lock:
+                self._one_shot_inflight = False
+                self._one_shot_thread = None
 
     def _run(self) -> None:
         if self._externally_scheduled:
