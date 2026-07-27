@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from aacc.config import default_config
 from aacc.file_security import FileProtectionError, protect_file
 from aacc.file_security_windows import (
     ADMINISTRATORS_SID,
@@ -18,6 +19,7 @@ from aacc.file_security_windows import (
     WindowsSecurityApi,
     protect_windows_path,
 )
+from aacc.persistence import StateStore
 
 
 class FakeWindowsSecurityApi:
@@ -400,3 +402,29 @@ def test_real_windows_acl_removes_unrelated_explicit_ace(tmp_path: Path) -> None
     protect_file(path)
 
     assert "S-1-1-0" not in _read_windows_acl(path).allow_sids
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows ACL APIs")
+def test_real_windows_database_and_wal_sidecars_have_exact_protected_acls(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "database with spaces" / "aacc.db"
+    store = StateStore(path)
+    try:
+        store.initialize(default_config().tasks)
+        candidates = (path, Path(f"{path}-wal"), Path(f"{path}-shm"))
+        assert all(candidate.exists() for candidate in candidates)
+
+        expected_sids = {
+            _current_user_sid_string(),
+            SYSTEM_SID,
+            ADMINISTRATORS_SID,
+        }
+        for candidate in candidates:
+            snapshot = _read_windows_acl(candidate)
+            assert snapshot.protected
+            assert snapshot.allow_sids == expected_sids
+            assert snapshot.deny_sids == set()
+            assert not snapshot.inherited
+    finally:
+        store.close()
