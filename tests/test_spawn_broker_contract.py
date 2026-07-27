@@ -26,6 +26,22 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
         assert forbidden_dependency in script
 
 
+def test_broker_build_logs_safe_vswhere_diagnostics_on_discovery_failure() -> None:
+    script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
+
+    assert 'Write-Host "AACC_VS_DISCOVERY_DIAGNOSTICS"' in script
+    assert '@("installationPath", "installationVersion", "productId")' in script
+    assert "& $VsWhere -all -prerelease -products * -property $Property" in script
+    assert '$VisualStudioRoot = "C:\\Program Files\\Microsoft Visual Studio"' in script
+    assert "Get-ChildItem -LiteralPath $VisualStudioRoot -Directory" in script
+    assert "Get-ChildItem -LiteralPath $Directory.FullName -Directory" in script
+    failure_start = script.index(
+        "if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($InstallationPath))"
+    )
+    failure_end = script.index("$VsDevCmd", failure_start)
+    assert "Write-VisualStudioDiscoveryDiagnostics" in script[failure_start:failure_end]
+
+
 def test_broker_dependency_check_is_an_explicit_allowlist() -> None:
     script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
 

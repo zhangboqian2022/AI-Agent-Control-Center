@@ -33,6 +33,26 @@ if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
     throw "vswhere.exe is required to locate an installed Visual Studio MSVC toolchain"
 }
 
+function Write-VisualStudioDiscoveryDiagnostics {
+    Write-Host "AACC_VS_DISCOVERY_DIAGNOSTICS"
+    foreach ($Property in @("installationPath", "installationVersion", "productId")) {
+        Write-Host "AACC_VS_$Property"
+        & $VsWhere -all -prerelease -products * -property $Property
+    }
+
+    $VisualStudioRoot = "C:\Program Files\Microsoft Visual Studio"
+    if (-not (Test-Path -LiteralPath $VisualStudioRoot -PathType Container)) {
+        Write-Host "AACC_VS_DIRECTORY_ROOT_MISSING"
+        return
+    }
+    foreach ($Directory in (Get-ChildItem -LiteralPath $VisualStudioRoot -Directory)) {
+        Write-Host "AACC_VS_DIRECTORY_L1 $($Directory.Name)"
+        foreach ($ChildDirectory in (Get-ChildItem -LiteralPath $Directory.FullName -Directory)) {
+            Write-Host "AACC_VS_DIRECTORY_L2 $($ChildDirectory.Name)"
+        }
+    }
+}
+
 $InstallationPath = ((
     & $VsWhere -prerelease -latest -products * `
         -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
@@ -40,6 +60,7 @@ $InstallationPath = ((
         Select-Object -First 1
 ) | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($InstallationPath)) {
+    Write-VisualStudioDiscoveryDiagnostics
     throw "Visual Studio with the x64 MSVC toolchain is required"
 }
 
