@@ -28,6 +28,7 @@ def test_inno_setup_is_per_user_and_upgrade_stable() -> None:
     assert "UninstallLogMode=append" in setup
     assert "ArchitecturesAllowed=x64compatible" in setup
     assert "ArchitecturesInstallIn64BitMode=x64compatible" in setup
+    assert "MinVersion=10.0.17763" in setup
     assert "CloseApplications=no" in setup
     assert "RestartApplications=no" in setup
     assert "UninstallFilesDir={app}\\uninstall" in setup
@@ -57,6 +58,9 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert "InitializeUninstall" in code
     assert "SuppressibleMsgBox(" in code
     assert re.search(r"(?<!Suppressible)MsgBox\(", code) is None
+    assert code.count("FindWindowByWindowName(AACCWindowTitle)") >= 2
+    assert "if AACCWindow = 0 then" in code
+    assert "(FindWindowByWindowName(AACCWindowTitle) <> 0) then" in code
     assert "ewWaitUntilTerminated" in code
     assert code.count("Exec(") == 1
     assert "ShellExec(" not in code
