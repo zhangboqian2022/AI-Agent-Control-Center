@@ -641,6 +641,7 @@ print({response_line!r}, flush=True)
         server,
         timeout_seconds=1,
         now=lambda: NOW,
+        platform="darwin",
     ).read_latest()
 
     assert snapshot.status is CodexQuotaStatus.UNKNOWN
@@ -659,6 +660,7 @@ print("x" * 70000, flush=True)
         server,
         timeout_seconds=1,
         now=lambda: NOW,
+        platform="darwin",
     ).read_latest()
 
     assert snapshot.status is CodexQuotaStatus.UNKNOWN
