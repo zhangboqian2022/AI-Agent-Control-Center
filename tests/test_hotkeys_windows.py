@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+
 import pytest
 
 from aacc.hotkeys_windows import WINDOWS_HOTKEY_VK, WindowsGlobalHotkeys, windows_hotkey_vk
@@ -50,6 +52,30 @@ def test_start_registers_hotkeys_and_dispatches(qapp) -> None:
     hotkeys.stop()
     assert win32.unregistered == [(99, 1)]
     assert not hotkeys.available
+
+
+def test_native_hotkey_filter_returns_bool_without_blocking_later_filters(qapp) -> None:
+    win32 = FakeWin32()
+    fired: list[str] = []
+    hotkeys = WindowsGlobalHotkeys(
+        {"toggle": "F13"},
+        {"toggle": lambda: fired.append("toggle")},
+        hwnd=99,
+        win32_module=win32,
+        qt_app=qapp,
+    )
+    assert hotkeys.start() is True
+    assert hotkeys._filter is not None
+    message = hotkeys.make_hotkey_message(hwnd=99, hotkey_id=1)
+    assert hotkeys._filter.nativeEventFilter(b"other", 0) is False
+
+    result = hotkeys._filter.nativeEventFilter(
+        b"windows_generic_MSG",
+        ctypes.addressof(message),
+    )
+
+    assert result is False
+    assert fired == ["toggle"]
 
 
 def test_start_failure_sets_error(qapp) -> None:
