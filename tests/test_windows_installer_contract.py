@@ -163,7 +163,7 @@ def test_inno_setup_cleans_only_manifest_extras_after_commit() -> None:
     assert "result=incomplete" in code
 
 
-def test_windows_smoke_closes_uninstaller_clone_capture_race() -> None:
+def test_windows_smoke_discovers_only_from_captured_exact_live_parents() -> None:
     text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
     function = text.split("function Wait-UninstallerTreeGone", 1)[1].split(
         "function Invoke-Uninstaller", 1
@@ -171,18 +171,46 @@ def test_windows_smoke_closes_uninstaller_clone_capture_race() -> None:
 
     initial = function.index("$InitialSnapshot = @(")
     polling = function.index("while (-not $Process.HasExited")
-    final = function.index("$FinalSnapshot = @(")
     waiting = function.index("$TreeDeadline = [DateTime]::UtcNow.AddSeconds(30)")
-    assert initial < polling < final < waiting
-    assert "ParentProcessId" in function
-    assert "Register-OwnedIdentity -Identity $Identity" in function
-    assert function.count("-ExpectedRootIdentity $RootIdentity") >= 4
+    assert initial < polling < waiting
+    assert "Update-OwnedProcessForest -Identities $Identities" in function
+    assert "$FinalSnapshot" not in function
+    assert "parent-exit clone race" not in function
+
     tree = text.split("function Get-OwnedProcessTree", 1)[1].split(
         "function Stop-OwnedProcessTree", 1
     )[0]
+    assert "ParentProcessId" in tree
+    assert "if (-not (Test-ProcessIdentityExactAlive -Identity $ExpectedRootIdentity))" in tree
+    assert tree.count("if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity))") >= 3
+    assert "continue" in tree
+    assert "break" in tree
     assert "Test-OwnedProcessEdge -ParentIdentity" in tree
     assert "$Pending.Push($ChildIdentity)" in tree
     assert "CreationTimeUtc -ge $ParentIdentity.CreationTimeUtc" in text
+    assert "A verified parent may exit before its descendants" not in tree
+
+    forest = text.split("function Update-OwnedProcessForest", 1)[1].split(
+        "function Assert-StaleParentPidEdgeRejected", 1
+    )[0]
+    assert "$Parents = @($Identities.Values)" in forest
+    assert "-RootId $ParentIdentity.Id" in forest
+    assert "-ExpectedRootIdentity $ParentIdentity" in forest
+    assert "Register-OwnedIdentity -Identity $Identity" in forest
+
+
+def test_windows_smoke_rejects_later_child_after_parent_pid_reuse_and_exit() -> None:
+    text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+
+    assert "function Assert-ReusedParentExitSequenceRejected" in text
+    assert "reused-parent-exit-sequence.json" in text
+    assert "p1-exited" in text
+    assert "pid-reused-by-p2" in text
+    assert "p2-spawned-later-c" in text
+    assert "p2-exited" in text
+    assert "acceptedIdentities = $AcceptedIdentities" in text
+    assert "temporaryClones = $TemporaryClones" in text
+    assert "later child of a reused parent PID entered the owned tree" in text
 
 
 def test_windows_smoke_keeps_temp_clone_filter_structurally_closed() -> None:

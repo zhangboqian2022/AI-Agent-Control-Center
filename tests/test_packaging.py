@@ -459,6 +459,7 @@ def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> 
         "junction-refusal-external-manifest.json",
         "Assert-DiagnosticsTreeHasNoPrimaryArtifacts",
         "stale-parent-pid-edge.json",
+        "reused-parent-exit-sequence.json",
     ):
         assert required in script
     assert "if (-not $Process.WaitForExit(5000))" in script

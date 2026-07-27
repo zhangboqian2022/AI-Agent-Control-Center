@@ -154,6 +154,36 @@ function Invoke-OwnedCleanup {
     }
 }
 
+function Test-ProcessIdentityExactMatch {
+    param(
+        [Parameter(Mandatory = $true)]$ExpectedIdentity,
+        [Parameter(Mandatory = $true)][AllowNull()]$CurrentIdentity
+    )
+    if ($null -eq $CurrentIdentity) {
+        return $false
+    }
+    return (
+        $CurrentIdentity.Id -eq $ExpectedIdentity.Id -and
+        $CurrentIdentity.Path.Equals(
+            $ExpectedIdentity.Path,
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -and
+        $CurrentIdentity.CreationTimeUtc -eq $ExpectedIdentity.CreationTimeUtc
+    )
+}
+
+function Test-ProcessIdentityExactAlive {
+    param([Parameter(Mandatory = $true)]$Identity)
+    try {
+        $CurrentIdentity = Get-ProcessIdentity -Id $Identity.Id
+    }
+    catch {
+        return $false
+    }
+    return (Test-ProcessIdentityExactMatch -ExpectedIdentity $Identity `
+        -CurrentIdentity $CurrentIdentity)
+}
+
 function Test-OwnedProcessEdge {
     param(
         [Parameter(Mandatory = $true)]$ParentIdentity,
@@ -171,23 +201,10 @@ function Get-OwnedProcessTree {
     )
     if ($null -ne $ExpectedRootIdentity) {
         $RootIdentity = $ExpectedRootIdentity
-        try {
-            $CurrentRoot = Get-ProcessIdentity -Id $RootId
-            if (
-                -not $CurrentRoot.Path.Equals(
-                    $ExpectedRootIdentity.Path,
-                    [System.StringComparison]::OrdinalIgnoreCase
-                ) -or
-                $CurrentRoot.CreationTimeUtc -ne $ExpectedRootIdentity.CreationTimeUtc
-            ) {
-                # The PID was reused. Never adopt the replacement process or
-                # traverse its children as if they belonged to this harness.
-                return @()
-            }
-        }
-        catch {
-            # The exact root exited. Its still-live children retain the old
-            # ParentProcessId and can be enumerated from this CIM snapshot.
+        if (-not (Test-ProcessIdentityExactAlive -Identity $ExpectedRootIdentity)) {
+            # Once an exact parent exits or its PID is reused, never discover
+            # another process through the old numeric ParentProcessId.
+            return @()
         }
     }
     else {
@@ -215,31 +232,23 @@ function Get-OwnedProcessTree {
     [void]$Identities.Add($RootIdentity)
     while ($Pending.Count -gt 0) {
         $ParentIdentity = $Pending.Pop()
-        try {
-            $CurrentParent = Get-ProcessIdentity -Id $ParentIdentity.Id
-            if (
-                -not $CurrentParent.Path.Equals(
-                    $ParentIdentity.Path,
-                    [System.StringComparison]::OrdinalIgnoreCase
-                ) -or
-                $CurrentParent.CreationTimeUtc -ne $ParentIdentity.CreationTimeUtc
-            ) {
-                continue
-            }
-        }
-        catch {
-            # A verified parent may exit before its descendants. Continue only
-            # with edges whose child creation time is not older than this exact
-            # parent identity.
+        if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity)) {
+            continue
         }
         if ($ChildrenByParent.ContainsKey($ParentIdentity.Id)) {
             foreach ($ChildRecord in $ChildrenByParent[$ParentIdentity.Id]) {
+                if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity)) {
+                    break
+                }
                 try {
                     $ChildIdentity = Get-ProcessIdentity `
                         -Id ([int]$ChildRecord.ProcessId)
                 }
                 catch {
                     continue
+                }
+                if (-not (Test-ProcessIdentityExactAlive -Identity $ParentIdentity)) {
+                    break
                 }
                 if (-not (Test-OwnedProcessEdge -ParentIdentity $ParentIdentity `
                     -ChildIdentity $ChildIdentity)) {
@@ -256,6 +265,27 @@ function Get-OwnedProcessTree {
         }
     }
     return @($Identities)
+}
+
+function Update-OwnedProcessForest {
+    param([Parameter(Mandatory = $true)][hashtable]$Identities)
+    $Parents = @($Identities.Values)
+    $Discovered = New-Object System.Collections.ArrayList
+    foreach ($ParentIdentity in $Parents) {
+        foreach ($Identity in @(
+            Get-OwnedProcessTree -RootId $ParentIdentity.Id `
+                -ExpectedRootIdentity $ParentIdentity
+        )) {
+            $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
+            if ($Identities.ContainsKey($Key)) {
+                continue
+            }
+            $Identities[$Key] = $Identity
+            Register-OwnedIdentity -Identity $Identity
+            [void]$Discovered.Add($Identity)
+        }
+    }
+    return @($Discovered)
 }
 
 function Assert-StaleParentPidEdgeRejected {
@@ -290,6 +320,84 @@ function Assert-StaleParentPidEdgeRejected {
         $TemporaryClones.Count -eq 0
     ) `
         "a stale child created before a reused parent PID entered the owned tree"
+}
+
+function Assert-ReusedParentExitSequenceRejected {
+    $P1 = [pscustomobject]@{
+        Id = 5151
+        Path = "C:\fixture\p1.exe"
+        CreationTimeUtc = 100
+    }
+    $P2 = [pscustomobject]@{
+        Id = 5151
+        Path = "C:\fixture\p2.exe"
+        CreationTimeUtc = 200
+    }
+    $C = [pscustomobject]@{
+        Id = 5252
+        Path = (Join-Path ([System.IO.Path]::GetTempPath()) "later-child-c.exe")
+        CreationTimeUtc = 201
+    }
+    $Sequence = @(
+        [pscustomobject]@{ event = "p1-exited"; currentParent = $null; child = $null },
+        [pscustomobject]@{
+            event = "pid-reused-by-p2"
+            currentParent = $P2
+            child = $null
+        },
+        [pscustomobject]@{
+            event = "p2-spawned-later-c"
+            currentParent = $P2
+            child = $C
+        },
+        [pscustomobject]@{ event = "p2-exited"; currentParent = $null; child = $C }
+    )
+    $Decisions = @()
+    $AcceptedIdentities = @()
+    foreach ($Step in $Sequence) {
+        $ParentExact = Test-ProcessIdentityExactMatch -ExpectedIdentity $P1 `
+            -CurrentIdentity $Step.currentParent
+        $CreationOrdered = (
+            $null -ne $Step.child -and
+            (Test-OwnedProcessEdge -ParentIdentity $P1 -ChildIdentity $Step.child)
+        )
+        $Accepted = $ParentExact -and $CreationOrdered
+        if ($Accepted) {
+            $AcceptedIdentities += $Step.child
+        }
+        $Decisions += [pscustomobject]@{
+            event = $Step.event
+            parentExactAlive = $ParentExact
+            childCreationOrdered = $CreationOrdered
+            accepted = $Accepted
+        }
+    }
+    $TempRoot = [System.IO.Path]::GetFullPath(
+        [System.IO.Path]::GetTempPath()
+    ).TrimEnd("\") + "\"
+    $TemporaryClones = @(
+        $AcceptedIdentities |
+            Where-Object {
+                [System.IO.Path]::GetFullPath($_.Path).StartsWith(
+                    $TempRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            }
+    )
+    Write-SmokeEvidence -Category "process-tree" `
+        -Name "reused-parent-exit-sequence.json" `
+        -Value ([ordered]@{
+            verifiedP1 = $P1
+            reusedP2 = $P2
+            laterChildC = $C
+            decisions = $Decisions
+            acceptedIdentities = $AcceptedIdentities
+            temporaryClones = $TemporaryClones
+        })
+    Assert-True (
+        $AcceptedIdentities.Count -eq 0 -and
+        $TemporaryClones.Count -eq 0
+    ) "a later child of a reused parent PID entered the owned tree"
 }
 
 function Stop-OwnedProcessTree {
@@ -657,25 +765,12 @@ function Wait-UninstallerTreeGone {
         # Capture immediately after Start so a short-lived original uninstaller
         # cannot hand off to its temporary clone before the first tree snapshot.
         $InitialSnapshot = @(
-            Get-OwnedProcessTree -RootId $Process.Id `
-                -ExpectedRootIdentity $RootIdentity
+            Update-OwnedProcessForest -Identities $Identities
         )
-        foreach ($Identity in $InitialSnapshot) {
-            $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
-            $Identities[$Key] = $Identity
-            Register-OwnedIdentity -Identity $Identity
-        }
 
         $Deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         while (-not $Process.HasExited -and [DateTime]::UtcNow -lt $Deadline) {
-            foreach ($Identity in @(
-                Get-OwnedProcessTree -RootId $Process.Id `
-                    -ExpectedRootIdentity $RootIdentity
-            )) {
-                $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
-                $Identities[$Key] = $Identity
-                Register-OwnedIdentity -Identity $Identity
-            }
+            $null = Update-OwnedProcessForest -Identities $Identities
             Start-Sleep -Milliseconds 25
         }
         if (-not $Process.HasExited) {
@@ -683,27 +778,12 @@ function Wait-UninstallerTreeGone {
             throw "$Category exceeded its outer harness deadline"
         }
 
-        # Win32_Process retains ParentProcessId on a live clone even after its
-        # parent exits. One final root snapshot closes the parent-exit clone race.
-        $FinalSnapshot = @(
-            Get-OwnedProcessTree -RootId $Process.Id `
-                -ExpectedRootIdentity $RootIdentity
-        )
-        foreach ($Identity in $FinalSnapshot) {
-            $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
-            $Identities[$Key] = $Identity
-            Register-OwnedIdentity -Identity $Identity
-        }
+        # Only already-captured identities may discover another generation.
+        # An exited or PID-reused parent fails closed in Get-OwnedProcessTree.
+        $null = Update-OwnedProcessForest -Identities $Identities
         $TreeDeadline = [DateTime]::UtcNow.AddSeconds(30)
         while ($true) {
-            foreach ($Identity in @(
-                Get-OwnedProcessTree -RootId $Process.Id `
-                    -ExpectedRootIdentity $RootIdentity
-            )) {
-                $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
-                $Identities[$Key] = $Identity
-                Register-OwnedIdentity -Identity $Identity
-            }
+            $null = Update-OwnedProcessForest -Identities $Identities
             $LiveIdentities = @(
                 $Identities.Values |
                     Where-Object { Test-ProcessIdentityAlive -Identity $_ }
@@ -1262,6 +1342,7 @@ foreach ($Category in @("frozen", "installed", "reinstall", "uninstall")) {
     [System.IO.Directory]::CreateDirectory((Join-Path $SmokeRoot $Category)) | Out-Null
 }
 Assert-StaleParentPidEdgeRejected
+Assert-ReusedParentExitSequenceRejected
 $FixtureRoot = Join-Path $SmokeRoot "fixtures\$SpecialLeaf\native &() %! [x]"
 [System.IO.Directory]::CreateDirectory($FixtureRoot) | Out-Null
 foreach ($Fixture in @("fake-codex.cmd", "fake_codex_server.py", "fake_codex_timeout.py")) {
