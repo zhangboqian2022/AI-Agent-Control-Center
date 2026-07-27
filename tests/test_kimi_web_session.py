@@ -93,6 +93,7 @@ def test_membership_script_uses_cached_web_token_for_both_connect_services():
     assert "localStorage.getItem('access_token')" in script
     assert "'Authorization': 'Bearer ' + accessToken" in script
     assert "emit({kind: 'quota', generation, stats, subscription})" in script
+    assert "document.title = prefix + generation + ':ready:'" in script
     assert KIMI_MEMBERSHIP_URL.startswith("https://www.kimi.com/")
 
 
@@ -101,6 +102,8 @@ def test_membership_script_aborts_both_requests_after_fifteen_seconds():
 
     assert "AbortController" in script
     assert "15000" in script
+    catch_block = script.split("}).catch((error) => {", 1)[1]
+    assert catch_block.index("controller.abort();") < catch_block.index("emit({")
 
 
 def test_web_session_uses_native_system_webview_without_import_time_initialization():
@@ -185,7 +188,7 @@ def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path
     }
     session.login_state.set_may_reuse(False)
     session.view.script_result = json.dumps(payload)
-    session._on_title_changed(web_session.BRIDGE_PREFIX + "ready")
+    session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{generation}:ready:result")
     assert login_states == [(True, True)]
     assert session.login_state.may_reuse() is True
     assert quotas == [({"value": 1, "large": "x" * 100_000}, {"value": 2})]
@@ -202,8 +205,10 @@ def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path
     assert generation is not None
     session._handle_bridge({"kind": "error", "generation": generation, "message": "network"})
     session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
     session.view.script_result = "{"
-    session._on_title_changed(web_session.BRIDGE_PREFIX + "ready")
+    session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{generation}:ready:malformed")
     assert login_states[-1] == (False, False)
     assert errors == ["network", "invalid membership response"]
 
@@ -322,6 +327,71 @@ def test_bridge_payload_from_older_generation_is_ignored(qapp, monkeypatch, tmp_
     assert active_generation > old_generation
     assert session._refreshing is True
     assert quotas == []
+
+
+def test_malformed_bridge_from_older_title_generation_is_ignored(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    errors = []
+    session.error_occurred.connect(errors.append)
+
+    session.refresh()
+    old_generation = session._active_refresh_generation
+    assert old_generation is not None
+    session._refresh_watchdog_fired(old_generation)
+    errors.clear()
+    session.refresh()
+    active_generation = session._active_refresh_generation
+    assert active_generation is not None
+    script_count = len(session.view.scripts)
+
+    for malformed in ("", "{"):
+        session.view.script_result = malformed
+        session._on_title_changed(
+            f"{web_session.BRIDGE_PREFIX}{old_generation}:ready:late-result"
+        )
+
+    assert active_generation > old_generation
+    assert session._active_refresh_generation == active_generation
+    assert session._refreshing is True
+    assert errors == []
+    assert len(session.view.scripts) == script_count
+
+
+def test_close_invalidates_refresh_without_changing_gate_or_emitting_late_results(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    errors = []
+    quotas = []
+    session.error_occurred.connect(errors.append)
+    session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
+
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+
+    session.close()
+    session._refresh_watchdog_fired(generation)
+    session._handle_bridge(
+        {
+            "kind": "quota",
+            "generation": generation,
+            "stats": {"late": True},
+            "subscription": {},
+        }
+    )
+
+    assert session.login_state.may_reuse() is True
+    assert session._refreshing is False
+    assert session._active_refresh_generation is None
+    assert session._refresh_watchdog.isActive() is False
+    assert errors == []
+    assert quotas == []
+    assert session.view.deleted is True
 
 
 def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_path):
