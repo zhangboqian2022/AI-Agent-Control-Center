@@ -393,11 +393,11 @@ end;
 function CleanupCommittedInternalPayload: Boolean;
 var
   Manifest: TArrayOfString;
-  ManifestPath: String;
+  ManifestFilePath: String;
 begin
   Result := False;
-  ManifestPath := ExpandConstant('{app}\uninstall\internal-manifest-v1.txt');
-  if not LoadStringsFromFile(ManifestPath, Manifest) then
+  ManifestFilePath := ExpandConstant('{app}\uninstall\internal-manifest-v1.txt');
+  if not LoadStringsFromFile(ManifestFilePath, Manifest) then
   begin
     Log('AACC_MANIFEST_CLEANUP result=manifest-unavailable');
     Exit;
