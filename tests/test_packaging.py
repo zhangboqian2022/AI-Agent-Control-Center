@@ -1,8 +1,10 @@
+import hashlib
 import os
 import re
 import subprocess
 import sys
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -317,14 +319,167 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
         assert module in workflow
     assert 'Compress-Archive -Path "dist\\AACC"' in workflow
     assert "AACC-*-windows-x64-${{ matrix.os }}.zip" in workflow
-    assert "Upload Windows portable package" in workflow
-    assert "AACC-windows-x64-${{ matrix.os }}" in workflow
+    assert "Package verified Windows portable app" in workflow
+    assert "windows-verified-${{ matrix.os }}" in workflow
 
     spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
     hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]
     assert "aacc.win32" not in hidden_imports
     assert "aacc.automation_windows" not in hidden_imports
     assert "aacc.hotkeys_windows" not in hidden_imports
+
+
+def test_ci_runs_real_windows_product_smoke_before_primary_artifact_publish() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "windows-2022" in workflow
+    assert "windows-2025-vs2026" in workflow
+    assert "windows-latest" not in workflow
+    assert "scripts/test_windows_package.ps1" in workflow
+    assert "AACC_SKIP_INSTALLER: 1" in workflow
+    assert "windows-smoke-${{ matrix.os }}" in workflow
+    assert "Smoke frozen Windows product" in workflow
+    assert "Smoke frozen and installed Windows product" in workflow
+    assert "needs: [windows-package]" in workflow
+    assert "scripts/verify_windows_artifacts.py" in workflow
+    assert "AACC-*-Setup.exe" in workflow
+    assert "AACC-*-Setup.exe.sha256" in workflow
+    assert "windows-smoke" in workflow
+    primary_job = workflow.split("publish-windows-artifacts:", 1)[1]
+    assert "if: always()" not in primary_job
+    assert "if: failure()" not in primary_job
+    assert "if-no-files-found: error" in primary_job
+    assert "Hosted Windows Server evidence only" in workflow
+
+
+def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> None:
+    script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+
+    for required in (
+        "Wait-ProcessDeadline",
+        "Stop-OwnedProcessIdentity",
+        "CreationTimeUtc",
+        "Path",
+        "GetAccessRules",
+        "AreAccessRulesProtected",
+        "S-1-5-18",
+        "S-1-5-32-544",
+        "InheritanceFlags",
+        "PropagationFlags",
+        "Get-TreeManifest",
+        "Get-RegistryManifest",
+        "Get-ShortcutManifest",
+        "Get-AppDataManifest",
+        "rollback-sentinel.bin",
+        "fake_legacy_aacc.cpp",
+        "lock_payload.cpp",
+        "--shutdown-for-update",
+        "/NOCLOSEAPPLICATIONS",
+        "/NOFORCECLOSEAPPLICATIONS",
+        "/NORESTARTAPPLICATIONS",
+        "AACC_CONFIG_PATH",
+        "AACC_DATABASE_PATH",
+        "AACC_CODEX_EXECUTABLE",
+        "QT_QPA_PLATFORM",
+        "20",
+        "Server",
+    ):
+        assert required in script
+    assert "pendingfilerenameoperations" in script.lower()
+    assert "Get-Process cmd" not in script
+    assert "Get-Process python" not in script
+    assert "taskkill" not in script.lower()
+    assert "Stop-Process -Name" not in script
+
+
+def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
+    fake_server = (ROOT / "tests" / "windows" / "fake_codex_server.py").read_text(encoding="utf-8")
+    timeout_server = (ROOT / "tests" / "windows" / "fake_codex_timeout.py").read_text(
+        encoding="utf-8"
+    )
+    fake_cmd = (ROOT / "tests" / "windows" / "fake-codex.cmd").read_text(encoding="utf-8")
+    legacy = (ROOT / "tests" / "windows" / "fake_legacy_aacc.cpp").read_text(encoding="utf-8")
+    locker = (ROOT / "tests" / "windows" / "lock_payload.cpp").read_text(encoding="utf-8")
+
+    assert "initialize" in fake_server
+    assert "account/rateLimits/read" in fake_server
+    assert "AACC_FAKE_CODEX_MARKER" in fake_server
+    assert "CREATE_NEW_PROCESS_GROUP" in timeout_server
+    assert "creation_time" in timeout_server
+    assert "image_path" in timeout_server
+    assert "%~dp0" in fake_cmd
+    assert "AI Agent Control Center" in legacy
+    assert "CreateWindowExW" in legacy
+    assert "false-success" in legacy
+    assert "return 0;" in legacy
+    assert "FILE_SHARE_READ" not in locker
+    assert "FILE_SHARE_WRITE" not in locker
+    assert "FILE_SHARE_DELETE" not in locker
+    assert "LOCK_READY" in locker
+
+
+def test_windows_artifact_verifier_rejects_malformed_checksum_and_zip_layout() -> None:
+    script = (ROOT / "scripts" / "verify_windows_artifacts.py").read_text(encoding="utf-8")
+
+    for required in (
+        "AACC.exe",
+        "aacc-spawn.exe",
+        "_internal",
+        "sha256",
+        "is_absolute",
+        "PurePosixPath",
+        "setup_path",
+        "portable_path",
+        "built_root",
+    ):
+        assert required in script
+    assert "utf-8-sig" not in script
+    assert ".." in script
+
+
+def test_windows_artifact_verifier_accepts_exact_tree_and_rejects_case_collision(
+    tmp_path: Path,
+) -> None:
+    built_root = tmp_path / "dist" / "AACC"
+    internal = built_root / "_internal"
+    internal.mkdir(parents=True)
+    (built_root / "AACC.exe").write_bytes(b"gui")
+    (built_root / "aacc-spawn.exe").write_bytes(b"broker")
+    (internal / "runtime.bin").write_bytes(b"runtime")
+    setup = tmp_path / "AACC-1.4.2-Setup.exe"
+    setup.write_bytes(b"s" * (1024 * 1024 + 1))
+    checksum = tmp_path / f"{setup.name}.sha256"
+    checksum.write_bytes(
+        f"{hashlib.sha256(setup.read_bytes()).hexdigest()}  {setup.name}\n".encode()
+    )
+    portable = tmp_path / "portable.zip"
+
+    def write_portable(*, collision: bool) -> None:
+        with zipfile.ZipFile(portable, "w") as archive:
+            archive.writestr("AACC/_internal/", b"")
+            archive.writestr("AACC/AACC.exe", b"gui")
+            archive.writestr("AACC/aacc-spawn.exe", b"broker")
+            archive.writestr("AACC/_internal/runtime.bin", b"runtime")
+            if collision:
+                archive.writestr("AACC/aacc.exe", b"collision")
+
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "verify_windows_artifacts.py"),
+        "--setup",
+        str(setup),
+        "--checksum",
+        str(checksum),
+        "--portable",
+        str(portable),
+        "--built-root",
+        str(built_root),
+    ]
+    write_portable(collision=False)
+    assert subprocess.run(command, check=False).returncode == 0
+
+    write_portable(collision=True)
+    assert subprocess.run(command, check=False, capture_output=True).returncode != 0
 
 
 def test_windows_spec_includes_broker_python_module_but_not_native_binary() -> None:

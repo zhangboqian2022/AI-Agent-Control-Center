@@ -61,13 +61,22 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert code.count("FindWindowByWindowName(AACCWindowTitle)") >= 2
     assert "if AACCWindow = 0 then" in code
     assert "(FindWindowByWindowName(AACCWindowTitle) <> 0) then" in code
-    assert "ewWaitUntilTerminated" in code
-    assert code.count("Exec(") == 1
+    assert "ShutdownCapabilityName = 'shutdown-v1.capability'" in code
+    assert "if not FileExists(CapabilityPath) then" in code
+    assert "ShutdownControlTimeoutMilliseconds = 25000" in code
+    assert "CreateProcessW@kernel32.dll" in code
+    assert "WaitForSingleObject(" in code
+    assert "WaitResult = WAIT_TIMEOUT" in code
+    assert "TerminateProcess(ProcessInfo.hProcess, 124)" in code
+    assert "newly created control invocation" in code
+    assert "never a handle to the existing main AACC process" in code
+    assert "OpenProcess(" not in code
+    assert "ewWaitUntilTerminated" not in code
+    assert "Exec(" not in code
     assert "ShellExec(" not in code
     assert "ResultCode <> 0" in code
-    assert "FileExists(ExpandConstant('{app}\\AACC.exe'))" in code
+    assert "FileExists(AACCPath)" in code
     assert "taskkill" not in lowered
-    assert "terminateprocess" not in lowered
     assert "stop-process" not in lowered
     assert "wm_close" not in lowered
     assert "forcecloseapplications" not in lowered
@@ -126,6 +135,9 @@ def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
     assert 'Get-ChildItem -LiteralPath $InnoRoot -Filter "ISCC.exe" -File -Recurse' in text
     assert "$IsccCandidates.Count -ne 1" in text
     assert 'Join-Path $InnoRoot "ISCC.exe"' not in text
+    assert "AACC_INNO_LAYOUT candidate_count=" in text
+    assert "AACC_INNO_DEFAULT_DESKTOP candidate_count=" in text
+    assert "$IsccCandidates = $DefaultDesktopCandidates" not in text
 
 
 def test_windows_installer_build_validates_inputs_and_fresh_output() -> None:
