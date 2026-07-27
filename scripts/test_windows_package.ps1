@@ -22,6 +22,9 @@ public static class AaccSmokeNativeProcess
         StringBuilder imagePath,
         ref uint imagePathLength
     );
+
+    [DllImport("kernel32.dll")]
+    public static extern ulong GetTickCount64();
 }
 '@
 
@@ -1599,7 +1602,7 @@ function Test-InstalledControlRefusal {
                 current = $CurrentIdentity
                 error = $IdentityError
                 utc = [DateTime]::UtcNow.ToString("o")
-                tick = [Environment]::TickCount64
+                tick = [AaccSmokeNativeProcess]::GetTickCount64()
             })
         $After = Get-FullStateManifest
         Write-SmokeEvidence -Category "$Action\$Scenario" -Name "after-manifest.json" `

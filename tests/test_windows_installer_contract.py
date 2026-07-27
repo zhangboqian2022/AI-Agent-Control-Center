@@ -123,8 +123,11 @@ def test_windows_smoke_reads_executable_path_from_the_owned_process_handle() -> 
     assert "Path = $Process.Path" not in function
     assert "$Process.MainModule.FileName" not in function
     assert "QueryFullProcessImageNameW" in text
+    assert "GetTickCount64" in text
     assert "$Process.Handle" in text
     assert "[Runtime.InteropServices.Marshal]::GetLastWin32Error()" in text
+    assert "[Environment]::TickCount64" not in text
+    assert "[AaccSmokeNativeProcess]::GetTickCount64()" in text
 
 
 def test_windows_smoke_fixtures_use_only_command_line_unicode_definitions() -> None:
