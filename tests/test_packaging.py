@@ -395,6 +395,20 @@ def test_hosted_windows_build_and_product_smoke_run_under_windows_powershell_51(
         assert "shell: pwsh" not in smoke_step
 
 
+def test_windows_product_smoke_uses_native_qt_windows_for_shutdown_protocol() -> None:
+    script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+
+    frozen_launch = script.split("function Invoke-FrozenSmoke", 1)[1].split(
+        "function Invoke-InstalledLaunch", 1
+    )[0]
+    installed_launch = script.split("function Invoke-InstalledLaunch", 1)[1].split(
+        "function Test-InstalledControlRefusal", 1
+    )[0]
+    for launch in (frozen_launch, installed_launch):
+        assert '$env:QT_QPA_PLATFORM = "windows"' in launch
+        assert '$env:QT_QPA_PLATFORM = "offscreen"' not in launch
+
+
 def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> None:
     script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
 

@@ -1328,7 +1328,9 @@ function Invoke-FrozenSmoke {
     $env:AACC_DATABASE_PATH = $DatabasePath
     $env:AACC_CODEX_EXECUTABLE = $FakeCodexCmd
     $env:AACC_FAKE_CODEX_PYTHON = $PythonPath
-    $env:QT_QPA_PLATFORM = "offscreen"
+    # The shutdown protocol is delivered to the real Win32 HWND. Qt's offscreen
+    # plugin has no native window, so product smoke must use the Windows plugin.
+    $env:QT_QPA_PLATFORM = "windows"
     $Owned = Start-And-VerifyProduct -Executable $FrozenAacc `
         -ConfigPath $ConfigPath -DatabasePath $DatabasePath -LogPath $LogPath `
         -MarkerPath $MarkerPath -Category "frozen AACC"
@@ -1351,7 +1353,8 @@ function Invoke-InstalledLaunch {
     $env:APPDATA = $IsolatedRoaming
     $env:AACC_CODEX_EXECUTABLE = $FakeCodexCmd
     $env:AACC_FAKE_CODEX_PYTHON = $PythonPath
-    $env:QT_QPA_PLATFORM = "offscreen"
+    # Keep installed-product smoke on a real Win32 HWND for graceful shutdown.
+    $env:QT_QPA_PLATFORM = "windows"
     $ConfigPath = Join-Path $AppDataRoot "config.yaml"
     $DatabasePath = Join-Path $AppDataRoot "aacc.db"
     $LogPath = Join-Path $AppDataRoot "logs\app.log"
