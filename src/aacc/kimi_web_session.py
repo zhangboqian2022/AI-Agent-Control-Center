@@ -12,6 +12,7 @@ from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
 
 from aacc.file_security import protect_directory
+from aacc.kimi_web_login_state import KimiWebLoginStateStore
 
 KIMI_MEMBERSHIP_URL = "https://www.kimi.com/membership/subscription"
 KIMI_ORIGIN_HOST = "www.kimi.com"
@@ -97,12 +98,18 @@ class KimiWebSession(QObject):
     quota_received = Signal(object, object)
     error_occurred = Signal(str)
 
-    def __init__(self, config_dir: Path, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        config_dir: Path,
+        parent: QObject | None = None,
+        login_state: KimiWebLoginStateStore | None = None,
+    ) -> None:
         super().__init__(parent)
         if not _webview_initialized:
             raise RuntimeError("native web view is not initialized")
         self.storage_path = config_dir / "kimi-web-session"
         protect_directory(self.storage_path)
+        self.login_state = login_state or KimiWebLoginStateStore(config_dir)
         self.view = QWebView()
         self.view.settings().setAttribute(self.view.settings().WebAttribute.JavaScriptEnabled, True)
         self.view.settings().setAttribute(
@@ -136,7 +143,7 @@ class KimiWebSession(QObject):
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def refresh(self) -> None:
-        if self._refreshing:
+        if self._refreshing or not self.login_state.may_reuse():
             return
         self._refreshing = True
         url = self.view.url()
@@ -147,6 +154,7 @@ class KimiWebSession(QObject):
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def logout(self) -> None:
+        self.login_state.set_may_reuse(False)
         self.view.runJavaScript(
             "try { localStorage.clear(); sessionStorage.clear(); } catch (_) {}",
             lambda _result: None,
@@ -216,6 +224,7 @@ class KimiWebSession(QObject):
                 sorted(stats) if isinstance(stats, dict) else [],
                 sorted(subscription) if isinstance(subscription, dict) else [],
             )
+            self.login_state.set_may_reuse(True)
             self.login_state_changed.emit(True)
             self.quota_received.emit(stats, subscription)
             if self._login_dialog is not None:
@@ -226,6 +235,7 @@ class KimiWebSession(QObject):
                 "Kimi web quota refresh unauthorized message=%s",
                 payload.get("message"),
             )
+            self.login_state.set_may_reuse(False)
             self.login_state_changed.emit(False)
             return
         message = payload.get("message")
