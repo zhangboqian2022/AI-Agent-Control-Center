@@ -296,8 +296,7 @@ end;
 function PreflightFailureMessage: String;
 begin
   Result :=
-    'AACC 的现有程序文件正在使用或不可安全替换。请完全退出 AACC，然后重试。' +
-    #13#10 +
+    'AACC 的现有程序文件正在使用或不可安全替换。请完全退出 AACC，然后重试。' + #13#10 +
     'Existing AACC program files are in use or cannot be replaced safely. ' +
     'Exit AACC completely and retry.';
 end;
