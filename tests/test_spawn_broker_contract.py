@@ -29,6 +29,16 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     assert "Get-AaccToolPaths -Candidate $candidate" in toolchain
     assert "validate_broker_response.py" in script
     assert "ConvertFrom-Json" not in script
+    assert "Get-SafeBrokerValidatorDiagnostic" in script
+    assert "RedirectStandardOutput" in script
+    assert "RedirectStandardError" in script
+    assert "broker JSON validation failed exit=" in script
+    validator_function = script.index("function Assert-BrokerResponseJson")
+    validator_try = script.index("try {", validator_function)
+    assert validator_try < script.index("$ResponsePath, $Output", validator_function)
+    assert "$ValidatorStarted" in script
+    assert "WaitForExit(5000)" in script
+    assert "Remove-Item -LiteralPath $ResponsePath, $PayloadPath, $PidPath" in script
     for variable in ("VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH"):
         assert variable in toolchain
     for root in ("VCToolsInstallDir", "WindowsSdkDir"):

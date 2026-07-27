@@ -314,6 +314,27 @@ function Assert-BrokerRejectsUnsafeTarget {
     }
 }
 
+function Get-SafeBrokerValidatorDiagnostic {
+    param([string]$Diagnostic)
+
+    $Pattern = (
+        '^AACC_BROKER_VALIDATOR code=(?:2|3|4) reason=(?:' +
+        'response-read|payload-read|response-encoding|response-json|' +
+        'payload-encoding|response-type|args|bundle-in-path|preserved-path|' +
+        'broker-target|pid-type|pid-range|request-type|request-id-type|' +
+        'request-id|request-method|request-payload|pid-write) ' +
+        'pos=(?:none|\d+) response_len=(?:\d+|unavailable) ' +
+        'response_sha256=(?:[0-9a-f]{64}|unavailable) ' +
+        'payload_len=(?:\d+|unavailable) ' +
+        'payload_sha256=(?:[0-9a-f]{64}|unavailable)$'
+    )
+    $Match = [regex]::Match($Diagnostic.Trim(), $Pattern)
+    if ($Match.Success) {
+        return $Match.Value
+    }
+    return "unavailable"
+}
+
 function Assert-BrokerResponseJson {
     param(
         [Parameter(Mandatory = $true)][string]$Output,
@@ -325,34 +346,71 @@ function Assert-BrokerResponseJson {
     $PayloadPath = Join-Path $IntegrationRoot ("broker-payload-" + [guid]::NewGuid() + ".txt")
     $PidPath = Join-Path $IntegrationRoot ("broker-pid-" + [guid]::NewGuid() + ".txt")
     $ValidatorPath = Join-Path $Root "tests\native\validate_broker_response.py"
-    if (-not (Test-Path -LiteralPath $ValidatorPath -PathType Leaf)) {
-        throw "broker JSON validator is unavailable"
-    }
-    [System.IO.File]::WriteAllText($ResponsePath, $Output, [System.Text.UTF8Encoding]::new($false))
-    [System.IO.File]::WriteAllText($PayloadPath, $Payload, [System.Text.UTF8Encoding]::new($false))
-    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $StartInfo.FileName = $PythonExecutable
-    $StartInfo.Arguments = (
-        "`"$ValidatorPath`" --response `"$ResponsePath`" --payload `"$PayloadPath`" " +
-        "--request-id $RequestId --pid-file `"$PidPath`""
-    )
-    $StartInfo.UseShellExecute = $false
-    $StartInfo.CreateNoWindow = $true
-    $Validator = New-Object System.Diagnostics.Process
-    $Validator.StartInfo = $StartInfo
+    $Validator = $null
+    $ValidatorStarted = $false
     try {
-        if (-not $Validator.Start() -or -not $Validator.WaitForExit(10000)) {
-            try { if (-not $Validator.HasExited) { $Validator.Kill() } } catch {}
-            try { $null = $Validator.WaitForExit(5000) } catch {}
-            throw "broker JSON validator timed out"
+        if (-not (Test-Path -LiteralPath $ValidatorPath -PathType Leaf)) {
+            throw "broker JSON validator is unavailable"
         }
-        if ($Validator.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
-            throw "broker JSON validation failed"
+        [System.IO.File]::WriteAllText(
+            $ResponsePath, $Output, [System.Text.UTF8Encoding]::new($false)
+        )
+        [System.IO.File]::WriteAllText(
+            $PayloadPath, $Payload, [System.Text.UTF8Encoding]::new($false)
+        )
+        $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $StartInfo.FileName = $PythonExecutable
+        $StartInfo.Arguments = (
+            "`"$ValidatorPath`" --response `"$ResponsePath`" --payload `"$PayloadPath`" " +
+            "--request-id $RequestId --pid-file `"$PidPath`""
+        )
+        $StartInfo.UseShellExecute = $false
+        $StartInfo.CreateNoWindow = $true
+        $StartInfo.RedirectStandardOutput = $true
+        $StartInfo.RedirectStandardError = $true
+        $Validator = New-Object System.Diagnostics.Process
+        $Validator.StartInfo = $StartInfo
+        if (-not $Validator.Start()) {
+            throw "broker JSON validation failed exit=start-failed diagnostic=unavailable"
         }
-        return [int](Get-Content -LiteralPath $PidPath -Raw)
+        $ValidatorStarted = $true
+        $ValidatorOutputTask = $Validator.StandardOutput.ReadToEndAsync()
+        $ValidatorErrorTask = $Validator.StandardError.ReadToEndAsync()
+        if (-not $Validator.WaitForExit(10000)) {
+            throw "broker JSON validation failed exit=timeout diagnostic=timeout"
+        }
+        $ValidatorOutput = $ValidatorOutputTask.GetAwaiter().GetResult().Trim()
+        $ValidatorError = $ValidatorErrorTask.GetAwaiter().GetResult().Trim()
+        $ValidatorExitCode = $Validator.ExitCode
+        $SafeDiagnostic = Get-SafeBrokerValidatorDiagnostic -Diagnostic $ValidatorError
+        if ($ValidatorExitCode -ne 0) {
+            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=$SafeDiagnostic"
+        }
+        if (-not [string]::IsNullOrEmpty($ValidatorOutput)) {
+            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=validator-stdout"
+        }
+        if (-not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
+            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=pid-file-missing"
+        }
+        $ChildPid = 0
+        $ChildPidText = Get-Content -LiteralPath $PidPath -Raw
+        if (-not [int]::TryParse($ChildPidText, [ref]$ChildPid) -or $ChildPid -le 0) {
+            throw "broker JSON validation failed exit=$ValidatorExitCode diagnostic=pid-file-invalid"
+        }
+        return $ChildPid
     }
     finally {
-        $Validator.Dispose()
+        if ($null -ne $Validator) {
+            if ($ValidatorStarted) {
+                $ValidatorExited = $false
+                try { $ValidatorExited = $Validator.HasExited } catch {}
+                if (-not $ValidatorExited) {
+                    try { $Validator.Kill() } catch {}
+                    try { $null = $Validator.WaitForExit(5000) } catch {}
+                }
+            }
+            $Validator.Dispose()
+        }
         Remove-Item -LiteralPath $ResponsePath, $PayloadPath, $PidPath -Force -ErrorAction SilentlyContinue
     }
 }
