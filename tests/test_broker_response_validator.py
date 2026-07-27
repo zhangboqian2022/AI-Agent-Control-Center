@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 ROOT = Path(__file__).parents[1]
 VALIDATOR = ROOT / "tests" / "native" / "validate_broker_response.py"
+MISSING = object()
 
 
 def run_validator(
@@ -36,18 +42,42 @@ def run_validator(
     )
 
 
+def valid_response(payload: str) -> dict[str, Any]:
+    return {
+        "args": ["app-server", "--stdio"],
+        "request": {"id": 7, "method": "account/rateLimits/read", "payload": payload},
+        "bundle_in_path": False,
+        "preserved_path_present": True,
+        "broker_target_matches_expected": True,
+        "pid": 123,
+    }
+
+
+def assert_safe_diagnostic(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    code: int,
+    reason: str,
+    response: str,
+    payload: str,
+    marker: str,
+) -> None:
+    assert completed.returncode == code
+    assert completed.stdout == ""
+    assert marker not in completed.stdout
+    assert marker not in completed.stderr
+    assert completed.stderr == (
+        f"AACC_BROKER_VALIDATOR code={code} reason={reason} pos=none "
+        f"response_len={len(response.encode())} "
+        f"response_sha256={hashlib.sha256(response.encode()).hexdigest()} "
+        f"payload_len={len(payload.encode())} "
+        f"payload_sha256={hashlib.sha256(payload.encode()).hexdigest()}\n"
+    )
+
+
 def test_validator_preserves_a_70k_payload(tmp_path: Path) -> None:
     payload = "x" * 70_000
-    response = json.dumps(
-        {
-            "args": ["app-server", "--stdio"],
-            "request": {"id": 7, "method": "account/rateLimits/read", "payload": payload},
-            "bundle_in_path": False,
-            "preserved_path_present": True,
-            "broker_target_matches_expected": True,
-            "pid": 123,
-        }
-    )
+    response = json.dumps(valid_response(payload))
 
     pid_path = tmp_path / "child.pid"
     completed = run_validator(tmp_path, response, payload, pid_path=pid_path)
@@ -58,27 +88,70 @@ def test_validator_preserves_a_70k_payload(tmp_path: Path) -> None:
     assert pid_path.read_text(encoding="ascii") == "123"
 
 
-def test_validator_rejects_bad_json_without_echoing_payload(tmp_path: Path) -> None:
-    payload = "secret" * 10_000
+def test_validator_reports_json_position_without_echoing_a_secret(tmp_path: Path) -> None:
+    marker = "AACC_SECRET_MARKER_4ce1"
+    payload = marker * 10
+    response = "{invalid"
 
-    invalid = run_validator(tmp_path, "not json", payload)
-    assert invalid.returncode == 3
-    assert payload not in invalid.stderr
+    completed = run_validator(tmp_path, response, payload)
 
-    trailing_data = run_validator(tmp_path, "{} trailing data", payload)
-    assert trailing_data.returncode == 3
-    assert payload not in trailing_data.stderr
-
-    mismatch_response = json.dumps(
-        {
-            "args": ["app-server", "--stdio"],
-            "request": {"id": 7, "method": "account/rateLimits/read", "payload": "wrong"},
-            "bundle_in_path": False,
-            "preserved_path_present": True,
-            "broker_target_matches_expected": True,
-            "pid": 123,
-        }
+    assert completed.returncode == 3
+    assert completed.stdout == ""
+    assert marker not in completed.stdout
+    assert marker not in completed.stderr
+    assert completed.stderr == (
+        "AACC_BROKER_VALIDATOR code=3 reason=response-json pos=1 "
+        f"response_len={len(response.encode())} "
+        f"response_sha256={hashlib.sha256(response.encode()).hexdigest()} "
+        f"payload_len={len(payload.encode())} "
+        f"payload_sha256={hashlib.sha256(payload.encode()).hexdigest()}\n"
     )
-    mismatch = run_validator(tmp_path, mismatch_response, payload)
-    assert mismatch.returncode == 4
-    assert payload not in mismatch.stderr
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("args", ["app-server"], "args"),
+        ("bundle_in_path", True, "bundle-in-path"),
+        ("preserved_path_present", False, "preserved-path"),
+        ("broker_target_matches_expected", False, "broker-target"),
+        ("pid", True, "pid-type"),
+        ("pid", -1, "pid-range"),
+        ("pid", 0, "pid-range"),
+        ("request", [], "request-type"),
+        ("request.id", True, "request-id-type"),
+        ("request.id", 7.0, "request-id-type"),
+        ("request.id", MISSING, "request-id-type"),
+        ("request.id", 8, "request-id"),
+        ("request.method", "wrong", "request-method"),
+        ("request.payload", "wrong", "request-payload"),
+    ],
+)
+def test_validator_rejects_each_schema_field_without_secret_or_pid_file(
+    tmp_path: Path, field: str, value: Any, reason: str
+) -> None:
+    marker = "AACC_SECRET_MARKER_4ce1"
+    payload = marker * 10
+    response_data = valid_response(payload)
+    if "." in field:
+        group, key = field.split(".", maxsplit=1)
+        if value is MISSING:
+            del response_data[group][key]
+        else:
+            response_data[group][key] = value
+    else:
+        response_data[field] = value
+    response = json.dumps(deepcopy(response_data))
+    pid_path = tmp_path / "child.pid"
+
+    completed = run_validator(tmp_path, response, payload, pid_path=pid_path)
+
+    assert_safe_diagnostic(
+        completed,
+        code=4,
+        reason=reason,
+        response=response,
+        payload=payload,
+        marker=marker,
+    )
+    assert not pid_path.exists()
