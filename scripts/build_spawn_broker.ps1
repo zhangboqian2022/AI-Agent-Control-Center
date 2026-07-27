@@ -35,6 +35,19 @@ if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
     throw "vswhere.exe is required to locate an installed Visual Studio MSVC toolchain"
 }
 
+$PythonExecutable = ((
+    & uv run python -c "import sys; print(sys.executable)" |
+        Select-Object -First 1
+) | Out-String).Trim()
+try {
+    $PythonExecutable = ConvertTo-AaccLocalPath -Path $PythonExecutable
+} catch {
+    throw "failed to locate the integration-test Python executable"
+}
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $PythonExecutable -PathType Leaf)) {
+    throw "failed to locate the integration-test Python executable"
+}
+
 $Candidates = Get-AaccVsWhereCandidates -VsWherePath $VsWhere
 $Toolchain = Select-AaccMsvcToolchain -Candidates $Candidates
 Set-AaccToolchainEnvironment -Toolchain $Toolchain
@@ -430,14 +443,6 @@ foreach ($Fixture in @(
 $FakeCmd = Join-Path $TargetRoot "fake_codex.cmd"
 $FakeBat = Join-Path $TargetRoot "fake_codex.bat"
 Copy-Item -LiteralPath $FakeCmd -Destination $FakeBat -Force
-$PythonExecutable = ((
-    & uv run python -c "import sys; print(sys.executable)" |
-        Select-Object -First 1
-) | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $PythonExecutable)) {
-    throw "failed to locate the integration-test Python executable"
-}
-
 $OldFakePython = $env:FAKE_CODEX_PYTHON
 $OldTestExitCode = $env:AACC_TEST_EXIT_CODE
 $OldDescendantPidFile = $env:AACC_TEST_DESCENDANT_PID_FILE

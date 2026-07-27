@@ -66,15 +66,29 @@ try {
         }
     }
 
+    Assert-Throws -Message "empty JSON array did not fail closed" -Action {
+        ConvertTo-AaccVsCandidates -Json "[]"
+    }
+    $singleObject = ConvertTo-AaccVsCandidates -Json '{"installationPath":"C:\\VS17","installationVersion":"17.9.0"}'
+    Assert-True -Condition ($singleObject.Count -eq 1) -Message "single JSON object was not parsed"
+    $singleElementArray = ConvertTo-AaccVsCandidates -Json '[{"installationPath":"C:\\VS17","installationVersion":"17.9.0"}]'
+    Assert-True -Condition ($singleElementArray.Count -eq 1) -Message "single JSON array element was not parsed"
     $sorted = ConvertTo-AaccVsCandidates -Json @'
 [
   {"installationPath":"C:\\VS17","installationVersion":"17.9.0"},
   {"installationPath":"C:\\VS18","installationVersion":"18.7.0"},
-  {"installationPath":"C:\\VS18","installationVersion":"18.6.0"}
+  {"installationPath":"c:\\vs18\\","installationVersion":"18.6.0"}
 ]
 '@
     Assert-True -Condition ($sorted.Count -eq 2) -Message "candidates were not deduplicated"
     Assert-True -Condition ($sorted[0].InstallationVersionText -eq "18.7.0") -Message "candidates were not sorted"
+    foreach ($unsafePath in @("relative", "\\\\server\\share", "\\\\?\\C:\\VS", "C:\\bad$([char]1)path")) {
+        Assert-Throws -Message "unsafe candidate path was accepted" -Action {
+            ConvertTo-AaccLocalPath -Path $unsafePath
+        }
+    }
+    $normalized = ConvertTo-AaccLocalPath -Path "C:\\VS\\1\\..\\2\\"
+    Assert-True -Condition ($normalized -eq "C:\\VS\\2") -Message "candidate path was not normalized"
 
     $prefixRoot = Join-Path $root "VS\1"
     $prefixCollision = Join-Path $root "VS\10\cl.exe"
@@ -87,9 +101,17 @@ try {
     $newestMissingVsDevCmd = New-ToolchainFixture -Name "vs18-missing-devcmd" -Version "18.7.0" -CreateVsDevCmd $false
     $newerMissingTool = New-ToolchainFixture -Name "vs18-missing-tool" -Version "18.6.0" -MissingTool "dumpbin.exe"
     $olderValid = New-ToolchainFixture -Name "vs17-valid" -Version "17.9.0"
+    $borrowedVc = New-ToolchainFixture -Name "vs17-borrowed-vc" -Version "17.8.0"
     $fixtures = @{}
     foreach ($fixture in @($newestMissingVsDevCmd, $newerMissingTool, $olderValid)) {
         $fixtures[$fixture.Candidate.InstallationPath] = $fixture
+    }
+    $borrowedEnvironment = @{}
+    foreach ($key in $olderValid.Environment.Keys) { $borrowedEnvironment[$key] = $olderValid.Environment[$key] }
+    $borrowedEnvironment["VCToolsInstallDir"] = $borrowedVc.Environment["VCToolsInstallDir"]
+    $borrowedEnvironment["PATH"] = "$($borrowedVc.Environment["PATH"]);$($olderValid.Environment["WindowsSdkDir"])\\bin\\x64"
+    Assert-Throws -Message "candidate accepted another Visual Studio VC root" -Action {
+        Get-AaccToolPaths -Candidate $olderValid.Candidate -Environment $borrowedEnvironment
     }
     $oldSentinel = [Environment]::GetEnvironmentVariable("AACC_TOOLCHAIN_TEST", "Process")
     [Environment]::SetEnvironmentVariable("AACC_TOOLCHAIN_TEST", "parent", "Process")
@@ -139,6 +161,15 @@ try {
             [pscustomobject]@{ ExitCode = -1; StdOut = ""; TimedOut = $true }
         }
     }
+    $largeArguments = '-NoLogo -NoProfile -Command "& { $text = ''x'' * 131072; [Console]::Out.Write($text); [Console]::Error.Write($text) }"'
+    $largeCapture = Invoke-AaccProcessCapture -FilePath "powershell.exe" -Arguments $largeArguments -TimeoutSeconds 5
+    Assert-True -Condition ($largeCapture.StdOut.Length -eq 131072) -Message "large stdout was not drained"
+    Assert-True -Condition ($largeCapture.StdErr.Length -eq 131072) -Message "large stderr was not drained"
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $timeoutCapture = Invoke-AaccProcessCapture -FilePath "powershell.exe" -Arguments '-NoLogo -NoProfile -Command "Start-Sleep -Seconds 10"' -TimeoutSeconds 1
+    $watch.Stop()
+    Assert-True -Condition $timeoutCapture.TimedOut -Message "process timeout did not fail closed"
+    Assert-True -Condition ($watch.Elapsed.TotalSeconds -lt 7) -Message "process timeout was not bounded"
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
