@@ -114,6 +114,20 @@ def test_validator_reports_json_position_without_echoing_a_secret(
     )
 
 
+def test_validator_reports_an_embedded_utf8_bom_as_a_json_error(tmp_path: Path) -> None:
+    marker = "AACC_SECRET_MARKER_4ce1"
+    payload = marker * 10
+    response = '{"request":\ufeff{"id":7}}'
+
+    completed = run_validator(tmp_path, response, payload)
+
+    assert completed.returncode == 3
+    assert "reason=response-json" in completed.stderr
+    assert "byte=239" in completed.stderr
+    assert marker not in completed.stdout
+    assert marker not in completed.stderr
+
+
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
