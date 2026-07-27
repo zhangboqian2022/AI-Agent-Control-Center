@@ -67,7 +67,7 @@ class QuotaService(QObject):
         config_dir: Path,
         *,
         version: str,
-        interval_seconds: float = 60.0,
+        interval_seconds: float = 300.0,
         client_factory: Callable[[], httpx.Client] = httpx.Client,
         parent: QObject | None = None,
     ) -> None:

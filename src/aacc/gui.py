@@ -74,6 +74,8 @@ from aacc.kimi_quota import (
     format_balance,
     format_reset_countdown,
 )
+from aacc.kimi_web_quota import merge_kimi_quota
+from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
 from aacc.task_manager import TaskManager
@@ -196,17 +198,17 @@ def _add_quota_metric_row(
 ) -> _QuotaMetricRow:
     period_label = QLabel(period)
     period_label.setObjectName("quotaPeriod")
-    period_label.setMinimumWidth(38)
+    period_label.setMinimumWidth(40)
     percent_label = QLabel("--")
     percent_label.setObjectName("quotaPercent")
     percent_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    percent_label.setMinimumWidth(30)
+    percent_label.setMinimumWidth(36)
     progress_bar = QProgressBar()
     progress_bar.setObjectName("quotaProgress")
     progress_bar.setRange(0, 100)
     progress_bar.setTextVisible(False)
-    progress_bar.setFixedHeight(5)
-    progress_bar.setMinimumWidth(45)
+    progress_bar.setFixedHeight(7)
+    progress_bar.setMinimumWidth(48)
     progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     reset_label = QLabel("--")
     reset_label.setObjectName("quotaReset")
@@ -244,14 +246,14 @@ class QuotaBar(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QGridLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
-        layout.setHorizontalSpacing(5)
-        layout.setVerticalSpacing(2)
+        layout.setHorizontalSpacing(7)
+        layout.setVerticalSpacing(4)
         self.dot = QLabel("●")
         self.dot.setObjectName("quotaDot")
         layout.addWidget(self.dot, 0, 0, Qt.AlignmentFlag.AlignTop)
         self.summary_label = QLabel("Kimi 额度")
         self.summary_label.setObjectName("quotaSummary")
-        self.summary_label.setFixedWidth(66)
+        self.summary_label.setFixedWidth(74)
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label, 0, 1, Qt.AlignmentFlag.AlignTop)
         self.balance_label = QLabel("")
@@ -260,11 +262,11 @@ class QuotaBar(QFrame):
 
         metric_layout = QGridLayout()
         metric_layout.setContentsMargins(0, 0, 0, 0)
-        metric_layout.setHorizontalSpacing(5)
-        metric_layout.setVerticalSpacing(2)
-        metric_layout.setColumnMinimumWidth(0, 38)
-        metric_layout.setColumnMinimumWidth(1, 30)
-        metric_layout.setColumnMinimumWidth(2, 45)
+        metric_layout.setHorizontalSpacing(7)
+        metric_layout.setVerticalSpacing(4)
+        metric_layout.setColumnMinimumWidth(0, 40)
+        metric_layout.setColumnMinimumWidth(1, 36)
+        metric_layout.setColumnMinimumWidth(2, 48)
         metric_layout.setColumnMinimumWidth(3, 136)
         metric_layout.setColumnStretch(2, 1)
         layout.addLayout(metric_layout, 0, 2, 3, 1)
@@ -387,22 +389,22 @@ class CodexQuotaBar(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QGridLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
-        layout.setHorizontalSpacing(5)
+        layout.setHorizontalSpacing(7)
         self.dot = QLabel("●")
         self.dot.setObjectName("quotaDot")
         layout.addWidget(self.dot, 0, 0)
         self.summary_label = QLabel("Codex 额度")
         self.summary_label.setObjectName("quotaSummary")
-        self.summary_label.setFixedWidth(66)
+        self.summary_label.setFixedWidth(74)
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label, 0, 1)
 
         metric_layout = QGridLayout()
         metric_layout.setContentsMargins(0, 0, 0, 0)
-        metric_layout.setHorizontalSpacing(5)
-        metric_layout.setColumnMinimumWidth(0, 38)
-        metric_layout.setColumnMinimumWidth(1, 30)
-        metric_layout.setColumnMinimumWidth(2, 45)
+        metric_layout.setHorizontalSpacing(7)
+        metric_layout.setColumnMinimumWidth(0, 40)
+        metric_layout.setColumnMinimumWidth(1, 36)
+        metric_layout.setColumnMinimumWidth(2, 48)
         metric_layout.setColumnMinimumWidth(3, 136)
         metric_layout.setColumnStretch(2, 1)
         layout.addLayout(metric_layout, 0, 2)
@@ -787,7 +789,7 @@ class SettingsDialog(QDialog):
         rotate_credentials.clicked.connect(window.rotate_credentials)
         layout.addWidget(rotate_credentials)
         if window.quota_service is not None:
-            layout.addWidget(QLabel("Kimi 额度（可用 API Key 替代 OAuth 授权）"))
+            layout.addWidget(QLabel("Kimi Code 备用授权（可用 API Key 替代 OAuth）"))
             api_key = QLineEdit()
             api_key.setPlaceholderText("sk-kimi-…")
             api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -795,6 +797,11 @@ class SettingsDialog(QDialog):
             save_key = QPushButton("保存 Kimi API Key")
             save_key.clicked.connect(lambda: window.save_kimi_api_key(api_key.text()))
             layout.addWidget(save_key)
+        if window.kimi_web_quota_service is not None:
+            web_login = QPushButton("登录 Kimi 会员（同步 5H / WEEK / MONTH）")
+            web_login.clicked.connect(window.open_kimi_web_login)
+            layout.addWidget(web_login)
+        if window.quota_service is not None or window.kimi_web_quota_service is not None:
             kimi_logout = QPushButton("退出 Kimi 登录")
             kimi_logout.clicked.connect(window.kimi_logout)
             layout.addWidget(kimi_logout)
@@ -999,6 +1006,7 @@ class MainWindow(QWidget):
         open_accessibility_settings_callback: Callable[[], None] | None = None,
         settings: QSettings | None = None,
         quota_service: QuotaService | None = None,
+        kimi_web_quota_service: KimiWebQuotaService | None = None,
         codex_quota_service: CodexQuotaService | None = None,
         open_url: Callable[[str], None] | None = None,
     ) -> None:
@@ -1046,7 +1054,11 @@ class MainWindow(QWidget):
         self.accessibility_trusted = accessibility_trusted
         self._open_accessibility_settings = open_accessibility_settings_callback or (lambda: None)
         self.quota_service = quota_service
+        self.kimi_web_quota_service = kimi_web_quota_service
         self.codex_quota_service = codex_quota_service
+        self._latest_kimi_code_quota: KimiQuota | None = None
+        self._latest_kimi_web_quota: KimiQuota | None = None
+        self._kimi_web_authorized = False
         self._open_url = open_url or (lambda url: QDesktopServices.openUrl(QUrl(url)))
         self._oauth_dialog: KimiOAuthDialog | None = None
         self.quota_bar: QuotaBar | None = None
@@ -1223,16 +1235,21 @@ class MainWindow(QWidget):
             layout.addWidget(self.codex_quota_bar)
             self.codex_quota_service.quota_updated.connect(self._on_codex_quota_updated)
             self.codex_quota_service.error_occurred.connect(self._on_codex_quota_error)
-        if self.quota_service is not None:
+        if self.quota_service is not None or self.kimi_web_quota_service is not None:
             self.quota_bar = QuotaBar()
             self.quota_bar.clicked.connect(self._on_quota_bar_clicked)
             layout.addWidget(self.quota_bar)
+        if self.quota_service is not None:
             self.quota_service.quota_updated.connect(self._on_quota_updated)
             self.quota_service.auth_state_changed.connect(self._on_quota_auth_state)
             self.quota_service.oauth_code_ready.connect(self._on_oauth_code_ready)
             self.quota_service.oauth_finished.connect(self._on_oauth_finished)
             self.quota_service.error_occurred.connect(self._on_quota_error)
             self._on_quota_auth_state(self.quota_service.state())
+        if self.kimi_web_quota_service is not None:
+            self.kimi_web_quota_service.quota_updated.connect(self._on_kimi_web_quota_updated)
+            self.kimi_web_quota_service.login_state_changed.connect(self._on_kimi_web_login_state)
+            self.kimi_web_quota_service.error_occurred.connect(self._on_quota_error)
 
         self.discovery_warning = QFrame()
         self.discovery_warning.setObjectName("discoveryWarning")
@@ -1559,6 +1576,14 @@ class MainWindow(QWidget):
                 self.tray.showMessage(card.task.name, state.message or STATUS_NAMES[state.status])
 
     def _on_quota_bar_clicked(self) -> None:
+        if self.kimi_web_quota_service is not None:
+            if not self._kimi_web_authorized:
+                self.kimi_web_quota_service.open_login(self)
+                return
+            self.kimi_web_quota_service.refresh_now()
+            if self.quota_service is not None and self.quota_service.state() == STATE_AUTHORIZED:
+                self.quota_service.refresh_now()
+            return
         if self.quota_service is None:
             return
         if self.quota_service.state() == STATE_AUTHORIZED:
@@ -1575,8 +1600,36 @@ class MainWindow(QWidget):
             self.codex_quota_bar.show_error(message)
 
     def _on_quota_updated(self, quota: object) -> None:
-        if self.quota_bar is not None and isinstance(quota, KimiQuota):
-            self.quota_bar.show_quota(quota)
+        if not isinstance(quota, KimiQuota):
+            return
+        self._latest_kimi_code_quota = quota
+        self._render_kimi_quota()
+
+    def _on_kimi_web_quota_updated(self, quota: object) -> None:
+        if not isinstance(quota, KimiQuota):
+            return
+        self._latest_kimi_web_quota = quota
+        self._kimi_web_authorized = True
+        self._render_kimi_quota()
+
+    def _render_kimi_quota(self) -> None:
+        if self.quota_bar is None:
+            return
+        quota = merge_kimi_quota(
+            self._latest_kimi_web_quota,
+            self._latest_kimi_code_quota,
+        )
+        self.quota_bar.show_quota(quota)
+
+    def _on_kimi_web_login_state(self, authorized: bool) -> None:
+        self._kimi_web_authorized = authorized
+        if (
+            not authorized
+            and self.quota_bar is not None
+            and self._latest_kimi_code_quota is None
+            and self._latest_kimi_web_quota is None
+        ):
+            self.quota_bar.show_unauthorized()
 
     def _on_quota_auth_state(self, state: str) -> None:
         if self.quota_bar is None:
@@ -1618,9 +1671,20 @@ class MainWindow(QWidget):
         except ValueError as error:
             self.subtitle.setText(str(error))
 
+    def open_kimi_web_login(self) -> None:
+        if self.kimi_web_quota_service is not None:
+            self.kimi_web_quota_service.open_login(self)
+
     def kimi_logout(self) -> None:
         if self.quota_service is not None:
             self.quota_service.logout()
+        if self.kimi_web_quota_service is not None:
+            self.kimi_web_quota_service.logout()
+        self._latest_kimi_code_quota = None
+        self._latest_kimi_web_quota = None
+        self._kimi_web_authorized = False
+        if self.quota_bar is not None:
+            self.quota_bar.show_unauthorized()
 
     def set_compact(self, compact: bool) -> None:
         self.compact_mode = compact

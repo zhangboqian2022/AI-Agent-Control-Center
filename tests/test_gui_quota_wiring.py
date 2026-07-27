@@ -4,10 +4,33 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from PySide6.QtCore import QObject, Signal
 
 from aacc.quota_service import STATE_AUTHORIZED, STATE_UNAUTHORIZED, QuotaService
 
 pytest.importorskip("pytestqt")
+
+
+class FakeWebQuotaService(QObject):
+    quota_updated = Signal(object)
+    login_state_changed = Signal(bool)
+    error_occurred = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refreshes = 0
+        self.logins = 0
+        self.logouts = 0
+
+    def refresh_now(self) -> None:
+        self.refreshes += 1
+
+    def open_login(self, parent=None) -> None:
+        del parent
+        self.logins += 1
+
+    def logout(self) -> None:
+        self.logouts += 1
 
 
 def make_window(
@@ -16,6 +39,7 @@ def make_window(
     handler=None,
     with_service=True,
     codex_quota_service=None,
+    web_quota_service=None,
 ):
     from aacc.automation import MacAutomation
     from aacc.automation_executor import AutomationExecutor
@@ -45,6 +69,7 @@ def make_window(
         AutomationExecutor(automation),
         enable_tray=False,
         quota_service=service,
+        kimi_web_quota_service=web_quota_service,
         codex_quota_service=codex_quota_service,
         open_url=opened.append,
     )
@@ -98,6 +123,55 @@ def test_save_api_key_and_logout_delegate(qtbot, tmp_path):
     service.logout = lambda: logged_out.append(True)  # type: ignore[method-assign]
     window.kimi_logout()
     assert logged_out == [True]
+
+
+def test_web_quota_login_and_unified_logout_delegate_to_both_services(qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    window, code, _ = make_window(qtbot, tmp_path, web_quota_service=web)
+    code_logouts: list[bool] = []
+    code.logout = lambda: code_logouts.append(True)  # type: ignore[method-assign]
+
+    window._on_quota_bar_clicked()
+    window.kimi_logout()
+
+    assert web.logins == 1
+    assert web.logouts == 1
+    assert code_logouts == [True]
+
+
+def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp_path):
+    from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
+
+    web_service = FakeWebQuotaService()
+    window, _, _ = make_window(qtbot, tmp_path, web_quota_service=web_service)
+    reset = datetime(2026, 8, 20, tzinfo=UTC)
+
+    def item(percent: int) -> QuotaDetail:
+        return QuotaDetail(percent, 100, 100 - percent, reset, percent)
+
+    window._on_quota_updated(
+        KimiQuota(
+            five_hour=item(2),
+            weekly=item(70),
+            monthly=None,
+            membership_level=None,
+            booster=None,
+            status=QuotaStatus.PARTIAL,
+        )
+    )
+    web_service.quota_updated.emit(
+        KimiQuota(
+            five_hour=item(1),
+            weekly=None,
+            monthly=item(31),
+            membership_level="ALLEGRO",
+            booster=None,
+            status=QuotaStatus.PARTIAL,
+        )
+    )
+
+    assert window.quota_bar is not None
+    assert window.quota_bar.percent_labels() == ["1%", "70%", "31%"]
 
 
 def test_oauth_dialog_x_cancels_once(qtbot):
