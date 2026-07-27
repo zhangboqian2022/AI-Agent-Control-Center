@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import pytest
 from PySide6.QtCore import QCoreApplication
 
+from aacc.hotkeys_windows import WindowsGlobalHotkeys
 from aacc.shutdown_windows import (
     _MSG,
     AACC_WINDOW_TITLE,
@@ -478,4 +479,34 @@ def test_native_filter_dispatches_registered_windows_message_and_returns_bool(qa
     QCoreApplication.processEvents()
 
     assert result is False
+    assert window.quit_calls == 1
+
+
+def test_later_hotkey_filter_allows_shutdown_message_to_reach_shutdown_filter(qapp) -> None:
+    class CombinedWin32(FakeWin32ShutdownApi):
+        WM_HOTKEY = 0x0312
+
+        def register_hotkey(self, _hwnd: int, _hotkey_id: int, _vk: int) -> bool:
+            return True
+
+        def unregister_hotkey(self, _hwnd: int, _hotkey_id: int) -> None:
+            return None
+
+    api = CombinedWin32()
+    app = FakeQtApplication()
+    window = FakeWindow()
+    listener = WindowsShutdownListener(win32_module=api)
+    listener.start(app, window)
+    hotkeys = WindowsGlobalHotkeys({}, {}, hwnd=window.hwnd, win32_module=api, qt_app=app)
+    assert hotkeys.start() is True
+    message = _MSG(hwnd=window.hwnd, message=api.shutdown_message, wParam=0, lParam=0)
+
+    for event_filter in reversed(app.installed):
+        handled = event_filter.nativeEventFilter(
+            b"windows_generic_MSG",
+            ctypes.addressof(message),
+        )
+        assert handled is False
+    QCoreApplication.processEvents()
+
     assert window.quit_calls == 1

@@ -56,11 +56,13 @@ class _HotkeyEventFilter(QAbstractNativeEventFilter):
         self,
         _event_type: QByteArray | bytes | bytearray | memoryview[int],
         message: int,
-    ) -> tuple[bool, int]:
+    ) -> bool:
+        if not message:
+            return False
         msg = ctypes.cast(int(message), ctypes.POINTER(_MSG)).contents
         if msg.message == self._owner._win32.WM_HOTKEY:
             self._owner.dispatch_message(msg)
-        return False, 0
+        return False
 
 
 class WindowsGlobalHotkeys:
