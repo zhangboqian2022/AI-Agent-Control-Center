@@ -43,11 +43,13 @@ def test_inno_setup_packages_only_the_reviewed_onedir_roots() -> None:
     assert 'Source: "..\\dist\\AACC\\_internal\\*"; DestDir: "{app}\\_internal"' in files
     assert 'Source: "..\\build\\installer\\internal-manifest-v1.txt"' in files
     assert 'Source: "shutdown-v1.capability"' in files
-    assert len(re.findall(r"(?m)^Source:", files)) == 5
+    assert len(re.findall(r"(?m)^Source:", files)) == 6
     internal = files.index('Source: "..\\dist\\AACC\\_internal\\*"')
     aacc = files.index('Source: "..\\dist\\AACC\\AACC.exe"')
     broker = files.index('Source: "..\\dist\\AACC\\aacc-spawn.exe"')
-    assert internal < aacc < broker
+    manifest_probe = files.index('DestName: "aacc-preflight-manifest-v1.txt"; Flags: dontcopy')
+    manifest_install = files.rindex('Source: "..\\build\\installer\\internal-manifest-v1.txt"')
+    assert manifest_probe < aacc < broker < internal < manifest_install
     assert "[InstallDelete]" not in text
 
 
@@ -105,6 +107,50 @@ def test_inno_setup_rejects_internal_root_reparse_before_install() -> None:
     assert "faDirectory" not in code
     assert "internal payload root is unsafe" in code
     assert prepare.index("ValidateInternalRootForInstall") < prepare.index("ShutdownExistingAACC")
+
+
+def test_inno_setup_preflights_every_packaged_replacement_before_writing() -> None:
+    text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
+    code = _section(text, "Code")
+    prepare = code.split("function PrepareToInstall", 1)[1].split(
+        "function InitializeUninstall", 1
+    )[0]
+
+    for required in (
+        "CreateFileW@kernel32.dll",
+        "GENERIC_READ",
+        "GENERIC_WRITE",
+        "DELETE_ACCESS",
+        "OPEN_EXISTING",
+        "FILE_FLAG_BACKUP_SEMANTICS",
+        "ValidatePackagedTargetsForInstall",
+        "ValidateInternalManifestTargets",
+        "ValidateExistingTargetDirectory",
+        "ValidateExistingUninstallerTargets",
+        "for Index := 0 to 999 do",
+        "Format('unins%.3d', [Index])",
+        "BaseName + '.exe'",
+        "BaseName + '.dat'",
+        "ExpandConstant('{autoprograms}\\AACC.lnk')",
+        "ExpandConstant('{autodesktop}\\AACC.lnk')",
+        "ExtractTemporaryFile('aacc-preflight-manifest-v1.txt')",
+        "ValidateInternalManifest",
+        "installed-manifest-unavailable",
+        "installed-manifest-invalid",
+        "AACC_PREFLIGHT result=completed",
+        "AACC_PREFLIGHT result=target-unavailable",
+    ):
+        assert required in code
+    assert "ShutdownExistingAACC(ErrorMessage)" in prepare
+    assert "ValidatePackagedTargetsForInstall(ErrorMessage)" in prepare
+    assert prepare.index("ShutdownExistingAACC(ErrorMessage)") < prepare.index(
+        "ValidatePackagedTargetsForInstall(ErrorMessage)"
+    )
+    target_preflight = code.split("function ValidateInternalTargetParents", 1)[1].split(
+        "function DeleteFileWithRetries", 1
+    )[0]
+    assert "FindFirst(" not in target_preflight
+    assert "FindNext(" not in target_preflight
 
 
 def test_windows_smoke_accepts_empty_process_argument_arrays() -> None:
@@ -275,7 +321,10 @@ def test_inno_setup_cleans_only_manifest_extras_after_commit() -> None:
     assert "DeleteFile(" in code
     assert "RemoveDir(" in code
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in code
-    reparse_branch = code.split(
+    cleanup = code.split("function CleanupInternalExtras", 1)[1].split(
+        "function CleanupCommittedInternalPayload", 1
+    )[0]
+    reparse_branch = cleanup.split(
         "if (FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then", 1
     )[1].split("else if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then", 1)[0]
     assert "RemoveDirWithRetries(FullPath)" in reparse_branch

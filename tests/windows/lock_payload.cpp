@@ -53,13 +53,19 @@ int wmain(int argc, wchar_t** argv) {
     if (argc != 3 && argc != 6) {
         return 64;
     }
+    const DWORD payload_attributes = GetFileAttributesW(argv[1]);
+    if (payload_attributes == INVALID_FILE_ATTRIBUTES) {
+        return 65;
+    }
+    const bool payload_is_directory =
+        (payload_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     HANDLE payload = CreateFileW(
         argv[1],
-        GENERIC_READ,
+        GENERIC_READ | (payload_is_directory ? DELETE : 0),
         0,
         nullptr,
         OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
+        payload_is_directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL,
         nullptr);
     if (payload == INVALID_HANDLE_VALUE) {
         return 65;

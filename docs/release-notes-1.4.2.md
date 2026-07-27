@@ -48,6 +48,14 @@
 - 打包后的 Codex 只读 app-server 由 `AACC.exe` 旁的固定用途静态 broker 启动。
   broker 只接受一个固定协议与已授权的绝对 Codex 路径，并用 Job Object 管理
   子进程树；不再调用 `taskkill.exe`，也不会退化为任意命令执行器。
+- Windows 构建只接受 SHA-256 锁定且 Authenticode 有效的官方 Inno Setup
+  6.7.1 引导包；每次在新的私有目录中提取并探测真实编译引擎，不接受本地
+  编译器覆盖或复用旧提取目录，完成后安全清理。
+- 重装会在任何写入前关闭 AACC，并根据新包与已安装的精确 manifest 独占
+  预检主程序、broker、动态编号的 Inno 卸载器、安装元数据及所有新旧受管理
+  文件、目录和快捷方式；这些路径上的文件锁或重解析点会让 Setup 直接拒绝，
+  不再依赖 Inno 并不提供的旧字节事务回滚。主程序和 broker 也会先于
+  `_internal` 写入，以降低预检后竞态的影响。
 - Setup、AACC 与 broker 在 1.4.2 仍未签名。Windows 会显示“未知发布者”或
   SmartScreen；必须先核对配套 SHA-256，再选择“更多信息 → 仍要运行”。
 
@@ -55,12 +63,14 @@
 
 候选工作流在 GitHub 托管的 Windows Server 2022 与 Windows Server 2025
 环境构建原生 broker、PyInstaller onedir 与 Setup，并设计为执行冻结包首次启动、
-安装、重装、失败回滚、卸载、ACL 与进程清理冒烟。这些属于托管服务器自动证据；
-最终候选提交的完整运行结果仍需在合并前记录。
+安装、重装、写入前锁定目标拒绝、卸载、ACL 与进程清理冒烟。这些属于托管服务器
+自动证据；最终候选提交的完整运行结果仍需在合并前记录。
 
 即使上述托管工作流全部通过，它也不能证明消费级 Windows 10 或 Windows 11、
 标准用户安装、另一账户拒读、SmartScreen 交互、真实 Kimi/Codex、托盘、聚焦、
-热键与长时间运行体验。相关项目必须在真机逐项勾选。
+热键与长时间运行体验。相关项目必须在真机逐项勾选。1.4.2 也不声称安装具有
+断电恢复、完整事务性，或能消除预检后才出现的新文件锁；严格原子升级需在后续
+版本采用 staging/backup/swap 架构。
 
 ## English
 
@@ -111,6 +121,18 @@
   app-server under a Job Object. It accepts only the fixed protocol and
   authorized absolute Codex path, never arbitrary commands, and removes the
   need for `taskkill.exe`.
+- Windows builds accept only the official Inno Setup 6.7.1 bootstrap with its
+  pinned SHA-256 and a valid Authenticode signature. Every build extracts and
+  probes the real compiler engine in a fresh private directory, rejects local
+  compiler overrides and old extracted trees, and safely cleans it afterward.
+- Reinstall shuts AACC down and uses the new and installed exact manifests to
+  exclusively preflight the main executable, broker, dynamically numbered Inno
+  uninstaller, installer metadata, shortcuts, and every old or new managed file
+  before any write. Managed directories are preflighted with delete access as
+  well. Locks or reparse points on those paths stop Setup before mutation
+  instead of relying on a transactional byte-restore guarantee Inno does not
+  provide. The two root executables are also ordered before `_internal` to
+  reduce the impact of a race after preflight.
 - Setup, AACC, and the broker remain unsigned in 1.4.2. Verify the companion
   SHA-256 before using the SmartScreen **More info → Run anyway** path.
 
@@ -118,14 +140,18 @@
 
 The candidate workflow builds the broker, PyInstaller onedir payload, and
 Setup on hosted Windows Server 2022 and Windows Server 2025, with product-smoke
-coverage designed for frozen first launch, installation, reinstall, rollback,
-uninstall, ACLs, and process cleanup. The complete result for the final
-candidate commit still must be recorded before merge.
+coverage designed for frozen first launch, installation, reinstall,
+pre-mutation locked-target refusal, uninstall, ACLs, and process cleanup. The
+complete result for the final candidate commit still must be recorded before
+merge.
 
 Hosted Windows Server evidence is not the real Windows 10/11 consumer test. It
 does not replace standard-user installation, separate-account access denial,
 SmartScreen interaction, real Kimi/Codex, tray, focus, hotkey, and long-running
-checks.
+checks. Version 1.4.2 also makes no claim of power-loss recovery, full
+transactional installation, or atomic recovery from a new lock acquired after
+preflight. Strict atomic upgrades require a later staging/backup/swap
+architecture.
 
 ## Manual release gates
 

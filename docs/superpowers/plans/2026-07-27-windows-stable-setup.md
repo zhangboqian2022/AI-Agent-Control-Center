@@ -25,6 +25,29 @@
 
 ---
 
+## Hosted correction recorded 2026-07-28
+
+The original plan assumed Inno's abort path would restore the previous bytes
+of files already overwritten during `[Files]`. Hosted run
+`30311409127` disproved that assumption: after `_internal` replacement and a
+later locked `AACC.exe` failure, Inno logged rollback but retained the new
+metadata bytes. Inno has no built-in backup-before-replace transaction.
+
+The accepted 1.4.2 correction supersedes the rollback language below:
+
+- validate roots, perform graceful shutdown, then use the new and installed
+  exact manifests to preflight every existing managed target plus all possible
+  existing `unins000..999.exe/.dat` pairs before `[Files]`;
+- reject file locks, unreadable targets, and nested reparse points before
+  mutation;
+- order `AACC.exe`, `aacc-spawn.exe`, then `_internal`;
+- prove pre-mutation refusal separately for locks on both executables, the
+  active uninstaller, an internal packaged file, and its managed directory;
+- make no transactional, power-loss, or late-lock atomicity claim. A strict
+  staging/backup/swap architecture is deferred beyond 1.4.2.
+
+---
+
 ## File Map
 
 - `src/aacc/file_security.py`: cross-platform atomic-protection facade.
@@ -876,10 +899,12 @@ OutputBaseFilename=AACC-{#MyAppVersion}-Setup
 UninstallFilesDir={app}\uninstall
 
 [Files]
-Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; \
-  Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\build\installer\internal-manifest-v1.txt"; \
+  DestName: "aacc-preflight-manifest-v1.txt"; Flags: dontcopy noencryption
 Source: "..\dist\AACC\AACC.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\AACC\aacc-spawn.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; \
+  Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\build\installer\internal-manifest-v1.txt"; \
   DestDir: "{app}\uninstall"; Flags: ignoreversion
 Source: "shutdown-v1.capability"; DestDir: "{app}\uninstall"; Flags: ignoreversion
@@ -889,14 +914,17 @@ Add Start Menu and unchecked desktop-icon tasks. `[Run]` launches AACC with
 `postinstall nowait skipifsilent`.
 
 Security correction after independent review: `[InstallDelete]` is forbidden
-because its pre-install deletion is outside Inno's per-file rollback journal.
-The package writes `_internal` first, then the root executables. A generated,
-strict UTF-8/LF manifest drives bounded post-commit deletion of stale
-`_internal` entries. A malformed manifest or a stale file/reparse entry that
-cannot be deleted after three retries makes Setup return non-zero. This
-post-commit cleanup does not claim rollback; native Inno per-file rollback is
-used only for failures while packaged files are being replaced. No explicit
-staging/backup/swap implementation is part of 1.4.2. Because
+because destructive pre-install deletion is not recoverable. The package
+embeds an early temporary manifest for preflight, writes the root executables
+before `_internal`, and installs the persistent manifest afterward. Before
+`[Files]`, the installer validates both the new and installed manifests and
+exclusively preflights all existing old/new managed targets. A generated,
+strict UTF-8/LF manifest then drives
+bounded post-commit deletion of stale `_internal` entries. A malformed
+manifest or a stale file/reparse entry that cannot be deleted after three
+retries makes Setup return non-zero. This post-commit cleanup does not claim
+rollback, and Inno does not restore the previous bytes of already overwritten
+files. No explicit staging/backup/swap implementation is part of 1.4.2. Because
 `ssPostInstall` occurs after the actual install phase, cleanup records an
 incomplete flag and `GetCustomSetupExitCode` changes the otherwise-successful
 exit to `9`.
@@ -1084,16 +1112,16 @@ deadline and must never hang or mutate on refusal.
 
 Before fault injection, snapshot the complete `{app}` tree as relative path,
 size, and SHA-256 plus uninstall registry, shortcut, and AppData manifests.
-Add `_internal\rollback-sentinel.bin`, then use an independent native locker
-with `FileShare.None` to lock root `AACC.exe` after `_internal` replacement.
-The independent locker must observe a selected `.dist-info/METADATA` change
-from known old probe bytes to the packaged bytes before Setup fails. Require
-non-zero Setup exit, restoration of the old probe and every manifest entry,
-continued presence of the rollback sentinel, no pending-reboot replacement,
-successful restart/broker exchange/shutdown of the old payload, and unchanged
-stable AppData semantics. Separately lock a stale
-`_internal\stale-obsolete.pyd`: post-commit cleanup must return non-zero while
-it is locked, then remove it and match the exact manifest after unlock.
+Add `_internal\rollback-sentinel.bin`, change a selected packaged metadata file
+to known old probe bytes, then use an independent native locker with
+`FileShare.None`. Separately lock `AACC.exe`, `aacc-spawn.exe`, the active
+`uninsNNN.exe` and `.dat`, the Start Menu shortcut, the metadata file, and its
+managed directory. Every Setup attempt must fail in preflight, before
+replacement, with the full state and pending-reboot operations unchanged.
+Separately lock a stale `_internal\stale-obsolete.pyd`;
+post-commit cleanup must report incomplete, then remove it after unlock and
+match the exact manifest. A managed nested `_internal` junction must be
+rejected without traversing its external target.
 
 For install-over-legacy, reinstall, and uninstall, separately inject control
 timeout and non-zero results. After every refusal compare the complete
@@ -1107,8 +1135,8 @@ Both `windows-2022` and `windows-2025-vs2026` compile the broker and
 PyInstaller onedir and run frozen first-launch, exact ACL, broker exchange,
 timeout, and owned-process-tree cleanup. Set `AACC_SKIP_INSTALLER=1` on
 `windows-2022`; only `windows-2025-vs2026` bootstraps hash-pinned Inno 6.7.1,
-builds the primary Setup, and runs fresh install, running reinstall, failure
-rollback, and running uninstall:
+builds the primary Setup, and runs fresh install, running reinstall,
+pre-mutation locked-target refusal, and running uninstall:
 
 ```yaml
 - name: Build Windows app and Setup
@@ -1146,7 +1174,7 @@ Required evidence:
 - broker build/import allowlist passes;
 - both runner frozen launches and the installed first launch survive;
 - fake Codex exchange and process-tree cleanup pass;
-- legacy refusal is bounded; reinstall, rollback, and uninstall pass;
+- legacy and locked-target refusal are bounded; reinstall and uninstall pass;
 - Setup and SHA-256 artifacts are non-empty.
 - the run is labelled hosted Windows Server evidence, not Windows 10/11
   consumer or separate-account validation.

@@ -477,8 +477,18 @@ def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> 
         "Assert-StableAppDataState",
         "aacc_smoke_preservation",
         "temporaryClones",
-        "rollback-probe-observed.txt",
+        "AACC_PREFLIGHT result=target-unavailable",
+        "$LockCases = @(",
+        'Name = "aacc"',
+        'Name = "broker"',
+        'Name = "internal"',
+        'Name = "directory"',
+        'Name = "uninstaller"',
+        'Name = "uninstaller-data"',
+        'Name = "shortcut"',
         "stale-obsolete.pyd",
+        "nested-junction-victim-backup",
+        "nested-junction-refusal.log",
         "junction-external-preserve.txt",
         "junction-refusal-external-manifest.json",
         "Assert-DiagnosticsTreeHasNoPrimaryArtifacts",
@@ -517,6 +527,8 @@ def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
     quota_reply = fake_main.rindex("_reply(")
     assert marker_commit < quota_reply
     assert "CREATE_NEW_PROCESS_GROUP" in timeout_server
+    assert "FILE_FLAG_BACKUP_SEMANTICS" in locker
+    assert "payload_is_directory ? DELETE : 0" in locker
     assert "creation_time" in timeout_server
     assert "image_path" in timeout_server
     assert "%~dp0" in fake_cmd
@@ -529,7 +541,8 @@ def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
     assert "image_path" in legacy
     lock_open = locker.split("HANDLE payload = CreateFileW(", 1)[1].split(");", 1)[0]
     assert "GENERIC_READ" in lock_open
-    assert re.search(r"GENERIC_READ,\s*0,", lock_open)
+    assert "payload_is_directory ? DELETE : 0" in lock_open
+    assert re.search(r"payload_is_directory \? DELETE : 0\),\s*0,", lock_open)
     assert "LOCK_READY" in locker
     assert "ROLLBACK_PROBE_OBSERVED" in locker
     assert "ReadAllBytes" in locker

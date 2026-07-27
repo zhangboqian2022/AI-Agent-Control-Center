@@ -1799,6 +1799,7 @@ $InstallRoot = Join-Path (
 ) "Programs\AACC"
 $InstalledAacc = Join-Path $InstallRoot "AACC.exe"
 $UninstallerPath = Join-Path $InstallRoot "uninstall\unins000.exe"
+$UninstallerDataPath = [System.IO.Path]::ChangeExtension($UninstallerPath, ".dat")
 $CapabilityPath = Join-Path $InstallRoot "uninstall\shutdown-v1.capability"
 $UninstallRegistryPath = (
     "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\" +
@@ -1825,6 +1826,7 @@ foreach ($Required in @(
     (Join-Path $InstallRoot "aacc-spawn.exe"),
     (Join-Path $InstallRoot "_internal"),
     $UninstallerPath,
+    $UninstallerDataPath,
     $CapabilityPath,
     $StartMenuShortcut
 )) {
@@ -1916,6 +1918,59 @@ finally {
 Assert-InstalledInternalMatchesManifest -EvidenceCategory "reinstall\junction-refusal"
 Assert-InstalledRootPayloadHashes -EvidenceCategory "reinstall\junction-refusal"
 
+$NestedJunctionVictim = @(
+    Get-ChildItem -LiteralPath $InstalledInternalRoot -Directory -Recurse |
+        Where-Object { $_.Name -like "*.dist-info" } |
+        Select-Object -First 1
+)
+Assert-True ($NestedJunctionVictim.Count -eq 1) `
+    "no packaged nested directory is available for junction preflight"
+$NestedJunction = $NestedJunctionVictim[0].FullName
+$NestedJunctionBackup = Join-Path $CandidateRoot `
+    "product-smoke\nested-junction-victim-backup"
+$NestedPendingBefore = Get-PendingFileRenameOperations
+Move-Item -LiteralPath $NestedJunction -Destination $NestedJunctionBackup
+try {
+    New-Item -ItemType Junction -Path $NestedJunction `
+        -Target $ExternalJunctionRoot | Out-Null
+    $NestedJunctionItem = Get-Item -LiteralPath $NestedJunction -Force
+    Assert-True (
+        ($NestedJunctionItem.Attributes -band
+            [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    ) "nested _internal junction fixture is not a reparse point"
+    $NestedJunctionRequestedLog = Join-Path $SmokeRoot `
+        "reinstall\nested-junction-refusal.log"
+    Invoke-Setup -LogPath $NestedJunctionRequestedLog -ExpectSuccess $false
+    $NestedJunctionLog = Get-SpecialSmokePath `
+        -RequestedPath $NestedJunctionRequestedLog
+    Assert-True (
+        [System.IO.File]::ReadAllText($NestedJunctionLog).Contains(
+            "AACC_PREFLIGHT result=target-unavailable"
+        )
+    ) "nested junction refusal log did not prove the target preflight gate"
+    Assert-True ((Get-PendingFileRenameOperations) -ceq $NestedPendingBefore) `
+        "nested junction refusal scheduled a pending-reboot replacement"
+    Assert-True ((Get-TreeManifest -Path $ExternalJunctionRoot) -ceq $ExternalBefore) `
+        "Setup traversed or mutated a nested _internal junction target"
+    Assert-InstalledRootPayloadHashes `
+        -EvidenceCategory "reinstall\nested-junction-refusal"
+    Assert-StableAppDataState -Expected $StableAppData `
+        -EvidenceCategory "reinstall\nested-junction-refusal"
+}
+finally {
+    if (Test-Path -LiteralPath $NestedJunction) {
+        $NestedCleanupItem = Get-Item -LiteralPath $NestedJunction -Force
+        Assert-True (
+            ($NestedCleanupItem.Attributes -band
+                [System.IO.FileAttributes]::ReparsePoint) -ne 0
+        ) "nested junction cleanup refused to delete a non-reparse entry"
+        [System.IO.Directory]::Delete($NestedJunction)
+    }
+    Move-Item -LiteralPath $NestedJunctionBackup -Destination $NestedJunction
+}
+Assert-InstalledInternalMatchesManifest `
+    -EvidenceCategory "reinstall\nested-junction-refusal"
+
 Test-InstalledControlRefusal -Action setup -Mode nonzero -Capability $false
 foreach ($Mode in @("nonzero", "false-success", "timeout")) {
     Test-InstalledControlRefusal -Action setup -Mode $Mode -Capability $true
@@ -2004,51 +2059,67 @@ $BeforeFault = Get-FullStateManifest
 Write-SmokeEvidence -Category "reinstall\lock-fault" -Name "before-manifest.json" `
     -Value $BeforeFault
 $PendingBefore = Get-PendingFileRenameOperations
-$LockedPayload = $InstalledAacc
-$LockReady = Join-Path $SmokeRoot "reinstall\lock-ready.txt"
-$RollbackObserved = Join-Path $SmokeRoot `
-    "reinstall\$SpecialLeaf\rollback-probe-observed.txt"
-$Locker = Start-OwnedProcess -FilePath $LockerFixture -Arguments @(
-    $LockedPayload,
-    $LockReady,
-    $RollbackProbePath,
-    $BuiltRollbackProbePath,
-    $RollbackObserved
+$LockCases = @(
+    [pscustomobject]@{ Name = "aacc"; Path = $InstalledAacc },
+    [pscustomobject]@{
+        Name = "broker"
+        Path = (Join-Path $InstallRoot "aacc-spawn.exe")
+    },
+    [pscustomobject]@{ Name = "internal"; Path = $RollbackProbePath },
+    [pscustomobject]@{
+        Name = "directory"
+        Path = $RollbackProbe[0].DirectoryName
+    },
+    [pscustomobject]@{ Name = "uninstaller"; Path = $UninstallerPath },
+    [pscustomobject]@{
+        Name = "uninstaller-data"
+        Path = $UninstallerDataPath
+    },
+    [pscustomobject]@{ Name = "shortcut"; Path = $StartMenuShortcut }
 )
-try {
-    Wait-LiteralPath -Path $LockReady -TimeoutSeconds 10 -Owner $Locker.Process
-    $RollbackRequestedLog = Join-Path $SmokeRoot "reinstall\locked-failure.log"
-    Invoke-Setup -LogPath $RollbackRequestedLog `
-        -ExpectSuccess $false
-    Wait-LiteralPath -Path $RollbackObserved -TimeoutSeconds 5 -Owner $Locker.Process
+foreach ($LockCase in $LockCases) {
+    $LockReady = Join-Path $SmokeRoot (
+        "reinstall\lock-fault\" + $LockCase.Name + "-ready.txt"
+    )
+    $Locker = Start-OwnedProcess -FilePath $LockerFixture -Arguments @(
+        $LockCase.Path,
+        $LockReady
+    )
+    try {
+        Wait-LiteralPath -Path $LockReady -TimeoutSeconds 10 -Owner $Locker.Process
+        $RefusalRequestedLog = Join-Path $SmokeRoot (
+            "reinstall\lock-fault\" + $LockCase.Name + "-refusal.log"
+        )
+        Invoke-Setup -LogPath $RefusalRequestedLog -ExpectSuccess $false
+    }
+    finally {
+        Stop-OwnedProcessIdentity -Identity $Locker.Identity
+        $Locker.Process.Dispose()
+    }
+    $AfterFault = Get-FullStateManifest
+    Write-SmokeEvidence -Category ("reinstall\lock-fault\" + $LockCase.Name) `
+        -Name "after-manifest.json" -Value $AfterFault
+    Assert-True ($AfterFault -ceq $BeforeFault) `
+        ($LockCase.Name + " lock preflight changed the complete install manifest")
+    Assert-True ((Get-PendingFileRenameOperations) -ceq $PendingBefore) `
+        ($LockCase.Name + " lock preflight scheduled a pending-reboot replacement")
+    Assert-True (Test-Path -LiteralPath $RollbackSentinel -PathType Leaf) `
+        ($LockCase.Name + " lock preflight removed rollback-sentinel.bin")
+    Assert-True (
+        [Convert]::ToBase64String($RollbackProbeBytes) -ceq
+        [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($RollbackProbePath))
+    ) ($LockCase.Name + " lock preflight changed the old internal metadata")
+    $RefusalLog = Get-SpecialSmokePath -RequestedPath $RefusalRequestedLog
+    Assert-True (
+        [System.IO.File]::ReadAllText($RefusalLog).Contains(
+            "AACC_PREFLIGHT result=target-unavailable"
+        )
+    ) ($LockCase.Name + " lock preflight log did not record refusal")
+    Assert-True (
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent $InstallRoot) -Force |
+            Where-Object { $_.Name -like "AACC.aacc-*" }).Count -eq 0
+    ) ($LockCase.Name + " lock preflight left staging or backup residue")
 }
-finally {
-    Stop-OwnedProcessIdentity -Identity $Locker.Identity
-    $Locker.Process.Dispose()
-}
-$AfterFault = Get-FullStateManifest
-Write-SmokeEvidence -Category "reinstall\lock-fault" -Name "after-manifest.json" `
-    -Value $AfterFault
-Assert-True ($AfterFault -ceq $BeforeFault) `
-    "native lock fault did not restore the complete install manifest"
-Assert-True ((Get-PendingFileRenameOperations) -ceq $PendingBefore) `
-    "failed reinstall scheduled a pending-reboot replacement"
-Assert-True (Test-Path -LiteralPath $RollbackSentinel -PathType Leaf) `
-    "failed reinstall removed rollback-sentinel.bin"
-Assert-True (
-    [Convert]::ToBase64String($RollbackProbeBytes) -ceq
-    [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($RollbackProbePath))
-) "failed reinstall did not roll back the already replaced internal metadata"
-Assert-NonEmptyLiteralFile -Path $RollbackObserved `
-    -Category "independent rollback probe observer"
-$RollbackResolvedLog = Get-SpecialSmokePath -RequestedPath $RollbackRequestedLog
-$RollbackLogText = [System.IO.File]::ReadAllText($RollbackResolvedLog)
-Assert-True ($RollbackLogText -match '(?i)roll(?:ing)? back|rollback') `
-    "installer log did not record rollback activity"
-Assert-True (
-    @(Get-ChildItem -LiteralPath (Split-Path -Parent $InstallRoot) -Force |
-        Where-Object { $_.Name -like "AACC.aacc-*" }).Count -eq 0
-) "failed reinstall left staging or backup residue"
 
 $OldPayload = Invoke-InstalledLaunch -Category "reinstall\old-payload"
 Invoke-ProductBrokerProbes -ProductRoot $InstallRoot -Category "reinstall\old-payload"
