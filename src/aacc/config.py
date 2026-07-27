@@ -119,13 +119,19 @@ def save_config(path: Path, config: AppConfig) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        if sys.platform != "win32":
+        if sys.platform == "win32":
+            os.close(descriptor)
+            descriptor = -1
+            protect_file(temporary, platform=sys.platform)
+            handle_context = temporary.open("w", encoding="utf-8")
+        else:
             try:
                 protect_file(temporary, descriptor=descriptor, platform=sys.platform)
             except Exception:
                 os.close(descriptor)
                 raise
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle_context = os.fdopen(descriptor, "w", encoding="utf-8")
+        with handle_context as handle:
             yaml.safe_dump(
                 config.model_dump(mode="json"),
                 handle,
@@ -190,6 +196,10 @@ def load_config(path: Path) -> AppConfig:
             config.app.api.token = secrets.token_urlsafe(32)
             changed = True
         if changed:
+            save_config(path, config)
+        elif sys.platform == "win32":
+            # Re-publish through a newly created, already protected file.
+            # Editing a legacy DACL in place can leave unrelated explicit ACEs.
             save_config(path, config)
         else:
             protect_file(path, platform=sys.platform)

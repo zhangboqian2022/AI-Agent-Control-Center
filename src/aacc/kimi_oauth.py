@@ -15,6 +15,7 @@ import os
 import platform
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -36,6 +37,8 @@ HTTP_TIMEOUT_SECONDS = 30.0
 CREDENTIALS_FILE_NAME = "kimi-credentials.json"
 DEVICE_ID_FILE_NAME = "device_id"
 _logger = logging.getLogger("aacc.kimi_oauth")
+_protected_credential_files: dict[Path, tuple[int, int, int, int]] = {}
+_protected_credential_files_lock = threading.Lock()
 
 
 class KimiOAuthError(RuntimeError):
@@ -330,7 +333,17 @@ def load_credentials(config_dir: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(raw, dict):
         return None
-    protect_file(path, platform=sys.platform)
+    if sys.platform == "win32":
+        identity = _file_identity(path)
+        with _protected_credential_files_lock:
+            already_protected = _protected_credential_files.get(path) == identity
+        if not already_protected:
+            save_credentials(config_dir, raw)
+            identity = _file_identity(path)
+            with _protected_credential_files_lock:
+                _protected_credential_files[path] = identity
+    else:
+        protect_file(path, platform=sys.platform)
     return raw
 
 
@@ -341,18 +354,28 @@ def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
     )
     temporary = Path(temporary_name)
     try:
-        if sys.platform != "win32":
+        if sys.platform == "win32":
+            os.close(descriptor)
+            descriptor = -1
+            protect_file(temporary, platform=sys.platform)
+            handle_context = temporary.open("w", encoding="utf-8")
+        else:
             try:
                 protect_file(temporary, descriptor=descriptor, platform=sys.platform)
             except Exception:
                 os.close(descriptor)
                 raise
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle_context = os.fdopen(descriptor, "w", encoding="utf-8")
+        with handle_context as handle:
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
         protect_file(temporary, platform=sys.platform)
-        os.replace(temporary, credentials_path(config_dir))
+        target = credentials_path(config_dir)
+        os.replace(temporary, target)
+        if sys.platform == "win32":
+            with _protected_credential_files_lock:
+                _protected_credential_files[target] = _file_identity(target)
     except FileProtectionError:
         _logger.critical("Unable to protect the Kimi credential file")
         raise
@@ -361,7 +384,20 @@ def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
 
 
 def clear_credentials(config_dir: Path) -> None:
-    credentials_path(config_dir).unlink(missing_ok=True)
+    path = credentials_path(config_dir)
+    path.unlink(missing_ok=True)
+    with _protected_credential_files_lock:
+        _protected_credential_files.pop(path, None)
+
+
+def _file_identity(path: Path) -> tuple[int, int, int, int]:
+    metadata = path.stat()
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
 
 
 def load_or_create_device_id(config_dir: Path) -> str:

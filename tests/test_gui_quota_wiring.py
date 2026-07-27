@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
@@ -163,3 +165,63 @@ def test_codex_quota_bar_click_triggers_local_refresh(qtbot, tmp_path):
     window.codex_quota_bar.clicked.emit()
 
     assert refreshed == [True]
+
+
+def test_quota_rows_fit_inside_exact_420_pixel_main_window(qtbot, tmp_path):
+    from aacc.codex_quota import (
+        CodexQuotaSnapshot,
+        CodexQuotaStatus,
+        CodexQuotaWindow,
+    )
+    from aacc.codex_quota_service import CodexQuotaService
+    from aacc.kimi_quota import KimiQuota, QuotaDetail
+
+    reset_at = datetime(2026, 12, 31, 15, 59, tzinfo=UTC)
+
+    class Reader:
+        def read_latest(self) -> CodexQuotaSnapshot:
+            return CodexQuotaSnapshot(
+                weekly=CodexQuotaWindow(88, 10_080, reset_at),
+                observed_at=reset_at,
+                status=CodexQuotaStatus.OK,
+            )
+
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        codex_quota_service=CodexQuotaService(Reader()),
+    )
+    assert window.quota_bar is not None
+    assert window.codex_quota_bar is not None
+    detail = QuotaDetail(
+        used=88,
+        limit=100,
+        remaining=12,
+        reset_at=reset_at,
+        percentage=88,
+    )
+    window.quota_bar.show_quota(
+        KimiQuota(
+            weekly=detail,
+            five_hour=detail,
+            monthly=detail,
+            membership_level=None,
+            booster=None,
+        )
+    )
+    window.codex_quota_bar.show_quota(Reader().read_latest())
+    window.resize(420, window.height())
+    window.show()
+    qtbot.wait(20)
+
+    assert window.width() == 420
+    for bar in (window.codex_quota_bar, window.quota_bar):
+        assert bar.width() <= 396
+        for percent_label, reset_label in bar.metric_label_pairs():
+            percent_right = percent_label.mapTo(bar, percent_label.rect().topRight()).x()
+            reset_left = reset_label.mapTo(bar, reset_label.rect().topLeft()).x()
+            assert percent_right < reset_left
+            assert (
+                reset_label.fontMetrics().horizontalAdvance(reset_label.text())
+                <= reset_label.contentsRect().width()
+            )

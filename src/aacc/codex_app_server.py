@@ -29,6 +29,8 @@ APP_SERVER_QUEUE_SIZE = 32
 WhichExecutable = Callable[[str], str | None]
 IsRegularFile = Callable[[Path], bool]
 PopenFactory = Callable[..., subprocess.Popen[str]]
+RunCommand = Callable[..., subprocess.CompletedProcess[str]]
+WINDOWS_PROCESS_CREATION_FLAGS = 0x08000000 | 0x00000200
 
 _logger = logging.getLogger("aacc.codex_quota")
 
@@ -92,12 +94,16 @@ class CodexAppServerReader:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         popen: PopenFactory = subprocess.Popen,
         version: str | None = None,
+        platform: str = sys.platform,
+        run: RunCommand = subprocess.run,
     ) -> None:
         self._executable = executable
         self._timeout_seconds = max(0.05, timeout_seconds)
         self._now = now
         self._popen = popen
         self._version = version or public_version()
+        self._platform = platform
+        self._run = run
 
     def read_latest(self) -> CodexQuotaSnapshot:
         process: subprocess.Popen[str] | None = None
@@ -105,15 +111,20 @@ class CodexAppServerReader:
         output: queue.Queue[str | None] = queue.Queue(maxsize=APP_SERVER_QUEUE_SIZE)
         deadline = time.monotonic() + self._timeout_seconds
         try:
+            popen_options: dict[str, Any] = {
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.DEVNULL,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "bufsize": 1,
+            }
+            if self._platform == "win32":
+                popen_options["creationflags"] = WINDOWS_PROCESS_CREATION_FLAGS
             process = self._popen(
                 [str(self._executable), "app-server", "--stdio"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
+                **popen_options,
             )
             if process.stdin is None or process.stdout is None:
                 return self._unknown()
@@ -209,6 +220,12 @@ class CodexAppServerReader:
                 while line and not line.endswith("\n"):
                     line = stream.readline(MAX_APP_SERVER_LINE_CHARS + 1)
                 continue
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(message, dict) or message.get("id") not in (1, 2):
+                continue
             CodexAppServerReader._queue_output(output, line)
 
     @staticmethod
@@ -216,21 +233,32 @@ class CodexAppServerReader:
         try:
             output.put_nowait(value)
         except queue.Full:
-            with suppress(queue.Empty):
-                output.get_nowait()
-            with suppress(queue.Full):
-                output.put_nowait(value)
+            return
 
-    @staticmethod
-    def _reap(process: subprocess.Popen[str] | None) -> None:
+    def _reap(self, process: subprocess.Popen[str] | None) -> None:
         if process is None:
             return
         if process.stdin is not None:
             with suppress(OSError):
                 process.stdin.close()
         if process.poll() is None:
-            with suppress(OSError):
-                process.terminate()
+            tree_killed = False
+            if self._platform == "win32":
+                try:
+                    result = self._run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        capture_output=True,
+                        text=True,
+                        timeout=2.0,
+                        check=False,
+                        shell=False,
+                    )
+                    tree_killed = result.returncode == 0
+                except (OSError, subprocess.TimeoutExpired):
+                    tree_killed = False
+            if not tree_killed:
+                with suppress(OSError):
+                    process.terminate()
         try:
             process.wait(timeout=0.5)
         except subprocess.TimeoutExpired:

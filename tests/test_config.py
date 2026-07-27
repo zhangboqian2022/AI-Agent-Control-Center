@@ -1,5 +1,7 @@
 import os
+import re
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -273,5 +275,104 @@ def test_save_config_skips_fchmod_on_windows(
     persisted = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert persisted["app"]["api"]["token"] == config.app.api.token
     assert len(persisted["tasks"]) == 4
-    assert len(protected) == 1
+    assert len(protected) == 2
     assert protected[0].name.startswith(".config.yaml.")
+    assert protected[1] == protected[0]
+
+
+def test_save_config_protects_empty_windows_temp_before_writing_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    protected_sizes: list[int] = []
+    monkeypatch.setattr(
+        config_module,
+        "protect_file",
+        lambda path, **_kwargs: protected_sizes.append(Path(path).stat().st_size),
+    )
+
+    save_config(tmp_path / "config.yaml", default_config())
+
+    assert protected_sizes[0] == 0
+    assert protected_sizes[1] > 0
+
+
+def test_load_config_republishes_legacy_windows_file_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "config.yaml"
+    config = default_config()
+    path.write_text(
+        yaml.safe_dump(config.model_dump(mode="json"), allow_unicode=True),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    saved: list[tuple[Path, object]] = []
+    monkeypatch.setattr(
+        config_module,
+        "save_config",
+        lambda target, value: saved.append((target, value)),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "protect_file",
+        lambda *_args, **_kwargs: pytest.fail("legacy target must not be edited in place"),
+    )
+
+    loaded = load_config(path)
+
+    assert saved == [(path, loaded)]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows ACL APIs")
+def test_load_config_removes_unrelated_explicit_windows_ace(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    save_config(path, default_config())
+    subprocess.run(
+        ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+        shell=False,
+    )
+
+    load_config(path)
+
+    sid_result = subprocess.run(
+        ["whoami", "/user", "/fo", "csv", "/nh"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+        shell=False,
+    )
+    current_sid_match = re.search(r"\bS-\d+(?:-\d+)+\b", sid_result.stdout)
+    assert current_sid_match is not None
+    access_result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            (
+                "(Get-Acl -LiteralPath $args[0]).Access | "
+                "ForEach-Object { "
+                "$_.IdentityReference.Translate("
+                "[System.Security.Principal.SecurityIdentifier]).Value }"
+            ),
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+        shell=False,
+    )
+    access_sids = {line.strip() for line in access_result.stdout.splitlines() if line.strip()}
+    assert "S-1-1-0" not in access_sids
+    assert access_sids <= {
+        current_sid_match.group(0),
+        "S-1-5-18",
+        "S-1-5-32-544",
+    }
