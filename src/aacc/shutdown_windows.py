@@ -20,6 +20,7 @@ ERROR_ALREADY_EXISTS = 183
 SYSTEM_SID = "S-1-5-18"
 ADMINISTRATORS_SID = "S-1-5-32-544"
 _NATURAL_EXIT_WINERRORS = {87, 1168, 1400}
+_MISSING_EVENT_WINERRORS = {2}
 
 _logger = logging.getLogger("aacc.shutdown")
 
@@ -107,7 +108,7 @@ class WindowsShutdownEventApi:
     def _security_attributes(self) -> Any:
         current_user_sid = self._current_user_sid_string()
         sddl = (
-            "D:P"
+            f"O:{current_user_sid}D:P"
             f"(A;;0x{EVENT_ALL_ACCESS:x};;;{SYSTEM_SID})"
             f"(A;;0x{EVENT_ALL_ACCESS:x};;;{ADMINISTRATORS_SID})"
             f"(A;;0x{EVENT_ALL_ACCESS:x};;;{current_user_sid})"
@@ -163,8 +164,14 @@ class WindowsShutdownEventApi:
         descriptor = self._win32security.GetSecurityInfo(
             raw_handle,
             self._win32security.SE_KERNEL_OBJECT,
-            self._win32security.DACL_SECURITY_INFORMATION,
+            self._win32security.DACL_SECURITY_INFORMATION
+            | self._win32security.OWNER_SECURITY_INFORMATION,
         )
+        current_user_sid = self._current_user_sid_string()
+        owner = descriptor.GetSecurityDescriptorOwner()
+        owner_sid = str(self._win32security.ConvertSidToStringSid(owner))
+        if owner_sid != current_user_sid:
+            raise OSError("shutdown event owner verification failed")
         control, _revision = descriptor.GetSecurityDescriptorControl()
         if not control & self._win32security.SE_DACL_PROTECTED:
             raise OSError("shutdown event DACL is not protected")
@@ -175,7 +182,7 @@ class WindowsShutdownEventApi:
         expected = {
             SYSTEM_SID,
             ADMINISTRATORS_SID,
-            self._current_user_sid_string(),
+            current_user_sid,
         }
         seen: set[str] = set()
         for index in range(dacl.GetAceCount()):
@@ -227,12 +234,16 @@ def _failed(stage: str) -> int:
 
 
 def _is_natural_exit_error(error: OSError) -> bool:
+    return _winerror_code(error) in _NATURAL_EXIT_WINERRORS
+
+
+def _winerror_code(error: OSError) -> int | None:
     code = getattr(error, "winerror_code", None)
     if code is None:
         code = getattr(error, "winerror", None)
     if code is None:
         code = error.errno
-    return code in _NATURAL_EXIT_WINERRORS
+    return code
 
 
 def request_shutdown_for_update(
@@ -303,7 +314,13 @@ def request_shutdown_for_update(
                     continue
                 try:
                     event_context = event_api.open_shutdown_event(shutdown_event_name(pid))
-                except OSError:
+                except OSError as error:
+                    if _winerror_code(error) in _MISSING_EVENT_WINERRORS:
+                        try:
+                            if process.wait_for_exit(timeout_ms):
+                                return 0
+                        except OSError:
+                            return _failed("open-event-wait")
                     return _failed("open-event")
                 try:
                     with event_context as event:
@@ -345,30 +362,36 @@ class WindowsShutdownListener:
         self._timer: Any | None = None
         self._event: _ShutdownEventHandle | None = None
         self._quit_scheduled = False
+        self._poll_observed = False
 
     def start(self, qt_app: Any, window: Any) -> None:
         if self._event is not None or self._timer is not None:
             return
         event = self._event_api.create_shutdown_event(shutdown_event_name(os.getpid()))
+        self._qt_app = qt_app
+        self._window = window
+        self._event = event
+        self._quit_scheduled = False
+        self._poll_observed = False
         try:
             timer = self._timer_factory(qt_app)
+            self._timer = timer
             timer.setInterval(100)
             timer.timeout.connect(self._poll)
-            self._qt_app = qt_app
-            self._window = window
-            self._timer = timer
-            self._event = event
-            self._quit_scheduled = False
             timer.start()
         except Exception:
-            event.close()
+            self._release_resources()
             self._clear_state()
             raise
+        _logger.info("Shutdown listener ready pid=%d", os.getpid())
 
     def _poll(self) -> None:
         event = self._event
         if event is None or self._quit_scheduled:
             return
+        if not self._poll_observed:
+            self._poll_observed = True
+            _logger.info("Shutdown listener polling active")
         try:
             signaled = self._event_api.is_shutdown_event_signaled(event)
         except Exception:  # noqa: BLE001 - a broken listener must fail safe
@@ -376,6 +399,7 @@ class WindowsShutdownListener:
             self._request_quit()
             return
         if signaled:
+            _logger.info("Shutdown listener received update signal")
             self._request_quit()
 
     def _request_quit(self) -> None:
@@ -383,7 +407,9 @@ class WindowsShutdownListener:
             return
         self._quit_scheduled = True
         window = self._window
-        self._release_resources()
+        self._qt_app = None
+        self._window = None
+        self._release_timer()
         if window is not None:
             window.quit_application()
 
@@ -392,14 +418,32 @@ class WindowsShutdownListener:
         self._clear_state()
 
     def _release_resources(self) -> None:
+        self._release_timer()
+        self._release_event()
+
+    def _release_timer(self) -> None:
         timer = self._timer
-        event = self._event
         self._timer = None
-        self._event = None
         if timer is not None:
-            timer.stop()
+            operations = (
+                ("timer-stop", timer.stop),
+                ("timer-disconnect", lambda: timer.timeout.disconnect(self._poll)),
+                ("timer-delete", timer.deleteLater),
+            )
+            for stage, operation in operations:
+                try:
+                    operation()
+                except Exception:  # noqa: BLE001 - all cleanup paths must run
+                    _logger.error("Shutdown listener cleanup failed stage=%s", stage)
+
+    def _release_event(self) -> None:
+        event = self._event
+        self._event = None
         if event is not None:
-            event.close()
+            try:
+                event.close()
+            except Exception:  # noqa: BLE001 - timer cleanup and quit must still run
+                _logger.error("Shutdown listener cleanup failed stage=event-close")
 
     def _clear_state(self) -> None:
         self._qt_app = None
@@ -407,3 +451,4 @@ class WindowsShutdownListener:
         self._timer = None
         self._event = None
         self._quit_scheduled = False
+        self._poll_observed = False

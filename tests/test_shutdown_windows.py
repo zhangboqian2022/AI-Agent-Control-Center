@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from dataclasses import dataclass
 
 import pytest
@@ -59,6 +62,8 @@ class FakeEventHandle:
     def close(self) -> None:
         if self.name not in self.api.closed_events:
             self.api.closed_events.append(self.name)
+        if self.api.event_close_error is not None:
+            raise self.api.event_close_error
 
 
 class FakeWin32ShutdownApi:
@@ -80,6 +85,7 @@ class FakeWin32ShutdownApi:
         self.event_create_error: BaseException | None = None
         self.event_signal_error: BaseException | None = None
         self.event_wait_error: BaseException | None = None
+        self.event_close_error: BaseException | None = None
         self.event_signaled = False
         self.event_preexisting = False
         self.find_titles: list[str] = []
@@ -196,15 +202,20 @@ class FakeSecurityDescriptor:
         dacl: FakeDacl,
         *,
         protected: bool = True,
+        owner: str = "S-1-5-21-1000",
     ) -> None:
         self.dacl = dacl
         self.protected = protected
+        self.owner = owner
 
     def GetSecurityDescriptorControl(self) -> tuple[int, int]:
         return (0x1000 if self.protected else 0, 1)
 
     def GetSecurityDescriptorDacl(self) -> FakeDacl:
         return self.dacl
+
+    def GetSecurityDescriptorOwner(self) -> str:
+        return self.owner
 
 
 class FakeWin32ApiModule:
@@ -251,11 +262,18 @@ class FakeWin32SecurityModule:
     SDDL_REVISION_1 = 1
     SE_KERNEL_OBJECT = 6
     DACL_SECURITY_INFORMATION = 4
+    OWNER_SECURITY_INFORMATION = 1
     SE_DACL_PROTECTED = 0x1000
     ACCESS_ALLOWED_ACE_TYPE = 0
     INHERITED_ACE = 0x10
 
-    def __init__(self, *, dacl: FakeDacl | None = None, protected: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        dacl: FakeDacl | None = None,
+        protected: bool = True,
+        owner: str = "S-1-5-21-1000",
+    ) -> None:
         self.token = FakeToken()
         self.sddl_values: list[str] = []
         self.dacl = dacl or FakeDacl(
@@ -266,6 +284,7 @@ class FakeWin32SecurityModule:
             ]
         )
         self.protected = protected
+        self.owner = owner
 
     def OpenProcessToken(self, _process: object, _access: int) -> FakeToken:
         return self.token
@@ -293,13 +312,18 @@ class FakeWin32SecurityModule:
         _object_type: int,
         _information: int,
     ) -> FakeSecurityDescriptor:
-        return FakeSecurityDescriptor(self.dacl, protected=self.protected)
+        return FakeSecurityDescriptor(
+            self.dacl,
+            protected=self.protected,
+            owner=self.owner,
+        )
 
 
 def _fake_native_event_api(
     *,
     dacl: FakeDacl | None = None,
     protected: bool = True,
+    owner: str = "S-1-5-21-1000",
 ) -> tuple[
     WindowsShutdownEventApi,
     FakeWin32ApiModule,
@@ -309,7 +333,11 @@ def _fake_native_event_api(
     api = object.__new__(WindowsShutdownEventApi)
     win32api = FakeWin32ApiModule()
     win32event = FakeWin32EventModule(win32api)
-    win32security = FakeWin32SecurityModule(dacl=dacl, protected=protected)
+    win32security = FakeWin32SecurityModule(
+        dacl=dacl,
+        protected=protected,
+        owner=owner,
+    )
     api._win32api = win32api
     api._win32con = type("FakeWin32Con", (), {"TOKEN_QUERY": 8})()
     api._win32event = win32event
@@ -327,13 +355,24 @@ def test_native_event_api_creates_noninheritable_exact_protected_event() -> None
     assert attributes.SECURITY_DESCRIPTOR == "security-descriptor"
     assert attributes.bInheritHandle is False
     assert win32security.sddl_values == [
-        "D:P"
+        "O:S-1-5-21-1000D:P"
         f"(A;;0x{EVENT_ALL_ACCESS:x};;;{SYSTEM_SID})"
         f"(A;;0x{EVENT_ALL_ACCESS:x};;;{ADMINISTRATORS_SID})"
         f"(A;;0x{EVENT_ALL_ACCESS:x};;;S-1-5-21-1000)"
     ]
     assert win32security.token.closed is True
     handle.close()
+    assert win32api.closed_handles == ["event-handle"]
+
+
+def test_native_event_api_rejects_unexpected_owner_and_closes() -> None:
+    api, win32api, _win32event, _win32security = _fake_native_event_api(
+        owner="S-1-5-21-9999",
+    )
+
+    with pytest.raises(OSError, match="owner"):
+        api.create_shutdown_event(shutdown_event_name(201))
+
     assert win32api.closed_handles == ["event-handle"]
 
 
@@ -553,6 +592,31 @@ def test_shutdown_client_fails_closed_when_protected_event_cannot_be_opened(
     assert api.closed == [200]
 
 
+@pytest.mark.parametrize(
+    ("process_exited", "expected"),
+    [(True, 0), (False, 1)],
+)
+def test_shutdown_client_handles_event_disappearing_with_target_process(
+    process_exited: bool,
+    expected: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = FakeWin32ShutdownApi(
+        windows=[100],
+        pids={100: 200},
+        images={200: r"C:\Program Files\AACC\AACC.exe"},
+    )
+    missing = FileNotFoundError("event disappeared")
+    missing.winerror = 2
+    api.event_open_error = missing
+    api.wait_results[200] = process_exited
+    monkeypatch.setattr("aacc.shutdown_windows.sys.executable", r"C:\Program Files\AACC\AACC.exe")
+
+    assert request_shutdown_for_update(win32_module=api) == expected
+    assert api.waited == [(200, 20_000)]
+    assert api.closed == [200]
+
+
 @pytest.mark.parametrize("wait_result", [False, OSError("wait failed")])
 def test_shutdown_client_returns_nonzero_for_timeout_or_wait_failure(
     wait_result: bool | BaseException,
@@ -596,6 +660,9 @@ class FakeSignal:
     def connect(self, callback: object) -> None:
         self.callbacks.append(callback)
 
+    def disconnect(self, callback: object) -> None:
+        self.callbacks.remove(callback)
+
 
 class FakeTimer:
     def __init__(self, parent: FakeQtApplication) -> None:
@@ -604,20 +671,56 @@ class FakeTimer:
         self.interval = 0
         self.started = False
         self.stop_calls = 0
+        self.delete_calls = 0
+        self.stop_error: BaseException | None = None
+        self.start_error: BaseException | None = None
 
     def setInterval(self, interval: int) -> None:
         self.interval = interval
 
     def start(self) -> None:
         self.started = True
+        if self.start_error is not None:
+            raise self.start_error
 
     def stop(self) -> None:
         self.started = False
         self.stop_calls += 1
+        if self.stop_error is not None:
+            raise self.stop_error
+
+    def deleteLater(self) -> None:
+        self.delete_calls += 1
 
     def fire(self) -> None:
         for callback in self.timeout.callbacks:
             callback()  # type: ignore[operator]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires real Windows named events")
+def test_real_windows_event_cross_process_wakes_qt_listener(qapp, qtbot) -> None:
+    api = WindowsShutdownEventApi()
+    window = FakeWindow()
+    listener = WindowsShutdownListener(win32_module=api)
+    listener.start(qapp, window)
+    event_name = shutdown_event_name(os.getpid())
+    script = (
+        "import sys\n"
+        "from aacc.shutdown_windows import WindowsShutdownEventApi\n"
+        "api = WindowsShutdownEventApi()\n"
+        "with api.open_shutdown_event(sys.argv[1]) as event:\n"
+        "    api.set_shutdown_event(event)\n"
+    )
+
+    subprocess.run(
+        [sys.executable, "-c", script, event_name],
+        check=True,
+        timeout=5,
+    )
+    qtbot.waitUntil(lambda: window.quit_calls == 1, timeout=3_000)
+    listener.stop()
+
+    assert window.quit_calls == 1
 
 
 def test_shutdown_event_quits_through_window_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -634,6 +737,9 @@ def test_shutdown_event_quits_through_window_once(monkeypatch: pytest.MonkeyPatc
 
     assert window.quit_calls == 1
     assert app.parented_timers[0].started is False
+    assert api.closed_events == []
+    listener.stop()
+    assert api.closed_events == [shutdown_event_name(201)]
 
 
 def test_shutdown_listener_start_and_stop_are_idempotent(
@@ -652,6 +758,8 @@ def test_shutdown_listener_start_and_stop_are_idempotent(
 
     assert len(app.parented_timers) == 1
     assert app.parented_timers[0].stop_calls == 1
+    assert app.parented_timers[0].delete_calls == 1
+    assert app.parented_timers[0].timeout.callbacks == []
     assert api.created_events == [shutdown_event_name(201)]
     assert api.closed_events == [shutdown_event_name(201)]
 
@@ -696,7 +804,39 @@ def test_shutdown_listener_name_squatting_fails_closed(
     assert api.closed_events == []
 
 
-def test_shutdown_listener_poll_error_stops_and_closes_before_raising(
+def test_shutdown_listener_rolls_back_partial_timer_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("aacc.shutdown_windows.os.getpid", lambda: 201)
+    app = FakeQtApplication()
+    api = FakeWin32ShutdownApi()
+
+    class FailingStartTimer(FakeTimer):
+        def __init__(self, parent: FakeQtApplication) -> None:
+            super().__init__(parent)
+            self.start_error = RuntimeError("timer start failed")
+
+    listener = WindowsShutdownListener(win32_module=api, timer_factory=FailingStartTimer)
+
+    with pytest.raises(RuntimeError, match="timer start failed"):
+        listener.start(app, FakeWindow())
+
+    timer = app.parented_timers[0]
+    assert timer.stop_calls == 1
+    assert timer.delete_calls == 1
+    assert timer.timeout.callbacks == []
+    assert api.closed_events == [shutdown_event_name(201)]
+    assert listener._timer is None
+    assert listener._event is None
+
+
+@pytest.mark.parametrize(
+    ("timer_fails", "event_fails"),
+    [(True, False), (False, True), (True, True)],
+)
+def test_shutdown_listener_cleanup_failures_cannot_block_fail_safe_quit(
+    timer_fails: bool,
+    event_fails: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("aacc.shutdown_windows.os.getpid", lambda: 201)
@@ -706,9 +846,19 @@ def test_shutdown_listener_poll_error_stops_and_closes_before_raising(
     listener = WindowsShutdownListener(win32_module=api, timer_factory=FakeTimer)
     listener.start(app, window)
     api.event_wait_error = OSError("wait failed")
+    if timer_fails:
+        app.parented_timers[0].stop_error = OSError("timer stop failed")
+    if event_fails:
+        api.event_close_error = OSError("event close failed")
 
     app.parented_timers[0].fire()
 
-    assert app.parented_timers[0].started is False
+    assert app.parented_timers[0].stop_calls == 1
+    assert app.parented_timers[0].delete_calls == 1
+    assert app.parented_timers[0].timeout.callbacks == []
+    assert api.closed_events == []
+    listener.stop()
     assert api.closed_events == [shutdown_event_name(201)]
     assert window.quit_calls == 1
+    assert listener._timer is None
+    assert listener._event is None
