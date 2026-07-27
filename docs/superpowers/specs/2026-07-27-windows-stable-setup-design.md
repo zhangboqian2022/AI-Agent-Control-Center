@@ -243,9 +243,15 @@ Installer contract:
 - The final page offers Launch AACC, skipped for silent installation.
 - `CloseApplications=no` and `RestartApplications=no`; Inno Restart Manager
   never closes or restarts AACC on the installer's behalf.
-- Upgrade calls `--shutdown-for-update`, waits up to 20 seconds, removes only
-  the old `{app}\_internal`, and then replaces the two root executables and
-  `_internal`.
+- Upgrade calls `--shutdown-for-update` with an exact 25-second control
+  timeout, then lets Inno replace `_internal` before the two root executables.
+- `[InstallDelete]` is not used: it would remove files outside Inno's native
+  per-file rollback journal. A generated exact `_internal` manifest instead
+  removes stale entries after file commit with three bounded retries.
+- Manifest load/validation failure or an undeletable stale file, directory, or
+  reparse entry makes Setup return non-zero. Post-commit cleanup makes no
+  rollback claim; `GetCustomSetupExitCode` reports the incomplete state as
+  exit `9`, and no explicit staging/backup/swap implementation is claimed.
 - It never recursively deletes `{app}` during upgrade.
 - Uninstall uses the same graceful shutdown path and removes the installed
   program, shortcuts, and uninstall registration.
@@ -258,7 +264,14 @@ Installer contract:
 - Silent smoke adds `/NOCLOSEAPPLICATIONS`,
   `/NOFORCECLOSEAPPLICATIONS`, and `/NORESTARTAPPLICATIONS`. Shutdown failure
   aborts before mutation; a locked-file reinstall fault must prove that the
-  prior payload is restored and still starts.
+  prior payload is restored and still starts. An independent observer must
+  first see a chosen metadata file change from known old bytes to packaged
+  bytes, and the installer log provides auxiliary rollback evidence.
+- Setup and uninstaller `/LOG` paths contain Chinese characters, spaces,
+  `&() %! []`; every invocation must create a non-empty file at the exact
+  requested path.
+- Setup/checksum/ZIP candidates are isolated from all `if: always()`
+  diagnostics and become uploadable only after strict verification.
 
 The build script reads version `1.4.2` from `pyproject.toml` via
 `uv version --short`. The workflow uses both supported hosted Windows images,
@@ -355,18 +368,21 @@ default `%APPDATA%\AACC` structure.
     checks from the installed directory.
 14. Cover a stopped and running legacy portable that does not understand the
     shutdown protocol; Setup must never hang or mutate on refusal.
-15. Snapshot the complete install/registry/shortcut/AppData state, lock a
-    payload, and prove a failed reinstall restores it byte-for-byte.
-16. Release the lock, reinstall while AACC is running, and verify stale
-    payload removal plus configuration/cached-data preservation.
+15. Snapshot install state, lock root `AACC.exe`, independently observe an
+    already-replaced metadata file, and prove native rollback restores it.
+16. Lock a stale `_internal` file and require non-zero post-commit cleanup;
+    release it, reinstall, and verify the exact manifest plus stable
+    config/credential hashes and the preserved database smoke row.
 17. Silent-uninstall while AACC is running; separately prove shutdown failure
     aborts without mutation.
 18. Verify graceful exit, removal of the two executables, `_internal`,
     shortcuts, and uninstall registration.
 19. Verify `%APPDATA%\AACC` and the marker remain.
-20. After both Windows matrix legs pass, a dependent artifact job revalidates
-    strict checksum/ZIP structure before uploading Setup, SHA-256, portable
-    debug ZIP, audit reports, and installation/uninstallation logs.
+20. Both hosted legs run build and product smoke under Windows PowerShell 5.1.
+    Only after their serial DAG passes does the final job revalidate
+    checksum/ZIP structure, copy candidates into the safe output tree, and
+    upload Setup, SHA-256, and portable ZIP. Always-uploaded diagnostics never
+    contain those primary artifacts.
 
 Any frozen first-launch exit, ACL mismatch, broker dependency mismatch,
 orphan descendant, failed graceful shutdown, stale program payload, or missing

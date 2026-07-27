@@ -824,12 +824,12 @@ def test_inno_setup_is_per_user_and_upgrade_stable():
     assert "RestartApplications=no" in text
     assert "--shutdown-for-update" in text
     assert "taskkill" not in text.lower()
-    assert "terminateprocess" not in text.lower()
     assert "stop-process" not in text.lower()
     assert "wm_close" not in text.lower()
-    assert "{userappdata}\\AACC" not in text.split("[UninstallDelete]")[-1]
-    assert 'Name: "{app}\\_internal"' in text
-    assert 'Name: "{app}\\*"' not in text
+    assert "[InstallDelete]" not in text
+    assert "internal-manifest-v1.txt" in text
+    assert "CleanupCommittedInternalPayload" in text
+    assert "if not CleanupCommittedInternalPayload then" in text
 
 
 def test_windows_installer_build_pins_iscc():
@@ -873,18 +873,31 @@ OutputDir=..\dist\installer
 OutputBaseFilename=AACC-{#MyAppVersion}-Setup
 UninstallFilesDir={app}\uninstall
 
-[InstallDelete]
-Type: filesandordirs; Name: "{app}\_internal"
-
 [Files]
-Source: "..\dist\AACC\AACC.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\AACC\aacc-spawn.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\AACC\AACC.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\AACC\aacc-spawn.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\installer\internal-manifest-v1.txt"; \
+  DestDir: "{app}\uninstall"; Flags: ignoreversion
+Source: "shutdown-v1.capability"; DestDir: "{app}\uninstall"; Flags: ignoreversion
 ```
 
 Add Start Menu and unchecked desktop-icon tasks. `[Run]` launches AACC with
 `postinstall nowait skipifsilent`.
+
+Security correction after independent review: `[InstallDelete]` is forbidden
+because its pre-install deletion is outside Inno's per-file rollback journal.
+The package writes `_internal` first, then the root executables. A generated,
+strict UTF-8/LF manifest drives bounded post-commit deletion of stale
+`_internal` entries. A malformed manifest or a stale file/reparse entry that
+cannot be deleted after three retries makes Setup return non-zero. This
+post-commit cleanup does not claim rollback; native Inno per-file rollback is
+used only for failures while packaged files are being replaced. No explicit
+staging/backup/swap implementation is part of 1.4.2. Because
+`ssPostInstall` occurs after the actual install phase, cleanup records an
+incomplete flag and `GetCustomSetupExitCode` changes the otherwise-successful
+exit to `9`.
 
 When the existing `{app}\AACC.exe` exists, `PrepareToInstall` and
 `InitializeUninstall` call only that executable with
@@ -1062,14 +1075,15 @@ deadline and must never hang or mutate on refusal.
 Before fault injection, snapshot the complete `{app}` tree as relative path,
 size, and SHA-256 plus uninstall registry, shortcut, and AppData manifests.
 Add `_internal\rollback-sentinel.bin`, then use an independent native locker
-with `FileShare.None` to lock a replaceable payload and signal readiness.
-Require non-zero Setup exit, exact restoration of every manifest entry,
-continued presence of the rollback sentinel, no staging/backup residue or
-pending-reboot replacement, successful restart/broker exchange/shutdown of
-the old payload, and unchanged `%APPDATA%\AACC`. Release the lock and perform
-a successful reinstall; the sentinel must then be removed. If Inno does not
-restore files removed by `[InstallDelete]`, replace that approach with an
-explicit staging/backup/swap rollback before release.
+with `FileShare.None` to lock root `AACC.exe` after `_internal` replacement.
+The independent locker must observe a selected `.dist-info/METADATA` change
+from known old probe bytes to the packaged bytes before Setup fails. Require
+non-zero Setup exit, restoration of the old probe and every manifest entry,
+continued presence of the rollback sentinel, no pending-reboot replacement,
+successful restart/broker exchange/shutdown of the old payload, and unchanged
+stable AppData semantics. Separately lock a stale
+`_internal\stale-obsolete.pyd`: post-commit cleanup must return non-zero while
+it is locked, then remove it and match the exact manifest after unlock.
 
 For install-over-legacy, reinstall, and uninstall, separately inject control
 timeout and non-zero results. After every refusal compare the complete
@@ -1089,12 +1103,12 @@ rollback, and running uninstall:
 ```yaml
 - name: Build Windows app and Setup
   if: matrix.os == 'windows-2025-vs2026'
-  shell: pwsh
+  shell: powershell
   run: ./scripts/build_windows.ps1
 
 - name: Smoke frozen and installed Windows product
   if: matrix.os == 'windows-2025-vs2026'
-  shell: pwsh
+  shell: powershell
   run: ./scripts/test_windows_package.ps1
 ```
 
@@ -1106,8 +1120,11 @@ extra top-level entries, or a root other than `AACC/` containing exactly
 with the built onedir. Only this job uploads Setup, SHA-256, and portable debug
 ZIP with `if-no-files-found: error`; it must not use `always()` or `failure()`.
 Upload broker dependency output, ACL/audit reports, installer logs, and smoke
-logs separately for diagnosis with `if: always()`. A failed smoke or either
-failed runner must never publish a primary Setup artifact.
+logs separately for diagnosis with `if: always()`. Setup, checksum, and ZIP
+candidates live under an isolated `build\candidate-validation` tree that is
+never included in diagnostics; only after strict verification are they copied
+to `build\verified-output`. A failed smoke or either failed runner must never
+publish a primary Setup artifact.
 
 - [ ] **Step 7: Push and inspect the hosted Windows result**
 

@@ -155,7 +155,30 @@ function Invoke-OwnedCleanup {
 }
 
 function Get-OwnedProcessTree {
-    param([Parameter(Mandatory = $true)][int]$RootId)
+    param(
+        [Parameter(Mandatory = $true)][int]$RootId,
+        $ExpectedRootIdentity = $null
+    )
+    if ($null -ne $ExpectedRootIdentity) {
+        try {
+            $CurrentRoot = Get-ProcessIdentity -Id $RootId
+            if (
+                -not $CurrentRoot.Path.Equals(
+                    $ExpectedRootIdentity.Path,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                ) -or
+                $CurrentRoot.CreationTimeUtc -ne $ExpectedRootIdentity.CreationTimeUtc
+            ) {
+                # The PID was reused. Never adopt the replacement process or
+                # traverse its children as if they belonged to this harness.
+                return @()
+            }
+        }
+        catch {
+            # The exact root exited. Its still-live children retain the old
+            # ParentProcessId and can be enumerated from this CIM snapshot.
+        }
+    }
     $ChildrenByParent = @{}
     foreach ($Record in @(Get-CimInstance Win32_Process)) {
         $Parent = [int]$Record.ParentProcessId
@@ -312,6 +335,27 @@ function Wait-LiteralPath {
         Start-Sleep -Milliseconds 100
     }
     throw "required smoke file was not produced before deadline"
+}
+
+function Assert-NonEmptyLiteralFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Category
+    )
+    Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) `
+        "$Category did not create its exact special-character log path"
+    $Item = Get-Item -LiteralPath $Path -Force
+    Assert-True ($Item.Length -gt 0) "$Category created an empty log"
+    Write-SmokeEvidence -Category "installer-logs" `
+        -Name (
+            ([System.IO.Path]::GetFileName($Path) -replace '[^A-Za-z0-9.-]', '-') +
+            "-sha256-$((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash).json"
+        ) `
+        -Value ([ordered]@{
+            path = $Item.FullName
+            length = $Item.Length
+            sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        })
 }
 
 function Assert-ProcessExitedByDeadline {
@@ -495,6 +539,7 @@ function Invoke-Setup {
     )
     $ExitCode = Invoke-ExternalDeadline -FilePath $SetupPath -Arguments $Arguments `
         -TimeoutSeconds 180 -Category "Windows Setup"
+    Assert-NonEmptyLiteralFile -Path $LogPath -Category "Windows Setup"
     if ($ExpectSuccess) {
         Assert-True ($ExitCode -eq 0) "Windows Setup failed"
     }
@@ -519,7 +564,10 @@ function Wait-UninstallerTreeGone {
 
         # Capture immediately after Start so a short-lived original uninstaller
         # cannot hand off to its temporary clone before the first tree snapshot.
-        $InitialSnapshot = @(Get-OwnedProcessTree -RootId $Process.Id)
+        $InitialSnapshot = @(
+            Get-OwnedProcessTree -RootId $Process.Id `
+                -ExpectedRootIdentity $RootIdentity
+        )
         foreach ($Identity in $InitialSnapshot) {
             $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
             $Identities[$Key] = $Identity
@@ -528,7 +576,10 @@ function Wait-UninstallerTreeGone {
 
         $Deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         while (-not $Process.HasExited -and [DateTime]::UtcNow -lt $Deadline) {
-            foreach ($Identity in @(Get-OwnedProcessTree -RootId $Process.Id)) {
+            foreach ($Identity in @(
+                Get-OwnedProcessTree -RootId $Process.Id `
+                    -ExpectedRootIdentity $RootIdentity
+            )) {
                 $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
                 $Identities[$Key] = $Identity
                 Register-OwnedIdentity -Identity $Identity
@@ -542,15 +593,57 @@ function Wait-UninstallerTreeGone {
 
         # Win32_Process retains ParentProcessId on a live clone even after its
         # parent exits. One final root snapshot closes the parent-exit clone race.
-        $FinalSnapshot = @(Get-OwnedProcessTree -RootId $Process.Id)
+        $FinalSnapshot = @(
+            Get-OwnedProcessTree -RootId $Process.Id `
+                -ExpectedRootIdentity $RootIdentity
+        )
         foreach ($Identity in $FinalSnapshot) {
             $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
             $Identities[$Key] = $Identity
             Register-OwnedIdentity -Identity $Identity
         }
-        foreach ($Identity in @($Identities.Values)) {
-            Assert-ProcessExitedByDeadline -Identity $Identity -TimeoutSeconds 30
+        $TreeDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ($true) {
+            foreach ($Identity in @(
+                Get-OwnedProcessTree -RootId $Process.Id `
+                    -ExpectedRootIdentity $RootIdentity
+            )) {
+                $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
+                $Identities[$Key] = $Identity
+                Register-OwnedIdentity -Identity $Identity
+            }
+            $LiveIdentities = @(
+                $Identities.Values |
+                    Where-Object { Test-ProcessIdentityAlive -Identity $_ }
+            )
+            if ($LiveIdentities.Count -eq 0) {
+                break
+            }
+            if ([DateTime]::UtcNow -ge $TreeDeadline) {
+                foreach ($Identity in $LiveIdentities) {
+                    Stop-OwnedProcessIdentity -Identity $Identity
+                }
+                throw "$Category left a captured uninstaller process tree alive"
+            }
+            Start-Sleep -Milliseconds 25
         }
+        $TempRoot = [System.IO.Path]::GetFullPath(
+            [System.IO.Path]::GetTempPath()
+        ).TrimEnd("\") + "\"
+        $TemporaryClones = @(
+            $Identities.Values |
+                Where-Object {
+                    $_.Id -ne $RootIdentity.Id -and
+                    -not $_.Path.Equals(
+                        $RootIdentity.Path,
+                        [System.StringComparison]::OrdinalIgnoreCase
+                    ) -and
+                    [System.IO.Path]::GetFullPath($_.Path).StartsWith(
+                        $TempRoot,
+                        [System.StringComparison]::OrdinalIgnoreCase
+                    )
+                }
+        )
         Write-SmokeEvidence -Category "uninstall" `
             -Name (
                 "uninstaller-process-tree-pid-$($Process.Id)-" +
@@ -558,10 +651,15 @@ function Wait-UninstallerTreeGone {
             ) `
             -Value ([ordered]@{
                 identities = @($Identities.Values)
+                temporaryClones = $TemporaryClones
                 exitCode = $Process.ExitCode
                 elapsedMilliseconds = $Stopwatch.ElapsedMilliseconds
             })
-        return $Process.ExitCode
+        return [pscustomobject]@{
+            ExitCode = $Process.ExitCode
+            Identities = @($Identities.Values)
+            TemporaryClones = $TemporaryClones
+        }
     }
     finally {
         $Stopwatch.Stop()
@@ -582,14 +680,18 @@ function Invoke-Uninstaller {
         Assert-True $Process.Start() "Windows uninstaller did not start"
         $Identity = Get-ProcessIdentity -Process $Process
         Register-OwnedIdentity -Identity $Identity
-        $ExitCode = Wait-UninstallerTreeGone -Process $Process -RootIdentity $Identity `
+        $TreeResult = Wait-UninstallerTreeGone -Process $Process -RootIdentity $Identity `
             -TimeoutSeconds 180 -Category "Windows uninstaller"
     }
     finally {
         $Process.Dispose()
     }
+    Assert-NonEmptyLiteralFile -Path $LogPath -Category "Windows uninstaller"
+    $ExitCode = $TreeResult.ExitCode
     if ($ExpectSuccess) {
         Assert-True ($ExitCode -eq 0) "Windows uninstaller failed"
+        Assert-True (@($TreeResult.TemporaryClones).Count -gt 0) `
+            "successful uninstaller did not expose a verified temporary clone"
     }
     else {
         Assert-True ($ExitCode -ne 0) "Windows uninstaller unexpectedly accepted a refusal"
@@ -647,6 +749,96 @@ function Assert-InstalledInternalMatchesManifest {
     ) "installed _internal does not match the committed build manifest"
     Assert-True ($HashMismatches.Count -eq 0) `
         "installed _internal hashes do not match the built payload"
+}
+
+function Assert-InstalledRootPayloadHashes {
+    param([Parameter(Mandatory = $true)][string]$EvidenceCategory)
+    $Evidence = @()
+    foreach ($Leaf in @("AACC.exe", "aacc-spawn.exe")) {
+        $BuiltPath = Join-Path $DistRoot $Leaf
+        $InstalledPath = Join-Path $InstallRoot $Leaf
+        Assert-True (Test-Path -LiteralPath $InstalledPath -PathType Leaf) `
+            "installed root payload is missing $Leaf"
+        $BuiltHash = (Get-FileHash -LiteralPath $BuiltPath -Algorithm SHA256).Hash
+        $InstalledHash = (Get-FileHash -LiteralPath $InstalledPath -Algorithm SHA256).Hash
+        $Evidence += [ordered]@{
+            leaf = $Leaf
+            builtSha256 = $BuiltHash
+            installedSha256 = $InstalledHash
+        }
+        Assert-True ($InstalledHash -ceq $BuiltHash) `
+            "installed root payload hash differs from dist for $Leaf"
+    }
+    Write-SmokeEvidence -Category $EvidenceCategory -Name "root-payload-hashes.json" `
+        -Value $Evidence
+}
+
+function Set-SmokeDatabaseRow {
+    $env:AACC_SMOKE_DATABASE = Join-Path $AppDataRoot "aacc.db"
+    $Code = (
+        "import os, sqlite3; " +
+        "c=sqlite3.connect(os.environ['AACC_SMOKE_DATABASE']); " +
+        "c.execute('CREATE TABLE IF NOT EXISTS aacc_smoke_preservation " +
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL)'); " +
+        "c.execute('INSERT OR REPLACE INTO aacc_smoke_preservation(key,value) " +
+        "VALUES (?,?)', ('review-gate','semantic-row-v1')); c.commit(); c.close()"
+    )
+    try {
+        $ExitCode = Invoke-ExternalDeadline -FilePath $PythonPath -Arguments @("-c", $Code) `
+            -TimeoutSeconds 30 -Category "smoke database row write"
+        Assert-True ($ExitCode -eq 0) "smoke database row creation failed"
+    }
+    finally {
+        Remove-Item Env:AACC_SMOKE_DATABASE -ErrorAction SilentlyContinue
+    }
+}
+
+function Assert-SmokeDatabaseRow {
+    $env:AACC_SMOKE_DATABASE = Join-Path $AppDataRoot "aacc.db"
+    $Code = (
+        "import os, sqlite3; " +
+        "c=sqlite3.connect(os.environ['AACC_SMOKE_DATABASE']); " +
+        "r=c.execute('SELECT value FROM aacc_smoke_preservation WHERE key=?', " +
+        "('review-gate',)).fetchone(); c.close(); " +
+        "assert r == ('semantic-row-v1',), r"
+    )
+    try {
+        $ExitCode = Invoke-ExternalDeadline -FilePath $PythonPath -Arguments @("-c", $Code) `
+            -TimeoutSeconds 30 -Category "smoke database row read"
+        Assert-True ($ExitCode -eq 0) "smoke database preservation row changed"
+    }
+    finally {
+        Remove-Item Env:AACC_SMOKE_DATABASE -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-StableAppDataState {
+    $State = [ordered]@{}
+    foreach ($Leaf in @("preserve-me.txt", "config.yaml", "kimi-credentials.json")) {
+        $Path = Join-Path $AppDataRoot $Leaf
+        Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) `
+            "stable AppData file is missing: $Leaf"
+        $State[$Leaf] = [ordered]@{
+            length = (Get-Item -LiteralPath $Path -Force).Length
+            sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        }
+    }
+    return [pscustomobject]$State
+}
+
+function Assert-StableAppDataState {
+    param(
+        [Parameter(Mandatory = $true)]$Expected,
+        [Parameter(Mandatory = $true)][string]$EvidenceCategory
+    )
+    $Actual = Get-StableAppDataState
+    Write-SmokeEvidence -Category $EvidenceCategory -Name "stable-appdata.json" `
+        -Value ([ordered]@{ expected = $Expected; actual = $Actual })
+    Assert-True (
+        (ConvertTo-Json -InputObject $Actual -Depth 4 -Compress) -ceq
+        (ConvertTo-Json -InputObject $Expected -Depth 4 -Compress)
+    ) "stable AppData config, credentials, or sentinel content changed"
+    Assert-SmokeDatabaseRow
 }
 
 function Write-CredentialsFixture {
@@ -834,12 +1026,14 @@ function Test-InstalledControlRefusal {
             -Value $Before
         $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         if ($Action -eq "setup") {
-            Invoke-Setup -LogPath (Join-Path $SmokeRoot "reinstall\$Mode-setup.log") `
+            Invoke-Setup -LogPath (
+                Join-Path $SmokeRoot "reinstall\$Scenario-setup.log"
+            ) `
                 -ExpectSuccess $false
         }
         else {
             Invoke-Uninstaller `
-                -LogPath (Join-Path $SmokeRoot "uninstall\$Mode-uninstall.log") `
+                -LogPath (Join-Path $SmokeRoot "uninstall\$Scenario-uninstall.log") `
                 -ExpectSuccess $false
         }
         $Stopwatch.Stop()
@@ -876,8 +1070,8 @@ function Test-InstalledControlRefusal {
             Assert-ProcessExitedByDeadline -Identity $ControlIdentity -TimeoutSeconds 5
             if ($Mode -eq "timeout") {
                 Assert-True (
-                    $Stopwatch.ElapsedMilliseconds -ge 20000 -and
-                    $Stopwatch.ElapsedMilliseconds -le 40000
+                    $Stopwatch.ElapsedMilliseconds -ge 23000 -and
+                    $Stopwatch.ElapsedMilliseconds -le 35000
                 ) "legacy timeout did not exercise the bounded 25-second control path"
             }
             else {
@@ -949,6 +1143,11 @@ if (Test-Path -LiteralPath $SmokeRoot) {
     Remove-Item -LiteralPath $SmokeRoot -Recurse -Force
 }
 [System.IO.Directory]::CreateDirectory($SmokeRoot) | Out-Null
+$CandidateRoot = Join-Path $Root "build\candidate-validation"
+if (Test-Path -LiteralPath $CandidateRoot) {
+    Remove-Item -LiteralPath $CandidateRoot -Recurse -Force
+}
+[System.IO.Directory]::CreateDirectory($CandidateRoot) | Out-Null
 foreach ($Category in @("frozen", "installed", "reinstall", "uninstall")) {
     [System.IO.Directory]::CreateDirectory((Join-Path $SmokeRoot $Category)) | Out-Null
 }
@@ -975,7 +1174,7 @@ $SetupSource = Join-Path $Root "dist\installer\AACC-$Version-Setup.exe"
 $ChecksumSource = "$SetupSource.sha256"
 Assert-True (Test-Path -LiteralPath $SetupSource -PathType Leaf) "Setup is missing"
 Assert-True (Test-Path -LiteralPath $ChecksumSource -PathType Leaf) "Setup checksum is missing"
-$SpecialSetupRoot = Join-Path $SmokeRoot "installed\$SpecialLeaf\setup copy &() %! [x]"
+$SpecialSetupRoot = Join-Path $CandidateRoot "product-smoke\$SpecialLeaf\setup copy &() %! [x]"
 [System.IO.Directory]::CreateDirectory($SpecialSetupRoot) | Out-Null
 $SetupPath = Join-Path $SpecialSetupRoot "AACC-$Version-Setup.exe"
 $ChecksumCopy = "$SetupPath.sha256"
@@ -1041,6 +1240,7 @@ foreach ($Required in @(
     Assert-True (Test-Path -LiteralPath $Required) "installed product tree is incomplete"
 }
 Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed"
+Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"
 Assert-True (-not (Test-Path -LiteralPath $DesktopShortcut)) `
     "silent install unexpectedly created a desktop shortcut"
 Assert-True (Test-Path -LiteralPath $UninstallRegistryPath) `
@@ -1066,7 +1266,13 @@ foreach ($Leaf in @("aacc.db-wal", "aacc.db-shm", "kimi-credentials.json")) {
 Assert-ProductAcl -DataRoot $AppDataRoot -EvidenceCategory "installed"
 Invoke-ProductBrokerProbes -ProductRoot $InstallRoot -Category "installed"
 Invoke-GracefulShutdown -Executable $InstalledAacc -Owned $Installed
-[System.IO.File]::WriteAllText((Join-Path $AppDataRoot "preserve-me.txt"), "preserve")
+[System.IO.File]::WriteAllBytes(
+    (Join-Path $AppDataRoot "preserve-me.txt"),
+    [System.Text.UTF8Encoding]::new($false).GetBytes("preserve-v1`n")
+)
+Set-SmokeDatabaseRow
+$StableAppData = Get-StableAppDataState
+Assert-StableAppDataState -Expected $StableAppData -EvidenceCategory "installed"
 
 Test-InstalledControlRefusal -Action setup -Mode nonzero -Capability $false
 foreach ($Mode in @("nonzero", "false-success", "timeout")) {
@@ -1081,8 +1287,53 @@ Assert-ProcessExitedByDeadline -Identity $RunningForReinstall.Identity
 $RunningForReinstall.Process.Dispose()
 Assert-ProductProcessBaseline -ProductRoot $RunningForReinstall.ProductRoot `
     -Expected $RunningForReinstall.ProductBaseline -Category "reinstall"
-Assert-True (Test-Path -LiteralPath (Join-Path $AppDataRoot "preserve-me.txt")) `
-    "reinstall did not preserve AppData"
+Assert-StableAppDataState -Expected $StableAppData -EvidenceCategory "reinstall\running"
+Assert-InstalledInternalMatchesManifest -EvidenceCategory "reinstall\running"
+Assert-InstalledRootPayloadHashes -EvidenceCategory "reinstall\running"
+
+$StalePayload = Join-Path $InstallRoot "_internal\stale-obsolete.pyd"
+[System.IO.File]::WriteAllBytes($StalePayload, [byte[]](9, 8, 7, 6))
+$StaleReady = Join-Path $SmokeRoot "reinstall\stale-lock-ready.txt"
+$StaleLocker = Start-OwnedProcess -FilePath $LockerFixture -Arguments @(
+    $StalePayload,
+    $StaleReady
+)
+try {
+    Wait-LiteralPath -Path $StaleReady -TimeoutSeconds 10 -Owner $StaleLocker.Process
+    $StaleFailureRequestedLog = Join-Path `
+        $SmokeRoot "reinstall\stale-locked-failure.log"
+    Invoke-Setup -LogPath $StaleFailureRequestedLog `
+        -ExpectSuccess $false
+}
+finally {
+    Stop-OwnedProcessIdentity -Identity $StaleLocker.Identity
+    $StaleLocker.Process.Dispose()
+}
+Assert-True (Test-Path -LiteralPath $StalePayload -PathType Leaf) `
+    "locked stale payload unexpectedly disappeared"
+$StaleFailureLog = Get-SpecialSmokePath -RequestedPath $StaleFailureRequestedLog
+Assert-True (
+    [System.IO.File]::ReadAllText($StaleFailureLog).Contains(
+        "AACC_MANIFEST_CLEANUP result=incomplete"
+    )
+) "stale cleanup failure log did not record an explicit incomplete result"
+Assert-StableAppDataState -Expected $StableAppData `
+    -EvidenceCategory "reinstall\stale-locked-failure"
+$BeforeStoppedSuccess = Get-AppDataManifest
+Invoke-Setup -LogPath (Join-Path $SmokeRoot "reinstall\stale-unlocked-success.log") `
+    -ExpectSuccess $true
+$AfterStoppedSuccess = Get-AppDataManifest
+Write-SmokeEvidence -Category "reinstall\stale-unlocked-success" `
+    -Name "appdata-manifest.json" `
+    -Value ([ordered]@{ before = $BeforeStoppedSuccess; after = $AfterStoppedSuccess })
+Assert-True ($AfterStoppedSuccess -ceq $BeforeStoppedSuccess) `
+    "stopped successful reinstall changed the complete AppData manifest"
+Assert-True (-not (Test-Path -LiteralPath $StalePayload)) `
+    "unlocked stale payload survived successful manifest cleanup"
+Assert-StableAppDataState -Expected $StableAppData `
+    -EvidenceCategory "reinstall\stale-unlocked-success"
+Assert-InstalledInternalMatchesManifest -EvidenceCategory "reinstall\stale-unlocked-success"
+Assert-InstalledRootPayloadHashes -EvidenceCategory "reinstall\stale-unlocked-success"
 
 $RollbackSentinel = Join-Path $InstallRoot "_internal\rollback-sentinel.bin"
 [System.IO.File]::WriteAllBytes($RollbackSentinel, [byte[]](1, 4, 2))
@@ -1099,17 +1350,35 @@ $RollbackProbeBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
     "AACC_OLD_INTERNAL_ROLLBACK_PROBE`n"
 )
 [System.IO.File]::WriteAllBytes($RollbackProbePath, $RollbackProbeBytes)
+$InternalInstalledRoot = Join-Path $InstallRoot "_internal"
+$RollbackProbeRelative = $RollbackProbePath.Substring($InternalInstalledRoot.Length + 1)
+$BuiltRollbackProbePath = Join-Path (Join-Path $DistRoot "_internal") $RollbackProbeRelative
+$BuiltRollbackProbeBytes = [System.IO.File]::ReadAllBytes($BuiltRollbackProbePath)
+Assert-True (
+    [Convert]::ToBase64String($RollbackProbeBytes) -cne
+    [Convert]::ToBase64String($BuiltRollbackProbeBytes)
+) "rollback probe old bytes unexpectedly equal the packaged bytes"
 $BeforeFault = Get-FullStateManifest
 Write-SmokeEvidence -Category "reinstall\lock-fault" -Name "before-manifest.json" `
     -Value $BeforeFault
 $PendingBefore = Get-PendingFileRenameOperations
 $LockedPayload = $InstalledAacc
 $LockReady = Join-Path $SmokeRoot "reinstall\lock-ready.txt"
-$Locker = Start-OwnedProcess -FilePath $LockerFixture -Arguments @($LockedPayload, $LockReady)
+$RollbackObserved = Join-Path $SmokeRoot `
+    "reinstall\$SpecialLeaf\rollback-probe-observed.txt"
+$Locker = Start-OwnedProcess -FilePath $LockerFixture -Arguments @(
+    $LockedPayload,
+    $LockReady,
+    $RollbackProbePath,
+    $BuiltRollbackProbePath,
+    $RollbackObserved
+)
 try {
     Wait-LiteralPath -Path $LockReady -TimeoutSeconds 10 -Owner $Locker.Process
-    Invoke-Setup -LogPath (Join-Path $SmokeRoot "reinstall\locked-failure.log") `
+    $RollbackRequestedLog = Join-Path $SmokeRoot "reinstall\locked-failure.log"
+    Invoke-Setup -LogPath $RollbackRequestedLog `
         -ExpectSuccess $false
+    Wait-LiteralPath -Path $RollbackObserved -TimeoutSeconds 5 -Owner $Locker.Process
 }
 finally {
     Stop-OwnedProcessIdentity -Identity $Locker.Identity
@@ -1128,6 +1397,12 @@ Assert-True (
     [Convert]::ToBase64String($RollbackProbeBytes) -ceq
     [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($RollbackProbePath))
 ) "failed reinstall did not roll back the already replaced internal metadata"
+Assert-NonEmptyLiteralFile -Path $RollbackObserved `
+    -Category "independent rollback probe observer"
+$RollbackResolvedLog = Get-SpecialSmokePath -RequestedPath $RollbackRequestedLog
+$RollbackLogText = [System.IO.File]::ReadAllText($RollbackResolvedLog)
+Assert-True ($RollbackLogText -match '(?i)roll(?:ing)? back|rollback') `
+    "installer log did not record rollback activity"
 Assert-True (
     @(Get-ChildItem -LiteralPath (Split-Path -Parent $InstallRoot) -Force |
         Where-Object { $_.Name -like "AACC.aacc-*" }).Count -eq 0
@@ -1136,13 +1411,18 @@ Assert-True (
 $OldPayload = Invoke-InstalledLaunch -Category "reinstall\old-payload"
 Invoke-ProductBrokerProbes -ProductRoot $InstallRoot -Category "reinstall\old-payload"
 Invoke-GracefulShutdown -Executable $InstalledAacc -Owned $OldPayload
+$BeforeAfterLockSuccess = Get-AppDataManifest
 Invoke-Setup -LogPath (Join-Path $SmokeRoot "reinstall\after-lock-success.log") `
     -ExpectSuccess $true
+$AfterAfterLockSuccess = Get-AppDataManifest
+Assert-True ($AfterAfterLockSuccess -ceq $BeforeAfterLockSuccess) `
+    "stopped successful reinstall after rollback changed AppData"
 Assert-True (-not (Test-Path -LiteralPath $RollbackSentinel)) `
     "successful reinstall left a stale sentinel"
-Assert-True (Test-Path -LiteralPath (Join-Path $AppDataRoot "preserve-me.txt")) `
-    "successful reinstall changed AppData"
+Assert-StableAppDataState -Expected $StableAppData `
+    -EvidenceCategory "reinstall\after-lock-success"
 Assert-InstalledInternalMatchesManifest -EvidenceCategory "reinstall"
+Assert-InstalledRootPayloadHashes -EvidenceCategory "reinstall"
 
 $RunningForUninstall = Invoke-InstalledLaunch -Category "uninstall"
 Invoke-Uninstaller -LogPath (Join-Path $SmokeRoot "uninstall\running-uninstall.log") `
@@ -1168,16 +1448,21 @@ Assert-True (-not (Test-Path -LiteralPath $UninstallRegistryPath)) `
     "uninstaller left HKCU registration"
 Assert-True (-not (Test-Path -LiteralPath $StartMenuShortcut)) `
     "uninstaller left the Start Menu shortcut"
-Assert-True (Test-Path -LiteralPath (Join-Path $AppDataRoot "preserve-me.txt")) `
-    "uninstaller removed preserved AppData"
+Assert-StableAppDataState -Expected $StableAppData -EvidenceCategory "uninstall"
 
 [System.IO.Directory]::CreateDirectory($InstallRoot) | Out-Null
 Copy-Item -LiteralPath $LegacyFixture -Destination $InstalledAacc
+$BeforeStoppedLegacyAppData = Get-AppDataManifest
 Invoke-Setup -LogPath (Join-Path $SmokeRoot "installed\stopped-legacy-install.log") `
     -ExpectSuccess $true
+$AfterStoppedLegacyAppData = Get-AppDataManifest
+Assert-True ($AfterStoppedLegacyAppData -ceq $BeforeStoppedLegacyAppData) `
+    "stopped legacy install changed AppData"
 Assert-True (Test-Path -LiteralPath $CapabilityPath) `
     "stopped legacy install did not become managed"
 Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed\stopped-legacy"
+Assert-InstalledRootPayloadHashes -EvidenceCategory "installed\stopped-legacy"
+Assert-StableAppDataState -Expected $StableAppData -EvidenceCategory "installed\stopped-legacy"
 Invoke-Uninstaller -LogPath (Join-Path $SmokeRoot "uninstall\final-cleanup.log") `
     -ExpectSuccess $true
 
