@@ -135,6 +135,29 @@ def test_windows_smoke_junction_target_avoids_provider_wildcards() -> None:
     assert '"product-smoke\\junction target $SpecialLeaf"' not in script
 
 
+def test_windows_smoke_restores_terminated_fixture_with_a_bounded_retry() -> None:
+    script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+
+    helper = script.split("function Restore-LiteralFileAfterProcessExit", 1)[1].split("\n}", 1)[0]
+    assert "Test-ProcessIdentityAlive -Identity $Identity" in helper
+    assert "[System.IO.File]::Copy($Source, $Destination, $true)" in helper
+    assert "catch [System.IO.IOException]" in helper
+    assert "$Win32Code -notin @(32, 33)" in helper
+    assert "[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)" in helper
+    assert "Start-Sleep -Milliseconds 100" in helper
+    assert "Get-FileHash -LiteralPath $Source -Algorithm SHA256" in helper
+    assert "Get-FileHash -LiteralPath $Destination -Algorithm SHA256" in helper
+    assert "$DestinationHash -ceq $SourceHash" in helper
+
+    refusal = script.split("function Test-InstalledControlRefusal", 1)[1].split(
+        "function Compile-WindowsFixtures", 1
+    )[0]
+    stop = refusal.index("Stop-OwnedProcessIdentity -Identity $Legacy.Identity")
+    restore = refusal.index("Restore-LiteralFileAfterProcessExit")
+    assert stop < restore
+    assert "-Identity $Legacy.Identity" in refusal[restore:]
+
+
 def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
     text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     lowered = text.lower()
