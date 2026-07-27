@@ -111,6 +111,84 @@ def test_start_after_stop_fails_closed(tmp_path):
     assert not service._thread.is_alive()
 
 
+def test_stop_serializes_with_one_shot_start_window(tmp_path, monkeypatch):
+    service = QuotaService(tmp_path, version="test")
+    polls: list[bool] = []
+    service._poll_guarded = lambda: polls.append(True)  # type: ignore[method-assign]
+    real_thread = threading.Thread
+    start_entered = threading.Event()
+    allow_start = threading.Event()
+    allow_target = threading.Event()
+    stop_done = threading.Event()
+    runners: list[threading.Thread] = []
+    join_timeouts: list[float | None] = []
+
+    class PausedThread:
+        def __init__(self, *, target, name, daemon) -> None:
+            del name, daemon
+            self._target = target
+
+        def start(self) -> None:
+            start_entered.set()
+            assert allow_start.wait(2)
+
+            def delayed_target() -> None:
+                assert allow_target.wait(2)
+                self._target()
+
+            runner = real_thread(target=delayed_target)
+            runners.append(runner)
+            runner.start()
+
+        def join(self, timeout: float | None = None) -> None:
+            join_timeouts.append(timeout)
+
+    monkeypatch.setattr("aacc.quota_service.threading.Thread", PausedThread)
+    refresher = real_thread(target=service.refresh_now)
+    refresher.start()
+    assert start_entered.wait(2)
+
+    def stop_service() -> None:
+        service.stop()
+        stop_done.set()
+
+    stopper = real_thread(target=stop_service)
+    stopper.start()
+    allow_start.set()
+    refresher.join(timeout=2)
+    assert stop_done.wait(2)
+    allow_target.set()
+    for runner in runners:
+        runner.join(timeout=2)
+    stopper.join(timeout=2)
+
+    assert polls == []
+    assert join_timeouts == [2.0]
+
+
+def test_concurrent_prestart_refreshes_spawn_only_one_one_shot(tmp_path, monkeypatch):
+    service = QuotaService(tmp_path, version="test")
+    spawned: list[bool] = []
+
+    class CapturedThread:
+        def __init__(self, *, target, name, daemon) -> None:
+            del target, name, daemon
+            spawned.append(True)
+
+        def start(self) -> None:
+            pass
+
+        def join(self, timeout: float | None = None) -> None:
+            del timeout
+
+    monkeypatch.setattr("aacc.quota_service.threading.Thread", CapturedThread)
+
+    service.refresh_now()
+    service.refresh_now()
+
+    assert spawned == [True]
+
+
 VALID_TOKEN = {
     "access_token": "at",
     "refresh_token": "rt",
