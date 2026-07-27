@@ -31,13 +31,12 @@ WizardStyle=modern
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式 / Create a desktop shortcut"; GroupDescription: "其他选项 / Additional options:"; Flags: unchecked
 
-[InstallDelete]
-Type: filesandordirs; Name: "{app}\_internal"
-
 [Files]
+Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\dist\AACC\AACC.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\AACC\aacc-spawn.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\build\installer\internal-manifest-v1.txt"; DestDir: "{app}\uninstall"; Flags: ignoreversion
+Source: "shutdown-v1.capability"; DestDir: "{app}\uninstall"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\AACC"; Filename: "{app}\AACC.exe"; WorkingDir: "{app}"
@@ -54,8 +53,11 @@ const
   WAIT_OBJECT_0 = 0;
   WAIT_TIMEOUT = 258;
   STARTF_USESHOWWINDOW = 1;
+  FILE_ATTRIBUTE_REPARSE_POINT = $400;
 
 type
+  { These pointer-sized records are reviewed for the pinned Inno Setup 6.7.1
+    x86 compiler. Re-review their ABI before an Inno 7 or 64-bit compiler move. }
   TStartupInfo = record
     cb: DWORD;
     lpReserved: String;
@@ -89,21 +91,21 @@ function CreateProcess(
   lpCommandLine: String;
   lpProcessAttributes: LongWord;
   lpThreadAttributes: LongWord;
-  bInheritHandles: Boolean;
+  bInheritHandles: BOOL;
   dwCreationFlags: DWORD;
   lpEnvironment: LongWord;
   lpCurrentDirectory: String;
   const lpStartupInfo: TStartupInfo;
   var lpProcessInformation: TProcessInformation
-): Boolean;
+): BOOL;
   external 'CreateProcessW@kernel32.dll stdcall';
 function WaitForSingleObject(hHandle: THandle; dwMilliseconds: DWORD): DWORD;
   external 'WaitForSingleObject@kernel32.dll stdcall';
-function GetExitCodeProcess(hProcess: THandle; var lpExitCode: DWORD): Boolean;
+function GetExitCodeProcess(hProcess: THandle; var lpExitCode: DWORD): BOOL;
   external 'GetExitCodeProcess@kernel32.dll stdcall';
-function TerminateProcess(hProcess: THandle; uExitCode: DWORD): Boolean;
+function TerminateProcess(hProcess: THandle; uExitCode: DWORD): BOOL;
   external 'TerminateProcess@kernel32.dll stdcall';
-function CloseHandle(hObject: THandle): Boolean;
+function CloseHandle(hObject: THandle): BOOL;
   external 'CloseHandle@kernel32.dll stdcall';
 
 function ShutdownFailureMessage: String;
@@ -154,8 +156,10 @@ begin
     begin
       { This handle belongs only to the newly created control invocation.
         It is never a handle to the existing main AACC process. }
-      TerminateProcess(ProcessInfo.hProcess, 124);
-      WaitForSingleObject(ProcessInfo.hProcess, 5000);
+      if not TerminateProcess(ProcessInfo.hProcess, 124) then
+        Exit;
+      if WaitForSingleObject(ProcessInfo.hProcess, 5000) <> WAIT_OBJECT_0 then
+        Exit;
       Exit;
     end;
     if WaitResult <> WAIT_OBJECT_0 then
@@ -169,6 +173,109 @@ begin
       CloseHandle(ProcessInfo.hThread);
     CloseHandle(ProcessInfo.hProcess);
   end;
+end;
+
+function ManifestPath(const Value: String): String;
+begin
+  Result := Value;
+  StringChangeEx(Result, '\', '/', True);
+end;
+
+function ManifestContains(
+  const Manifest: TArrayOfString;
+  const Entry: String
+): Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+  for Index := 0 to GetArrayLength(Manifest) - 1 do
+  begin
+    if CompareText(Manifest[Index], Entry) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+procedure CleanupInternalExtras(
+  const RootPath: String;
+  const RelativePath: String;
+  const Manifest: TArrayOfString
+);
+var
+  SearchPath: String;
+  FullPath: String;
+  ChildRelative: String;
+  FindRec: TFindRec;
+begin
+  SearchPath := AddBackslash(RootPath);
+  if RelativePath <> '' then
+    SearchPath := SearchPath + RelativePath + '\';
+  if not FindFirst(SearchPath + '*', FindRec) then
+    Exit;
+  try
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+      begin
+        if RelativePath = '' then
+          ChildRelative := FindRec.Name
+        else
+          ChildRelative := RelativePath + '\' + FindRec.Name;
+        FullPath := AddBackslash(RootPath) + ChildRelative;
+        if (FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then
+        begin
+          if (FindRec.Attributes and faDirectory) <> 0 then
+          begin
+            { Remove only the junction/reparse directory entry. Never recurse
+              into a target that is outside the installed payload. }
+            if not RemoveDir(FullPath) then
+              Log('AACC_MANIFEST_CLEANUP result=reparse-directory-retained');
+          end
+          else if not DeleteFile(FullPath) then
+            Log('AACC_MANIFEST_CLEANUP result=reparse-file-retained');
+        end
+        else if (FindRec.Attributes and faDirectory) <> 0 then
+        begin
+          CleanupInternalExtras(RootPath, ChildRelative, Manifest);
+          if not ManifestContains(
+            Manifest,
+            'D ' + ManifestPath(ChildRelative) + '/'
+          ) then
+          begin
+            if not RemoveDir(FullPath) then
+              Log('AACC_MANIFEST_CLEANUP result=directory-retained');
+          end;
+        end
+        else if not ManifestContains(
+          Manifest,
+          'F ' + ManifestPath(ChildRelative)
+        ) then
+        begin
+          if not DeleteFile(FullPath) then
+            Log('AACC_MANIFEST_CLEANUP result=file-retained');
+        end;
+      end;
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+procedure CleanupCommittedInternalPayload;
+var
+  Manifest: TArrayOfString;
+  ManifestPath: String;
+begin
+  ManifestPath := ExpandConstant('{app}\uninstall\internal-manifest-v1.txt');
+  if not LoadStringsFromFile(ManifestPath, Manifest) then
+  begin
+    Log('AACC_MANIFEST_CLEANUP result=manifest-unavailable');
+    Exit;
+  end;
+  CleanupInternalExtras(ExpandConstant('{app}\_internal'), '', Manifest);
+  Log('AACC_MANIFEST_CLEANUP result=completed');
 end;
 
 function ShutdownExistingAACC(var ErrorMessage: String): Boolean;
@@ -228,13 +335,13 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  CapabilityPath: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    CapabilityPath := ExpandConstant('{app}\uninstall\') + ShutdownCapabilityName;
-    if not SaveStringToFile(CapabilityPath, 'AACC shutdown protocol v1' + #10, False) then
-      RaiseException('failed to record the managed shutdown capability');
+    try
+      CleanupCommittedInternalPayload;
+    except
+      Log('AACC_MANIFEST_CLEANUP result=unexpected-retained');
+    end;
   end;
 end;

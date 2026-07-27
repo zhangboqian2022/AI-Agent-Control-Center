@@ -3,6 +3,7 @@ param([switch]$FrozenOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$OwnedProcessRegistry = New-Object System.Collections.ArrayList
 
 function Assert-True {
     param([Parameter(Mandatory = $true)][bool]$Condition, [string]$Message = "assertion failed")
@@ -54,13 +55,48 @@ function New-ProcessStartInfo {
     return $Info
 }
 
+function Write-SmokeEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string]$Category,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()]$Value
+    )
+    $Directory = Join-Path $SmokeRoot $Category
+    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
+    $Text = if ($Value -is [string]) {
+        $Value
+    }
+    else {
+        ConvertTo-Json -InputObject $Value -Depth 8
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $Directory $Name),
+        $Text + "`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+}
+
 function Get-ProcessIdentity {
-    param([Parameter(Mandatory = $true)][int]$Id)
-    $Process = Get-Process -Id $Id -ErrorAction Stop
-    return [pscustomobject]@{
-        Id = $Process.Id
-        Path = $Process.Path
-        CreationTimeUtc = $Process.StartTime.ToUniversalTime().Ticks
+    param(
+        [int]$Id = 0,
+        [System.Diagnostics.Process]$Process = $null
+    )
+    $OwnsProcess = $false
+    if ($null -eq $Process) {
+        $Process = Get-Process -Id $Id -ErrorAction Stop
+        $OwnsProcess = $true
+    }
+    try {
+        return [pscustomobject]@{
+            Id = $Process.Id
+            Path = $Process.Path
+            CreationTimeUtc = $Process.StartTime.ToUniversalTime().Ticks
+        }
+    }
+    finally {
+        if ($OwnsProcess) {
+            $Process.Dispose()
+        }
     }
 }
 
@@ -80,10 +116,42 @@ function Test-ProcessIdentityAlive {
 
 function Stop-OwnedProcessIdentity {
     param([Parameter(Mandatory = $true)]$Identity)
-    if (-not (Test-ProcessIdentityAlive -Identity $Identity)) { return }
-    $Process = Get-Process -Id $Identity.Id -ErrorAction Stop
-    $Process.Kill()
-    [void]$Process.WaitForExit(5000)
+    try {
+        $Process = Get-Process -Id $Identity.Id -ErrorAction Stop
+    }
+    catch {
+        return
+    }
+    try {
+        $Current = Get-ProcessIdentity -Process $Process
+        if (
+            -not $Current.Path.Equals(
+                $Identity.Path,
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -or
+            $Current.CreationTimeUtc -ne $Identity.CreationTimeUtc
+        ) {
+            return
+        }
+        $Process.Kill()
+        if (-not $Process.WaitForExit(5000)) {
+            throw "owned process did not exit after handle-scoped termination"
+        }
+    }
+    finally {
+        $Process.Dispose()
+    }
+}
+
+function Register-OwnedIdentity {
+    param([Parameter(Mandatory = $true)]$Identity)
+    [void]$OwnedProcessRegistry.Add($Identity)
+}
+
+function Invoke-OwnedCleanup {
+    foreach ($Identity in @($OwnedProcessRegistry)) {
+        try { Stop-OwnedProcessIdentity -Identity $Identity } catch {}
+    }
 }
 
 function Get-OwnedProcessTree {
@@ -116,6 +184,46 @@ function Stop-OwnedProcessTree {
     foreach ($Identity in $Identities) { Stop-OwnedProcessIdentity -Identity $Identity }
 }
 
+function Get-ProductProcessBaseline {
+    param([Parameter(Mandatory = $true)][string]$ProductRoot)
+    $BrokerPath = Join-Path $ProductRoot "aacc-spawn.exe"
+    $Identities = @()
+    foreach ($Record in @(Get-CimInstance Win32_Process)) {
+        $MatchesBroker = (
+            -not [string]::IsNullOrWhiteSpace([string]$Record.ExecutablePath) -and
+            ([string]$Record.ExecutablePath).Equals(
+                $BrokerPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        )
+        $MatchesFixture = (
+            -not [string]::IsNullOrWhiteSpace([string]$Record.CommandLine) -and
+            ([string]$Record.CommandLine).IndexOf(
+                $FixtureRoot,
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -ge 0
+        )
+        if ($MatchesBroker -or $MatchesFixture) {
+            try { $Identities += Get-ProcessIdentity -Id ([int]$Record.ProcessId) } catch {}
+        }
+    }
+    return @($Identities | Sort-Object Id, CreationTimeUtc)
+}
+
+function Assert-ProductProcessBaseline {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProductRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()]$Expected,
+        [Parameter(Mandatory = $true)][string]$Category
+    )
+    $Actual = @(Get-ProductProcessBaseline -ProductRoot $ProductRoot)
+    Write-SmokeEvidence -Category $Category -Name "product-process-baseline.json" `
+        -Value ([ordered]@{ expected = @($Expected); actual = $Actual })
+    $ExpectedText = ConvertTo-Json -InputObject @($Expected) -Compress
+    $ActualText = ConvertTo-Json -InputObject @($Actual) -Compress
+    Assert-True ($ActualText -ceq $ExpectedText) "product process baseline changed"
+}
+
 function Wait-ProcessDeadline {
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
@@ -138,12 +246,29 @@ function Invoke-ExternalDeadline {
     )
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = New-ProcessStartInfo -FilePath $FilePath -Arguments $Arguments
+    $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         Assert-True $Process.Start() "$Category did not start"
-        return Wait-ProcessDeadline -Process $Process -TimeoutSeconds $TimeoutSeconds `
+        $Identity = Get-ProcessIdentity -Process $Process
+        Register-OwnedIdentity -Identity $Identity
+        $ExitCode = Wait-ProcessDeadline -Process $Process -TimeoutSeconds $TimeoutSeconds `
             -Category $Category
+        Write-SmokeEvidence -Category "processes" `
+            -Name (
+                ($Category -replace '[^A-Za-z0-9.-]', '-') +
+                "-pid-$($Identity.Id)-start-$($Identity.CreationTimeUtc).json"
+            ) `
+            -Value ([ordered]@{
+                pid = $Identity.Id
+                path = $Identity.Path
+                creationTimeUtc = $Identity.CreationTimeUtc
+                exitCode = $ExitCode
+                elapsedMilliseconds = $Stopwatch.ElapsedMilliseconds
+            })
+        return $ExitCode
     }
     finally {
+        $Stopwatch.Stop()
         $Process.Dispose()
     }
 }
@@ -156,9 +281,11 @@ function Start-OwnedProcess {
     try {
         Assert-True $Process.Start() "owned process did not start"
         $StartedId = $Process.Id
+        $Identity = Get-ProcessIdentity -Process $Process
+        Register-OwnedIdentity -Identity $Identity
         return [pscustomobject]@{
             Process = $Process
-            Identity = Get-ProcessIdentity -Id $StartedId
+            Identity = $Identity
         }
     }
     catch {
@@ -200,10 +327,11 @@ function Assert-ProcessExitedByDeadline {
 function Assert-ExactAcl {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][bool]$Directory
+        [Parameter(Mandatory = $true)][bool]$Directory,
+        [Parameter(Mandatory = $true)][string]$EvidenceCategory,
+        [Parameter(Mandatory = $true)][string]$EvidenceName
     )
     $Acl = Get-Acl -LiteralPath $Path
-    Assert-True $Acl.AreAccessRulesProtected "DACL is not protected"
     $Rules = @(
         $Acl.GetAccessRules(
             $true,
@@ -211,6 +339,28 @@ function Assert-ExactAcl {
             [System.Security.Principal.SecurityIdentifier]
         )
     )
+    $RuleEvidence = @(
+        $Rules | ForEach-Object {
+            [ordered]@{
+                sid = $_.IdentityReference.Value
+                type = $_.AccessControlType.ToString()
+                rights = [int64]$_.FileSystemRights
+                inherited = $_.IsInherited
+                inheritanceFlags = $_.InheritanceFlags.ToString()
+                propagationFlags = $_.PropagationFlags.ToString()
+            }
+        }
+    )
+    Write-SmokeEvidence -Category $EvidenceCategory -Name "$EvidenceName-acl.json" `
+        -Value ([ordered]@{
+            path = $Path
+            sddl = $Acl.GetSecurityDescriptorSddlForm(
+                [System.Security.AccessControl.AccessControlSections]::All
+            )
+            protected = $Acl.AreAccessRulesProtected
+            aces = $RuleEvidence
+        })
+    Assert-True $Acl.AreAccessRulesProtected "DACL is not protected"
     $CurrentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $ExpectedSids = @($CurrentSid, "S-1-5-18", "S-1-5-32-544")
     Assert-True ($Rules.Count -eq 3) "DACL does not contain exactly three explicit ACEs"
@@ -328,8 +478,16 @@ function Get-PendingFileRenameOperations {
     }
 }
 
+function Get-SpecialSmokePath {
+    param([Parameter(Mandatory = $true)][string]$RequestedPath)
+    $Directory = Join-Path (Split-Path -Parent $RequestedPath) $SpecialLeaf
+    [System.IO.Directory]::CreateDirectory($Directory) | Out-Null
+    return Join-Path $Directory ([System.IO.Path]::GetFileName($RequestedPath))
+}
+
 function Invoke-Setup {
     param([Parameter(Mandatory = $true)][string]$LogPath, [bool]$ExpectSuccess)
+    $LogPath = Get-SpecialSmokePath -RequestedPath $LogPath
     $Arguments = @(
         "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
         "/NOCLOSEAPPLICATIONS", "/NOFORCECLOSEAPPLICATIONS",
@@ -345,21 +503,150 @@ function Invoke-Setup {
     }
 }
 
+function Wait-UninstallerTreeGone {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)]$RootIdentity,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Category
+    )
+    $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $Identities = @{}
+    try {
+        $RootKey = "$($RootIdentity.Id):$($RootIdentity.CreationTimeUtc)"
+        $Identities[$RootKey] = $RootIdentity
+        Register-OwnedIdentity -Identity $RootIdentity
+
+        # Capture immediately after Start so a short-lived original uninstaller
+        # cannot hand off to its temporary clone before the first tree snapshot.
+        $InitialSnapshot = @(Get-OwnedProcessTree -RootId $Process.Id)
+        foreach ($Identity in $InitialSnapshot) {
+            $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
+            $Identities[$Key] = $Identity
+            Register-OwnedIdentity -Identity $Identity
+        }
+
+        $Deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while (-not $Process.HasExited -and [DateTime]::UtcNow -lt $Deadline) {
+            foreach ($Identity in @(Get-OwnedProcessTree -RootId $Process.Id)) {
+                $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
+                $Identities[$Key] = $Identity
+                Register-OwnedIdentity -Identity $Identity
+            }
+            Start-Sleep -Milliseconds 25
+        }
+        if (-not $Process.HasExited) {
+            Stop-OwnedProcessTree -RootId $Process.Id
+            throw "$Category exceeded its outer harness deadline"
+        }
+
+        # Win32_Process retains ParentProcessId on a live clone even after its
+        # parent exits. One final root snapshot closes the parent-exit clone race.
+        $FinalSnapshot = @(Get-OwnedProcessTree -RootId $Process.Id)
+        foreach ($Identity in $FinalSnapshot) {
+            $Key = "$($Identity.Id):$($Identity.CreationTimeUtc)"
+            $Identities[$Key] = $Identity
+            Register-OwnedIdentity -Identity $Identity
+        }
+        foreach ($Identity in @($Identities.Values)) {
+            Assert-ProcessExitedByDeadline -Identity $Identity -TimeoutSeconds 30
+        }
+        Write-SmokeEvidence -Category "uninstall" `
+            -Name (
+                "uninstaller-process-tree-pid-$($Process.Id)-" +
+                "created-$($RootIdentity.CreationTimeUtc).json"
+            ) `
+            -Value ([ordered]@{
+                identities = @($Identities.Values)
+                exitCode = $Process.ExitCode
+                elapsedMilliseconds = $Stopwatch.ElapsedMilliseconds
+            })
+        return $Process.ExitCode
+    }
+    finally {
+        $Stopwatch.Stop()
+    }
+}
+
 function Invoke-Uninstaller {
     param([Parameter(Mandatory = $true)][string]$LogPath, [bool]$ExpectSuccess)
+    $LogPath = Get-SpecialSmokePath -RequestedPath $LogPath
     $Arguments = @(
         "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
         "/NOCLOSEAPPLICATIONS", "/NOFORCECLOSEAPPLICATIONS",
         "/NORESTARTAPPLICATIONS", "/LOG=$LogPath"
     )
-    $ExitCode = Invoke-ExternalDeadline -FilePath $UninstallerPath -Arguments $Arguments `
-        -TimeoutSeconds 180 -Category "Windows uninstaller"
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = New-ProcessStartInfo -FilePath $UninstallerPath -Arguments $Arguments
+    try {
+        Assert-True $Process.Start() "Windows uninstaller did not start"
+        $Identity = Get-ProcessIdentity -Process $Process
+        Register-OwnedIdentity -Identity $Identity
+        $ExitCode = Wait-UninstallerTreeGone -Process $Process -RootIdentity $Identity `
+            -TimeoutSeconds 180 -Category "Windows uninstaller"
+    }
+    finally {
+        $Process.Dispose()
+    }
     if ($ExpectSuccess) {
         Assert-True ($ExitCode -eq 0) "Windows uninstaller failed"
     }
     else {
         Assert-True ($ExitCode -ne 0) "Windows uninstaller unexpectedly accepted a refusal"
     }
+}
+
+function Assert-InstalledInternalMatchesManifest {
+    param([Parameter(Mandatory = $true)][string]$EvidenceCategory)
+    $ManifestPath = Join-Path $InstallRoot "uninstall\internal-manifest-v1.txt"
+    Assert-True (Test-Path -LiteralPath $ManifestPath -PathType Leaf) `
+        "installed internal manifest is missing"
+    $Expected = @(
+        [System.IO.File]::ReadAllLines(
+            $ManifestPath,
+            [System.Text.UTF8Encoding]::new($false, $true)
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    $ActualList = @(
+        Get-ChildItem -LiteralPath (Join-Path $InstallRoot "_internal") -Force -Recurse |
+            ForEach-Object {
+                $Relative = $_.FullName.Substring(
+                    (Join-Path $InstallRoot "_internal").Length + 1
+                ).Replace("\", "/")
+                if ($_.PSIsContainer) { "D $Relative/" } else { "F $Relative" }
+            }
+    )
+    [string[]]$Actual = $ActualList
+    [string[]]$ExpectedSorted = $Expected
+    [Array]::Sort($Actual, [System.StringComparer]::Ordinal)
+    [Array]::Sort($ExpectedSorted, [System.StringComparer]::Ordinal)
+    $HashMismatches = @()
+    foreach ($Line in $Actual) {
+        if ($Line.StartsWith("F ")) {
+            $Relative = $Line.Substring(2).Replace("/", "\")
+            $InstalledFile = Join-Path (Join-Path $InstallRoot "_internal") $Relative
+            $BuiltFile = Join-Path (Join-Path $DistRoot "_internal") $Relative
+            if (
+                -not (Test-Path -LiteralPath $BuiltFile -PathType Leaf) -or
+                (Get-FileHash -LiteralPath $InstalledFile -Algorithm SHA256).Hash -cne
+                (Get-FileHash -LiteralPath $BuiltFile -Algorithm SHA256).Hash
+            ) {
+                $HashMismatches += $Line
+            }
+        }
+    }
+    Write-SmokeEvidence -Category $EvidenceCategory -Name "internal-manifest-compare.json" `
+        -Value ([ordered]@{
+            expected = $ExpectedSorted
+            actual = $Actual
+            hashMismatches = $HashMismatches
+        })
+    Assert-True (
+        (ConvertTo-Json -InputObject $Actual -Compress) -ceq
+        (ConvertTo-Json -InputObject $ExpectedSorted -Compress)
+    ) "installed _internal does not match the committed build manifest"
+    Assert-True ($HashMismatches.Count -eq 0) `
+        "installed _internal hashes do not match the built payload"
 }
 
 function Write-CredentialsFixture {
@@ -379,8 +666,10 @@ function Write-CredentialsFixture {
 
 function Invoke-ProductBrokerProbes {
     param([Parameter(Mandatory = $true)][string]$ProductRoot, [string]$Category)
-    $Marker = Join-Path $SmokeRoot "$Category\broker-marker.json"
-    $TimeoutIdentities = Join-Path $SmokeRoot "$Category\timeout-identities.jsonl"
+    $Baseline = @(Get-ProductProcessBaseline -ProductRoot $ProductRoot)
+    $Marker = Join-Path $SmokeRoot "$Category\$SpecialLeaf\broker-marker.json"
+    $TimeoutIdentities = Join-Path $SmokeRoot `
+        "$Category\$SpecialLeaf\timeout-identities.jsonl"
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $Marker)) | Out-Null
     $Arguments = @(
         "run", "python", "tests/windows/run_product_broker_probes.py",
@@ -393,6 +682,8 @@ function Invoke-ProductBrokerProbes {
     $ExitCode = Invoke-ExternalDeadline -FilePath $UvPath -Arguments $Arguments `
         -TimeoutSeconds 180 -Category "20 normal and timeout broker probes"
     Assert-True ($ExitCode -eq 0) "product broker probes failed"
+    Assert-ProductProcessBaseline -ProductRoot $ProductRoot -Expected $Baseline `
+        -Category $Category
 }
 
 function Start-And-VerifyProduct {
@@ -407,7 +698,13 @@ function Start-And-VerifyProduct {
     Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction SilentlyContinue
     $env:AACC_FAKE_CODEX_MODE = ""
     $env:AACC_FAKE_CODEX_MARKER = $MarkerPath
+    $ProductRoot = Split-Path -Parent $Executable
+    $Baseline = @(Get-ProductProcessBaseline -ProductRoot $ProductRoot)
+    Write-SmokeEvidence -Category $Category -Name "before-product-process-baseline.json" `
+        -Value $Baseline
     $Owned = Start-OwnedProcess -FilePath $Executable
+    Write-SmokeEvidence -Category $Category -Name "product-main-identity.json" `
+        -Value $Owned.Identity
     try {
         foreach ($Required in @($ConfigPath, $DatabasePath, $LogPath, $MarkerPath)) {
             Wait-LiteralPath -Path $Required -TimeoutSeconds 30 -Owner $Owned.Process
@@ -417,7 +714,13 @@ function Start-And-VerifyProduct {
             Assert-True (-not $Owned.Process.HasExited) "$Category did not survive first launch"
             Start-Sleep -Milliseconds 250
         }
-        return $Owned
+        return [pscustomobject]@{
+            Process = $Owned.Process
+            Identity = $Owned.Identity
+            ProductRoot = $ProductRoot
+            ProductBaseline = $Baseline
+            EvidenceCategory = $Category
+        }
     }
     catch {
         Stop-OwnedProcessIdentity -Identity $Owned.Identity
@@ -434,16 +737,23 @@ function Invoke-GracefulShutdown {
     Assert-True ($ExitCode -eq 0) "AACC graceful shutdown control returned non-zero"
     Assert-ProcessExitedByDeadline -Identity $Owned.Identity -TimeoutSeconds 20
     $Owned.Process.Dispose()
+    Assert-ProductProcessBaseline -ProductRoot $Owned.ProductRoot `
+        -Expected $Owned.ProductBaseline -Category $Owned.EvidenceCategory
 }
 
 function Assert-ProductAcl {
-    param([Parameter(Mandatory = $true)][string]$DataRoot)
-    Assert-ExactAcl -Path $DataRoot -Directory $true
+    param(
+        [Parameter(Mandatory = $true)][string]$DataRoot,
+        [Parameter(Mandatory = $true)][string]$EvidenceCategory
+    )
+    Assert-ExactAcl -Path $DataRoot -Directory $true `
+        -EvidenceCategory $EvidenceCategory -EvidenceName "data-directory"
     foreach ($Leaf in @("config.yaml", "aacc.db", "aacc.db-wal", "aacc.db-shm", "kimi-credentials.json")) {
         $Path = Join-Path $DataRoot $Leaf
         Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) `
             "required protected product file is missing"
-        Assert-ExactAcl -Path $Path -Directory $false
+        Assert-ExactAcl -Path $Path -Directory $false `
+            -EvidenceCategory $EvidenceCategory -EvidenceName $Leaf
     }
 }
 
@@ -453,7 +763,7 @@ function Invoke-FrozenSmoke {
     $ConfigPath = Join-Path $FrozenRoot "config.yaml"
     $DatabasePath = Join-Path $FrozenRoot "aacc.db"
     $LogPath = Join-Path $FrozenRoot "logs\app.log"
-    $MarkerPath = Join-Path $SmokeRoot "frozen\fake-codex-marker.json"
+    $MarkerPath = Join-Path $SmokeRoot "frozen\$SpecialLeaf\fake-codex-marker.json"
     $env:AACC_CONFIG_PATH = $ConfigPath
     $env:AACC_DATABASE_PATH = $DatabasePath
     $env:AACC_CODEX_EXECUTABLE = $FakeCodexCmd
@@ -467,7 +777,7 @@ function Invoke-FrozenSmoke {
         Wait-LiteralPath -Path (Join-Path $FrozenRoot $Leaf) -TimeoutSeconds 10 `
             -Owner $Owned.Process
     }
-    Assert-ProductAcl -DataRoot $FrozenRoot
+    Assert-ProductAcl -DataRoot $FrozenRoot -EvidenceCategory "frozen"
     Invoke-ProductBrokerProbes -ProductRoot $DistRoot -Category "frozen"
     Invoke-GracefulShutdown -Executable $FrozenAacc -Owned $Owned
     "hosted Windows Server frozen product smoke complete" |
@@ -485,7 +795,7 @@ function Invoke-InstalledLaunch {
     $ConfigPath = Join-Path $AppDataRoot "config.yaml"
     $DatabasePath = Join-Path $AppDataRoot "aacc.db"
     $LogPath = Join-Path $AppDataRoot "logs\app.log"
-    $MarkerPath = Join-Path $SmokeRoot "$Category\fake-codex-marker.json"
+    $MarkerPath = Join-Path $SmokeRoot "$Category\$SpecialLeaf\fake-codex-marker.json"
     return Start-And-VerifyProduct -Executable $InstalledAacc `
         -ConfigPath $ConfigPath -DatabasePath $DatabasePath -LogPath $LogPath `
         -MarkerPath $MarkerPath -Category "installed AACC"
@@ -509,11 +819,20 @@ function Test-InstalledControlRefusal {
         Remove-Item -LiteralPath $CapabilityPath -Force -ErrorAction SilentlyContinue
     }
     $env:AACC_LEGACY_CONTROL_MODE = $Mode
+    $Scenario = "$Action-$Mode-capability-$Capability"
+    $LegacyEvidence = Join-Path $SmokeRoot `
+        "$Action\$Scenario\$SpecialLeaf\legacy-control-evidence.jsonl"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $LegacyEvidence)) | Out-Null
+    Remove-Item -LiteralPath $LegacyEvidence -Force -ErrorAction SilentlyContinue
+    $env:AACC_LEGACY_EVIDENCE_FILE = $LegacyEvidence
     $Legacy = Start-OwnedProcess -FilePath $InstalledAacc
     try {
         Start-Sleep -Seconds 1
         Assert-True (-not $Legacy.Process.HasExited) "legacy fixture did not own its window"
         $Before = Get-FullStateManifest
+        Write-SmokeEvidence -Category "$Action\$Scenario" -Name "before-manifest.json" `
+            -Value $Before
+        $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         if ($Action -eq "setup") {
             Invoke-Setup -LogPath (Join-Path $SmokeRoot "reinstall\$Mode-setup.log") `
                 -ExpectSuccess $false
@@ -523,10 +842,60 @@ function Test-InstalledControlRefusal {
                 -LogPath (Join-Path $SmokeRoot "uninstall\$Mode-uninstall.log") `
                 -ExpectSuccess $false
         }
+        $Stopwatch.Stop()
         $After = Get-FullStateManifest
+        Write-SmokeEvidence -Category "$Action\$Scenario" -Name "after-manifest.json" `
+            -Value $After
         Assert-True ($After -ceq $Before) "$Action refusal mutated installed state"
         Assert-True (Test-ProcessIdentityAlive -Identity $Legacy.Identity) `
             "$Action refusal terminated the legacy main process"
+        if ($Capability) {
+            Wait-LiteralPath -Path $LegacyEvidence -TimeoutSeconds 5
+            $ControlRecords = @(
+                Get-Content -LiteralPath $LegacyEvidence -Encoding UTF8 |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    ForEach-Object { $_ | ConvertFrom-Json }
+            )
+            Assert-True ($ControlRecords.Count -eq 1) `
+                "legacy control invocation evidence count is not exact"
+            $Control = $ControlRecords[0]
+            Assert-True ($Control.mode -ceq $Mode) "legacy control mode was not exercised"
+            Assert-True (
+                ([string]$Control.image_path).Equals(
+                    $InstalledAacc,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            ) "legacy control child image path is wrong"
+            $ControlIdentity = [pscustomobject]@{
+                Id = [int]$Control.pid
+                Path = [string]$Control.image_path
+                CreationTimeUtc = [DateTime]::FromFileTimeUtc(
+                    [int64]$Control.creation_time
+                ).Ticks
+            }
+            Assert-ProcessExitedByDeadline -Identity $ControlIdentity -TimeoutSeconds 5
+            if ($Mode -eq "timeout") {
+                Assert-True (
+                    $Stopwatch.ElapsedMilliseconds -ge 20000 -and
+                    $Stopwatch.ElapsedMilliseconds -le 40000
+                ) "legacy timeout did not exercise the bounded 25-second control path"
+            }
+            else {
+                Assert-True ($Stopwatch.ElapsedMilliseconds -lt 20000) `
+                    "non-timeout legacy control path was unexpectedly slow"
+            }
+            Write-SmokeEvidence -Category "$Action\$Scenario" `
+                -Name "legacy-control-result.json" -Value ([ordered]@{
+                    control = $Control
+                    main = $Legacy.Identity
+                    elapsedMilliseconds = $Stopwatch.ElapsedMilliseconds
+                    childExited = -not (Test-ProcessIdentityAlive -Identity $ControlIdentity)
+                })
+        }
+        else {
+            Assert-True (-not (Test-Path -LiteralPath $LegacyEvidence)) `
+                "legacy control was invoked without a capability marker"
+        }
     }
     finally {
         Stop-OwnedProcessIdentity -Identity $Legacy.Identity
@@ -535,6 +904,7 @@ function Test-InstalledControlRefusal {
         [System.IO.Directory]::CreateDirectory((Split-Path -Parent $CapabilityPath)) | Out-Null
         [System.IO.File]::WriteAllText($CapabilityPath, "AACC shutdown protocol v1`n")
         Remove-Item Env:AACC_LEGACY_CONTROL_MODE -ErrorAction SilentlyContinue
+        Remove-Item Env:AACC_LEGACY_EVIDENCE_FILE -ErrorAction SilentlyContinue
     }
 }
 
@@ -561,6 +931,7 @@ function Compile-WindowsFixtures {
     Assert-True ($LASTEXITCODE -eq 0) "locker fixture link failed"
 }
 
+function Invoke-SmokeMain {
 if ($env:OS -ne "Windows_NT") { throw "Windows product smoke requires Windows" }
 $Root = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
 Set-Location -LiteralPath $Root
@@ -596,7 +967,7 @@ Invoke-FrozenSmoke
 
 if ($FrozenOnly) {
     Write-Host "Hosted Windows Server evidence only; consumer Windows 10/11 not claimed"
-    exit 0
+    return
 }
 
 $Version = ((& uv version --short | Select-Object -First 1) | Out-String).Trim()
@@ -669,6 +1040,7 @@ foreach ($Required in @(
 )) {
     Assert-True (Test-Path -LiteralPath $Required) "installed product tree is incomplete"
 }
+Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed"
 Assert-True (-not (Test-Path -LiteralPath $DesktopShortcut)) `
     "silent install unexpectedly created a desktop shortcut"
 Assert-True (Test-Path -LiteralPath $UninstallRegistryPath) `
@@ -691,7 +1063,7 @@ foreach ($Leaf in @("aacc.db-wal", "aacc.db-shm", "kimi-credentials.json")) {
     Wait-LiteralPath -Path (Join-Path $AppDataRoot $Leaf) -TimeoutSeconds 10 `
         -Owner $Installed.Process
 }
-Assert-ProductAcl -DataRoot $AppDataRoot
+Assert-ProductAcl -DataRoot $AppDataRoot -EvidenceCategory "installed"
 Invoke-ProductBrokerProbes -ProductRoot $InstallRoot -Category "installed"
 Invoke-GracefulShutdown -Executable $InstalledAacc -Owned $Installed
 [System.IO.File]::WriteAllText((Join-Path $AppDataRoot "preserve-me.txt"), "preserve")
@@ -707,20 +1079,31 @@ Invoke-Setup -LogPath (Join-Path $SmokeRoot "reinstall\running-reinstall.log") `
     -ExpectSuccess $true
 Assert-ProcessExitedByDeadline -Identity $RunningForReinstall.Identity
 $RunningForReinstall.Process.Dispose()
+Assert-ProductProcessBaseline -ProductRoot $RunningForReinstall.ProductRoot `
+    -Expected $RunningForReinstall.ProductBaseline -Category "reinstall"
 Assert-True (Test-Path -LiteralPath (Join-Path $AppDataRoot "preserve-me.txt")) `
     "reinstall did not preserve AppData"
 
 $RollbackSentinel = Join-Path $InstallRoot "_internal\rollback-sentinel.bin"
 [System.IO.File]::WriteAllBytes($RollbackSentinel, [byte[]](1, 4, 2))
+$RollbackProbe = @(
+    Get-ChildItem -LiteralPath (Join-Path $InstallRoot "_internal") `
+        -Filter "METADATA" -File -Recurse |
+        Where-Object { $_.DirectoryName -like "*.dist-info" } |
+        Select-Object -First 1
+)
+Assert-True ($RollbackProbe.Count -eq 1) `
+    "no non-runtime metadata file is available for rollback proof"
+$RollbackProbePath = $RollbackProbe[0].FullName
+$RollbackProbeBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+    "AACC_OLD_INTERNAL_ROLLBACK_PROBE`n"
+)
+[System.IO.File]::WriteAllBytes($RollbackProbePath, $RollbackProbeBytes)
 $BeforeFault = Get-FullStateManifest
+Write-SmokeEvidence -Category "reinstall\lock-fault" -Name "before-manifest.json" `
+    -Value $BeforeFault
 $PendingBefore = Get-PendingFileRenameOperations
-$LockedPayload = Join-Path $InstallRoot "_internal\python313.dll"
-if (-not (Test-Path -LiteralPath $LockedPayload -PathType Leaf)) {
-    $LockedPayload = @(
-        Get-ChildItem -LiteralPath (Join-Path $InstallRoot "_internal") -File |
-            Select-Object -First 1
-    )[0].FullName
-}
+$LockedPayload = $InstalledAacc
 $LockReady = Join-Path $SmokeRoot "reinstall\lock-ready.txt"
 $Locker = Start-OwnedProcess -FilePath $LockerFixture -Arguments @($LockedPayload, $LockReady)
 try {
@@ -733,12 +1116,18 @@ finally {
     $Locker.Process.Dispose()
 }
 $AfterFault = Get-FullStateManifest
+Write-SmokeEvidence -Category "reinstall\lock-fault" -Name "after-manifest.json" `
+    -Value $AfterFault
 Assert-True ($AfterFault -ceq $BeforeFault) `
     "native lock fault did not restore the complete install manifest"
 Assert-True ((Get-PendingFileRenameOperations) -ceq $PendingBefore) `
     "failed reinstall scheduled a pending-reboot replacement"
 Assert-True (Test-Path -LiteralPath $RollbackSentinel -PathType Leaf) `
     "failed reinstall removed rollback-sentinel.bin"
+Assert-True (
+    [Convert]::ToBase64String($RollbackProbeBytes) -ceq
+    [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($RollbackProbePath))
+) "failed reinstall did not roll back the already replaced internal metadata"
 Assert-True (
     @(Get-ChildItem -LiteralPath (Split-Path -Parent $InstallRoot) -Force |
         Where-Object { $_.Name -like "AACC.aacc-*" }).Count -eq 0
@@ -753,12 +1142,15 @@ Assert-True (-not (Test-Path -LiteralPath $RollbackSentinel)) `
     "successful reinstall left a stale sentinel"
 Assert-True (Test-Path -LiteralPath (Join-Path $AppDataRoot "preserve-me.txt")) `
     "successful reinstall changed AppData"
+Assert-InstalledInternalMatchesManifest -EvidenceCategory "reinstall"
 
 $RunningForUninstall = Invoke-InstalledLaunch -Category "uninstall"
 Invoke-Uninstaller -LogPath (Join-Path $SmokeRoot "uninstall\running-uninstall.log") `
     -ExpectSuccess $true
 Assert-ProcessExitedByDeadline -Identity $RunningForUninstall.Identity
 $RunningForUninstall.Process.Dispose()
+Assert-ProductProcessBaseline -ProductRoot $RunningForUninstall.ProductRoot `
+    -Expected $RunningForUninstall.ProductBaseline -Category "uninstall"
 $UninstallDeadline = [DateTime]::UtcNow.AddSeconds(30)
 while (
     [DateTime]::UtcNow -lt $UninstallDeadline -and
@@ -785,7 +1177,16 @@ Invoke-Setup -LogPath (Join-Path $SmokeRoot "installed\stopped-legacy-install.lo
     -ExpectSuccess $true
 Assert-True (Test-Path -LiteralPath $CapabilityPath) `
     "stopped legacy install did not become managed"
+Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed\stopped-legacy"
 Invoke-Uninstaller -LogPath (Join-Path $SmokeRoot "uninstall\final-cleanup.log") `
     -ExpectSuccess $true
 
 Write-Host "Hosted Windows Server evidence only; consumer Windows 10/11 not claimed"
+}
+
+try {
+    Invoke-SmokeMain
+}
+finally {
+    Invoke-OwnedCleanup
+}

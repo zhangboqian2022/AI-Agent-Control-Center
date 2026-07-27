@@ -303,7 +303,8 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     assert "os: [macos-latest, windows-2022, windows-2025-vs2026]" in workflow
-    assert "if: startsWith(matrix.os, 'windows-')" in workflow
+    assert "windows-frozen-2022:" in workflow
+    assert "windows-package-2025:" in workflow
     assert "scripts/build_app.sh" in workflow
     assert "test -d dist/AACC.app" in workflow
     assert "scripts/build_windows.ps1" in workflow
@@ -318,9 +319,9 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
     ):
         assert module in workflow
     assert 'Compress-Archive -Path "dist\\AACC"' in workflow
-    assert "AACC-*-windows-x64-${{ matrix.os }}.zip" in workflow
-    assert "Package verified Windows portable app" in workflow
-    assert "windows-verified-${{ matrix.os }}" in workflow
+    assert "AACC-*-windows-x64-windows-2025-vs2026.zip" in workflow
+    assert "Package and strictly verify primary artifacts" in workflow
+    assert "build/verified-output" in workflow
 
     spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
     hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]
@@ -337,18 +338,29 @@ def test_ci_runs_real_windows_product_smoke_before_primary_artifact_publish() ->
     assert "windows-latest" not in workflow
     assert "scripts/test_windows_package.ps1" in workflow
     assert "AACC_SKIP_INSTALLER: 1" in workflow
-    assert "windows-smoke-${{ matrix.os }}" in workflow
+    assert "windows-smoke-windows-2022" in workflow
+    assert "windows-smoke-windows-2025-vs2026" in workflow
     assert "Smoke frozen Windows product" in workflow
     assert "Smoke frozen and installed Windows product" in workflow
-    assert "needs: [windows-package]" in workflow
+    assert "windows-frozen-2022:" in workflow
+    assert "windows-package-2025:" in workflow
+    final_job = workflow.split("windows-package-2025:", 1)[1]
+    assert "needs: [quality, windows-frozen-2022]" in final_job
     assert "scripts/verify_windows_artifacts.py" in workflow
     assert "AACC-*-Setup.exe" in workflow
     assert "AACC-*-Setup.exe.sha256" in workflow
     assert "windows-smoke" in workflow
-    primary_job = workflow.split("publish-windows-artifacts:", 1)[1]
-    assert "if: always()" not in primary_job
-    assert "if: failure()" not in primary_job
-    assert "if-no-files-found: error" in primary_job
+    frozen_job = workflow.split("windows-frozen-2022:", 1)[1].split("windows-package-2025:", 1)[0]
+    assert "AACC-*-Setup.exe" not in frozen_job
+    assert "windows-x64" not in frozen_job
+    assert "windows-verified" not in workflow
+    assert final_job.count("actions/upload-artifact@v4") == 2
+    primary_step = final_job.split("Upload primary Windows Setup artifacts", 1)[1].split(
+        "Upload Windows smoke diagnostics", 1
+    )[0]
+    assert "if: always()" not in primary_step
+    assert "if: failure()" not in primary_step
+    assert "if-no-files-found: error" in primary_step
     assert "Hosted Windows Server evidence only" in workflow
 
 
@@ -390,6 +402,25 @@ def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> 
     assert "Get-Process python" not in script
     assert "taskkill" not in script.lower()
     assert "Stop-Process -Name" not in script
+    for required in (
+        "Write-SmokeEvidence",
+        "GetSecurityDescriptorSddlForm",
+        "before-manifest.json",
+        "after-manifest.json",
+        "elapsedMilliseconds",
+        "OwnedProcessRegistry",
+        "Invoke-OwnedCleanup",
+        "Wait-UninstallerTreeGone",
+        "Get-ProductProcessBaseline",
+        "Assert-ProductProcessBaseline",
+        "AACC_LEGACY_EVIDENCE_FILE",
+        "legacy-control-evidence.jsonl",
+        "Get-ProcessIdentity -Process $Process",
+    ):
+        assert required in script
+    assert "if (-not $Process.WaitForExit(5000))" in script
+    assert "$SpecialLeaf\\broker-marker.json" in script
+    assert "$SpecialLeaf\\timeout-identities.jsonl" in script
 
 
 def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
@@ -412,6 +443,9 @@ def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
     assert "CreateWindowExW" in legacy
     assert "false-success" in legacy
     assert "return 0;" in legacy
+    assert "AACC_LEGACY_EVIDENCE_FILE" in legacy
+    assert "creation_time" in legacy
+    assert "image_path" in legacy
     assert "FILE_SHARE_READ" not in locker
     assert "FILE_SHARE_WRITE" not in locker
     assert "FILE_SHARE_DELETE" not in locker
@@ -454,8 +488,12 @@ def test_windows_artifact_verifier_accepts_exact_tree_and_rejects_case_collision
     )
     portable = tmp_path / "portable.zip"
 
-    def write_portable(*, collision: bool) -> None:
+    def write_portable(*, collision: bool, unsafe_root: bool = False) -> None:
         with zipfile.ZipFile(portable, "w") as archive:
+            if unsafe_root:
+                root = zipfile.ZipInfo("AACC/")
+                root.external_attr = (0o120777 << 16) | 0x10
+                archive.writestr(root, b"target")
             archive.writestr("AACC/_internal/", b"")
             archive.writestr("AACC/AACC.exe", b"gui")
             archive.writestr("AACC/aacc-spawn.exe", b"broker")
@@ -479,6 +517,9 @@ def test_windows_artifact_verifier_accepts_exact_tree_and_rejects_case_collision
     assert subprocess.run(command, check=False).returncode == 0
 
     write_portable(collision=True)
+    assert subprocess.run(command, check=False, capture_output=True).returncode != 0
+
+    write_portable(collision=False, unsafe_root=True)
     assert subprocess.run(command, check=False, capture_output=True).returncode != 0
 
 
@@ -554,5 +595,6 @@ def test_readme_first_screen_and_windows_checklists_are_cross_platform() -> None
         assert "MONTH" in text
         assert "config.yaml" in text
         assert "kimi-credentials.json" in text
-        assert "icacls" in text
+        assert "Native DACL" in text or "原生 DACL" in text
+        assert "icacls" not in text
         assert "unprivileged" in text or "无特权" in text
