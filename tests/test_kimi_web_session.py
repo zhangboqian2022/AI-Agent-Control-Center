@@ -348,9 +348,7 @@ def test_malformed_bridge_from_older_title_generation_is_ignored(qapp, monkeypat
 
     for malformed in ("", "{"):
         session.view.script_result = malformed
-        session._on_title_changed(
-            f"{web_session.BRIDGE_PREFIX}{old_generation}:ready:late-result"
-        )
+        session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{old_generation}:ready:late-result")
 
     assert active_generation > old_generation
     assert session._active_refresh_generation == active_generation
