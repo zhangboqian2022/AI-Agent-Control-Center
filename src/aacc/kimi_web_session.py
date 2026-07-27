@@ -47,7 +47,7 @@ def membership_fetch_script(generation: int = 0) -> str:
   const deadline = setTimeout(() => controller.abort(), 15000);
   const emit = (payload) => {{
     window[payloadKey] = JSON.stringify(payload);
-    document.title = prefix + 'ready:' + Date.now() + ':' + Math.random();
+    document.title = prefix + generation + ':ready:' + Date.now() + ':' + Math.random();
   }};
   const request = async (method) => {{
     let accessToken = localStorage.getItem('access_token');
@@ -85,6 +85,7 @@ def membership_fetch_script(generation: int = 0) -> str:
   ]).then(([stats, subscription]) => {{
     emit({{kind: 'quota', generation, stats, subscription}});
   }}).catch((error) => {{
+    controller.abort();
     const message = String(error && error.message || error);
     emit({{
       kind: message.startsWith('UNAUTHORIZED:') ? 'unauthorized' : 'error',
@@ -179,6 +180,7 @@ class KimiWebSession(QObject):
         self.login_state_changed.emit(False)
 
     def close(self) -> None:
+        self._invalidate_refresh()
         if self._login_dialog is not None:
             self._login_dialog.close()
         self.view.deleteLater()
@@ -274,6 +276,15 @@ class KimiWebSession(QObject):
     def _on_title_changed(self, title: str) -> None:
         if not title.startswith(BRIDGE_PREFIX):
             return
+        generation_text, separator, suffix = title[len(BRIDGE_PREFIX) :].partition(":")
+        if not separator or not suffix.startswith("ready:"):
+            return
+        try:
+            generation = int(generation_text)
+        except ValueError:
+            return
+        if generation != self._active_refresh_generation:
+            return
         script = (
             "(() => {"
             f"const key = {json.dumps(BRIDGE_PAYLOAD_KEY)};"
@@ -282,23 +293,26 @@ class KimiWebSession(QObject):
             "return value;"
             "})()"
         )
-        self.view.runJavaScript(script, self._on_bridge_result)
+        self.view.runJavaScript(
+            script,
+            lambda raw: self._on_bridge_result(raw, generation),
+        )
 
-    def _on_bridge_result(self, raw: object) -> None:
+    def _on_bridge_result(self, raw: object, generation: int) -> None:
+        if generation != self._active_refresh_generation:
+            return
         try:
             if not isinstance(raw, str):
                 raise ValueError
             payload = json.loads(raw)
         except (ValueError, json.JSONDecodeError):
-            generation = self._active_refresh_generation
-            if generation is not None:
-                self._handle_bridge(
-                    {
-                        "kind": "error",
-                        "generation": generation,
-                        "message": "invalid membership response",
-                    }
-                )
+            self._handle_bridge(
+                {
+                    "kind": "error",
+                    "generation": generation,
+                    "message": "invalid membership response",
+                }
+            )
             return
         self._handle_bridge(payload)
 
