@@ -968,7 +968,8 @@ def test_terminal_config_windows_without_work_dir(monkeypatch) -> None:
     assert terminal.window_title is None
 
 
-def test_terminal_config_darwin_unchanged() -> None:
+def test_terminal_config_darwin_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     from aacc.codex_discovery import _default_terminal_config
 
     terminal = _default_terminal_config("/home/user/myproject")

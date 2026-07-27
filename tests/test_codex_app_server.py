@@ -207,11 +207,20 @@ def test_parse_app_server_truncates_plan_type() -> None:
 
 
 def _fake_server(tmp_path: Path, body: str) -> Path:
-    server = tmp_path / "fake-codex"
-    server.write_text(
-        f"#!/usr/bin/env python3\nimport json\nimport sys\nimport time\n{textwrap.dedent(body)}",
-        encoding="utf-8",
+    source = (
+        f"#!/usr/bin/env python3\nimport json\nimport sys\nimport time\n{textwrap.dedent(body)}"
     )
+    if sys.platform == "win32":
+        python_server = tmp_path / "fake-codex.py"
+        python_server.write_text(source, encoding="utf-8")
+        server = tmp_path / "fake-codex.cmd"
+        server.write_text(
+            f'@echo off\r\n"{sys.executable}" "{python_server}" %*\r\n',
+            encoding="utf-8",
+        )
+        return server
+    server = tmp_path / "fake-codex"
+    server.write_text(source, encoding="utf-8")
     server.chmod(0o755)
     return server
 

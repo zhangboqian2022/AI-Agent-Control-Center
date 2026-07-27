@@ -356,13 +356,13 @@ def test_load_config_removes_unrelated_explicit_windows_ace(tmp_path: Path) -> N
             "-NonInteractive",
             "-Command",
             (
-                "(Get-Acl -LiteralPath $args[0]).Access | "
+                "(Get-Acl -LiteralPath $env:AACC_ACL_TEST_PATH).Access | "
                 "ForEach-Object { "
                 "$_.IdentityReference.Translate("
                 "[System.Security.Principal.SecurityIdentifier]).Value }"
             ),
-            str(path),
         ],
+        env={**os.environ, "AACC_ACL_TEST_PATH": str(path)},
         capture_output=True,
         text=True,
         timeout=5,
