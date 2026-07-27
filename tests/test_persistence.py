@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+import aacc.persistence as persistence_module
 from aacc.config import default_config
+from aacc.file_security import FileProtectionError
 from aacc.models import TaskState, TaskStatus
 from aacc.persistence import HISTORY_CLEANUP_INTERVAL_SECONDS, StateStore
 
@@ -88,6 +90,62 @@ def test_database_is_private(tmp_path: Path) -> None:
         if sidecar.exists():
             assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
     store.close()
+
+
+def test_database_and_existing_sidecars_use_shared_file_protection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "aacc.db"
+    protected: list[Path] = []
+    monkeypatch.setattr(
+        persistence_module,
+        "protect_file",
+        lambda candidate: protected.append(candidate),
+        raising=False,
+    )
+
+    store = StateStore(path)
+    store.initialize(default_config().tasks)
+
+    sidecars = [Path(f"{path}-wal"), Path(f"{path}-shm")]
+    assert all(sidecar.exists() for sidecar in sidecars)
+    assert set([path, *sidecars]).issubset(protected)
+    store.close()
+
+
+def test_database_protection_failure_is_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeConnection:
+        row_factory: object | None = None
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def execute(self, _statement: str) -> None:
+            return None
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = FakeConnection()
+    path = tmp_path / "aacc.db"
+    path.touch()
+
+    def fail_protection(_path: Path) -> None:
+        raise FileProtectionError("safe database protection failure")
+
+    monkeypatch.setattr(persistence_module.sqlite3, "connect", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(
+        persistence_module,
+        "protect_file",
+        fail_protection,
+        raising=False,
+    )
+
+    with pytest.raises(FileProtectionError, match="safe database protection failure"):
+        StateStore(path)
+    assert connection.closed
 
 
 def test_heartbeat_updates_current_without_growing_history(tmp_path: Path) -> None:

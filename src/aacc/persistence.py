@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import builtins
-import os
 import sqlite3
 import threading
 import time
@@ -10,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeVar
 
+from aacc.file_security import protect_file
 from aacc.models import TaskConfig, TaskState, TaskStatus
 
 T = TypeVar("T")
@@ -31,12 +31,16 @@ class StateStore:
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA busy_timeout=3000")
         self._last_history_cleanup = 0.0
-        self._secure_database_files()
+        try:
+            self._secure_database_files()
+        except Exception:
+            self._connection.close()
+            raise
 
     def _secure_database_files(self) -> None:
         for candidate in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm")):
             if candidate.exists():
-                os.chmod(candidate, 0o600)
+                protect_file(candidate)
 
     def _retry_locked(self, operation: Callable[[], T]) -> T:
         delays: tuple[float | None, ...] = (*RETRY_DELAYS, None)
