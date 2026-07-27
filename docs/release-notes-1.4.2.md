@@ -26,7 +26,8 @@ Windows 真机与多用户权限验证完成后，才能把本草案转为正式
   `aacc.automation_windows` 与 `aacc.hotkeys_windows` 已被收集。
 - `config.yaml` 与 `kimi-credentials.json` 在 Windows 使用 `icacls` 移除继承，
   仅向当前用户 SID、Local System 与本机 Administrators 授予完全控制。ACL
-  失败发生在原子替换之前，旧文件保留，新明文文件不会发布。
+  在写入敏感内容前先施加到空临时文件；旧文件也通过受保护的新文件原子重发，
+  从而移除遗留的无关显式 ACE。ACL 失败时旧文件保留，新明文文件不会发布。
 - 未知任务品牌的移除请求继续记录错误，并在面板显示通用“操作未生效”反馈。
 
 ### 评审结论
@@ -58,15 +59,25 @@ Windows 真机与多用户权限验证完成后，才能把本草案转为正式
 - Recursively inspect the Windows PyInstaller archive for all three platform
   modules instead of adding redundant hidden imports.
 - Restrict `config.yaml` and `kimi-credentials.json` with Windows ACLs before
-  atomic replacement. Protection failure preserves the prior file and aborts
-  the write.
+  writing sensitive content. Legacy files are atomically re-published through
+  a newly protected file so unrelated explicit ACEs do not survive. Protection
+  failure preserves the prior file and aborts the write.
 - Surface a generic visible failure when a task-removal prefix is unknown.
 
 ## Automated verification
 
-The final test count, Ruff results, both mypy platform results, macOS package
-build/codesign result, local Codex read-only probe, and hosted Windows Actions
-URL will be recorded after the implementation suite finishes.
+- 2026-07-27 本机自动验证：`528 passed, 4 skipped`；Ruff check 与 format
+  全部通过；macOS 与 `--platform win32` 两种 mypy strict 视图均为 39 个源码
+  文件零错误。
+- changed-line coverage 为 94%（门槛 90%）；锁定依赖审计覆盖 75 个依赖，
+  未发现已知漏洞。
+- macOS `dist/AACC.app` 构建成功，Info.plist 版本为 `1.4.2`，
+  `codesign --verify --deep --strict` 通过。420×640 离屏截图已人工检查，
+  额度数字、进度条与完整重置日期无重叠。
+- 本机只读 Codex probe 找到已安装可执行文件，在没有启动 Codex 任务的情况下
+  返回 `status=ok`、周额度 14%、重置时间 `2026-08-02T00:40:57+00:00`、
+  方案 `prolite`。
+- Hosted macOS/Windows Actions URL：推送候选分支后补录。
 
 ## Manual release gates
 
