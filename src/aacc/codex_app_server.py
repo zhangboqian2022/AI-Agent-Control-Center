@@ -21,7 +21,6 @@ from aacc.codex_quota import (
     CodexQuotaStatus,
     parse_app_server_rate_limits,
 )
-from aacc.security import redact
 from aacc.windows_broker import (
     WINDOWS_PROCESS_CREATION_FLAGS as WINDOWS_PROCESS_CREATION_FLAGS,
 )
@@ -127,7 +126,11 @@ class CodexAppServerReader:
                 "errors": "replace",
                 "bufsize": 1,
             }
-            command = self._process_command()
+            try:
+                command = self._process_command()
+            except Exception:
+                _logger.debug("Codex app-server command unavailable")
+                return self._unknown()
             if command.creationflags:
                 popen_options["creationflags"] = command.creationflags
             process = self._popen(
@@ -170,9 +173,8 @@ class CodexAppServerReader:
             if result is None:
                 return self._unknown()
             return parse_app_server_rate_limits(result, now=self._now())
-        except (OSError, ValueError, TypeError) as error:
-            detail = redact(str(error) or type(error).__name__)[:160]
-            _logger.debug("Codex app-server quota source unavailable: %s", detail)
+        except (OSError, ValueError, TypeError):
+            _logger.debug("Codex app-server quota source unavailable")
             return self._unknown()
         finally:
             self._reap(process)
@@ -255,7 +257,7 @@ class CodexAppServerReader:
         if process is None:
             return
         if process.stdin is not None:
-            with suppress(OSError):
+            with suppress(OSError, ValueError):
                 process.stdin.close()
         try:
             is_running = process.poll() is None
@@ -275,7 +277,7 @@ class CodexAppServerReader:
             pass
         finally:
             if process.stdout is not None:
-                with suppress(OSError):
+                with suppress(OSError, ValueError):
                     process.stdout.close()
 
     @staticmethod

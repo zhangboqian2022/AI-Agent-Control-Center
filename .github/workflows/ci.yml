@@ -56,9 +56,10 @@ jobs:
         if: startsWith(matrix.os, 'windows-')
         shell: pwsh
         run: |
-          if (-not (Test-Path "dist\AACC\AACC.exe")) { throw "AACC.exe missing" }
+          if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
+          if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
           $listing = (uv run pyi-archive_viewer -r "dist\AACC\AACC.exe" | Out-String)
-          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows")) {
+          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker")) {
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
       - name: Package Windows portable app

@@ -295,9 +295,15 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
     assert "scripts/build_app.sh" in workflow
     assert "test -d dist/AACC.app" in workflow
     assert "scripts/build_windows.ps1" in workflow
-    assert 'Test-Path "dist\\AACC\\AACC.exe"' in workflow
+    assert 'Test-Path -LiteralPath "dist\\AACC\\AACC.exe" -PathType Leaf' in workflow
+    assert 'Test-Path -LiteralPath "dist\\AACC\\aacc-spawn.exe" -PathType Leaf' in workflow
     assert "pyi-archive_viewer -r" in workflow
-    for module in ("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows"):
+    for module in (
+        "aacc.win32",
+        "aacc.automation_windows",
+        "aacc.hotkeys_windows",
+        "aacc.windows_broker",
+    ):
         assert module in workflow
     assert 'Compress-Archive -Path "dist\\AACC"' in workflow
     assert "AACC-*-windows-x64-${{ matrix.os }}.zip" in workflow
