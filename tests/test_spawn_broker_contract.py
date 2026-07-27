@@ -79,6 +79,7 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     assert "ConvertFrom-Json" not in script
     assert "Get-SafeBrokerValidatorDiagnostic" in script
     assert "Get-SafeBrokerProbeDiagnostic" in script
+    assert "communicate-reap" in script
     assert "RedirectStandardOutput" in script
     assert "RedirectStandardError" in script
     assert "$StartInfo.StandardInputEncoding" not in script
@@ -99,6 +100,14 @@ def test_windows_build_compiles_static_spawn_broker() -> None:
     assert "$DriverStarted" in probe_body
     assert "WaitForExit(5000)" in script
     assert "Remove-Item -LiteralPath $PayloadPath, $PidPath" in probe_body
+    assert '("x" * 70000) -join ""' in script
+    assert "$UnicodePayloadUnit" in script
+    assert "[char]0x4E34" in script
+    assert "[char]0x65F6" in script
+    assert "$UnicodePayloadUnit * 35000" in script
+    assert "-CodexPath $FakeExe" in script
+    assert "-RequestId 21 -Payload $UnicodePayload" in script
+    assert "临时" not in script
     for variable in ("VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH"):
         assert variable in toolchain
     for root in ("VCToolsInstallDir", "WindowsSdkDir"):

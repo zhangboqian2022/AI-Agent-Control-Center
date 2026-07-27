@@ -49,6 +49,12 @@ class FakeProcess:
             raise subprocess.TimeoutExpired(self.command, timeout)
         if self.mode == "timeout":
             return b"", b""
+        if self.mode.startswith("communicate-error") and self.communicate_calls == 1:
+            raise OSError("AACC_SECRET_MARKER_4ce1")
+        if self.mode == "communicate-error-reap-timeout":
+            raise subprocess.TimeoutExpired(self.command, timeout)
+        if self.mode == "communicate-error":
+            return b"", b""
 
         request = json.loads(self.request_bytes)
         if self.mode == "mismatch":
@@ -165,6 +171,36 @@ def test_driver_timeout_is_reaped_and_never_echoes_payload(
     assert result == 5
     assert captured.out == ""
     assert captured.err == "AACC_BROKER_PROBE code=5 reason=timeout\n"
+    assert marker not in captured.err
+    assert factory.processes[0].killed is True
+    assert factory.processes[0].communicate_calls == 2
+    assert not pid_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        ("communicate-error", "communicate"),
+        ("communicate-error-reap-timeout", "communicate-reap"),
+    ],
+)
+def test_driver_communication_errors_are_reaped_with_fixed_diagnostics(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+    reason: str,
+) -> None:
+    driver = load_driver()
+    marker = "AACC_SECRET_MARKER_4ce1"
+    args, _, _, _, pid_path = driver_args(tmp_path, marker * 10)
+    factory = FakePopenFactory(mode)
+
+    result = driver.main(args, popen_factory=factory)
+
+    captured = capsys.readouterr()
+    assert result == 5
+    assert captured.out == ""
+    assert captured.err == f"AACC_BROKER_PROBE code=5 reason={reason}\n"
     assert marker not in captured.err
     assert factory.processes[0].killed is True
     assert factory.processes[0].communicate_calls == 2
