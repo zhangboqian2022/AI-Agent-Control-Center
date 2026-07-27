@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -86,7 +87,7 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-1.4.1.dmg" in script
+    assert "AACC-${AACC_VERSION}.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
     assert "SKIP_BUILD" in script
@@ -94,11 +95,11 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
 
 
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
-    assert __version__ == "1.4.1"
-    assert 'version = "1.4.1"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'AACC_VERSION="${AACC_VERSION:-1.4.1}"' in (ROOT / "scripts" / "build_app.sh").read_text(
-        encoding="utf-8"
-    )
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert __version__ == project["project"]["version"]
+    for name in ("build_app.sh", "build_dmg.sh"):
+        script = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+        assert 'AACC_VERSION="${AACC_VERSION:-$(uv version --short)}"' in script
     assert f"**{__version__} 正式版已发布**" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
 
@@ -190,6 +191,7 @@ def test_windows_build_script_invokes_pyinstaller() -> None:
     script = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
     assert "AACC-windows.spec" in script
     assert "pyinstaller" in script.lower()
+    assert "uv sync --locked --extra dev" in script
 
 
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
@@ -198,15 +200,41 @@ def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
     assert "uv sync --locked --extra dev" in workflow
     assert "continue-on-error: true" not in workflow
     assert "ruff format --check src tests" in workflow
+    assert "QT_QPA_PLATFORM: offscreen" in workflow
     assert "--cov=src/aacc --cov-report=xml" in workflow
     assert "diff-cover coverage.xml" in workflow
     assert "--fail-under=90" in workflow
     assert "uv export --locked --extra dev --no-emit-project" in workflow
     assert "--requirement pip-audit-requirements.txt" in workflow
     assert "--no-deps --disable-pip" in workflow
-    assert "--format=json --output=pip-audit.json" in workflow
+    assert "--format=json --output=pip-audit-${{ matrix.os }}.json" in workflow
     assert "if: always()" in workflow
-    assert "pip-audit-report" in workflow
+    assert "pip-audit-${{ matrix.os }}" in workflow
+
+    type_check = workflow.split("- name: Type check", 1)[1].split("- name: Test", 1)[0]
+    assert "if:" not in type_check
+    audit = workflow.split("- name: Dependency vulnerability scan", 1)[1].split(
+        "- name: Upload vulnerability report", 1
+    )[0]
+    assert "if:" not in audit
+
+
+def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "scripts/build_app.sh" in workflow
+    assert "test -d dist/AACC.app" in workflow
+    assert "scripts/build_windows.ps1" in workflow
+    assert 'Test-Path "dist\\AACC\\AACC.exe"' in workflow
+    assert "pyi-archive_viewer -r" in workflow
+    for module in ("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows"):
+        assert module in workflow
+
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]
+    assert "aacc.win32" not in hidden_imports
+    assert "aacc.automation_windows" not in hidden_imports
+    assert "aacc.hotkeys_windows" not in hidden_imports
 
 
 def test_build_uses_locked_development_environment() -> None:

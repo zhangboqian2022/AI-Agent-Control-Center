@@ -5,10 +5,11 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$project_root/scripts/release_env.sh"
 validate_release_credentials
 desktop_dir="${AACC_DMG_OUTPUT_DIR:-$(/usr/bin/osascript -e 'POSIX path of (path to desktop folder)')}"
-AACC_VERSION="${AACC_VERSION:-1.4.1}"
+command -v uv >/dev/null 2>&1 || { echo "错误：需要先安装 uv" >&2; exit 1; }
+AACC_VERSION="${AACC_VERSION:-$(uv version --short)}"
 codesign_identity="${AACC_CODESIGN_IDENTITY:-}"
 notary_profile="${AACC_NOTARY_PROFILE:-}"
-# Default output: AACC-1.4.1.dmg
+# Default output: AACC-${AACC_VERSION}.dmg
 output_path="${desktop_dir%/}/AACC-${AACC_VERSION}.dmg"
 
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then

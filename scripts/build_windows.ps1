@@ -3,6 +3,6 @@
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-uv sync --locked
+uv sync --locked --extra dev
 uv run pyinstaller --noconfirm --clean AACC-windows.spec
 Write-Host "Built dist/AACC/AACC.exe"

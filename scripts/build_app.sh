@@ -4,7 +4,6 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$project_root/scripts/release_env.sh"
 validate_release_credentials
-AACC_VERSION="${AACC_VERSION:-1.4.1}"
 codesign_identity="${AACC_CODESIGN_IDENTITY:-}"
 if [[ -z "$codesign_identity" ]] && \
   security find-identity -p codesigning 2>/dev/null | grep -q "AACC Local Development"; then
@@ -15,6 +14,7 @@ fi
 cd "$project_root"
 
 command -v uv >/dev/null 2>&1 || { echo "错误：需要先安装 uv" >&2; exit 1; }
+AACC_VERSION="${AACC_VERSION:-$(uv version --short)}"
 uv sync --locked --extra dev
 uv run pyinstaller \
   --noconfirm \
