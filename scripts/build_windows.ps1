@@ -27,4 +27,13 @@ $rootDifference = @(
 if ($rootDifference.Count -ne 0) {
     throw "unexpected Windows package root"
 }
-Write-Host "Built dist/AACC/AACC.exe"
+if ($env:AACC_SKIP_INSTALLER -ne "1") {
+    & "$PSScriptRoot\build_windows_installer.ps1"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Windows Setup build failed"
+    }
+    Write-Host "Built dist/AACC/AACC.exe and per-user Setup"
+}
+else {
+    Write-Host "Built dist/AACC/AACC.exe (Setup explicitly skipped)"
+}

@@ -9,6 +9,7 @@ __pycache__/
 *.py[cod]
 build/
 dist/
+installer/Output/
 *.spec
 !AACC-windows.spec
 diagnostics/
