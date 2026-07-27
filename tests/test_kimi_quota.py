@@ -8,6 +8,7 @@ import pytest
 from aacc.kimi_quota import (
     KimiQuotaError,
     KimiQuotaUnauthorizedError,
+    QuotaDetail,
     QuotaStatus,
     fetch_quota,
     format_balance,
@@ -48,12 +49,48 @@ def test_parse_full_payload():
     assert quota.five_hour.used == 10
     assert quota.five_hour.limit == 100
     assert quota.five_hour.percentage == 10
-    assert quota.total_quota.remaining == 3000
-    assert quota.total_quota.used == 2000
+    assert quota.monthly.remaining == 3000
+    assert quota.monthly.used == 2000
     assert quota.membership_level == "PRO"
     assert quota.booster is not None
     assert quota.booster.is_enabled
     assert quota.booster.balance_yuan == pytest.approx(3.152507)
+
+
+def test_parse_quota_exposes_total_quota_as_monthly():
+    quota = parse_quota(
+        {
+            "totalQuota": {
+                "limit": 1000,
+                "used": 360,
+                "remaining": 640,
+                "resetTime": "2026-08-24T05:28:00Z",
+            }
+        }
+    )
+
+    assert quota.monthly == QuotaDetail(
+        used=360,
+        limit=1000,
+        remaining=640,
+        reset_at=datetime(2026, 8, 24, 5, 28, tzinfo=UTC),
+        percentage=36,
+    )
+
+
+@pytest.mark.parametrize("total_quota", [None, {}, [], "invalid"])
+def test_parse_quota_keeps_missing_or_malformed_monthly_unknown(total_quota: object):
+    quota = parse_quota({"totalQuota": total_quota})
+
+    assert quota.monthly is None
+
+
+def test_parse_quota_preserves_explicit_zero_monthly_usage():
+    quota = parse_quota({"totalQuota": {"limit": 1000, "used": 0, "remaining": 1000}})
+
+    assert quota.monthly is not None
+    assert quota.monthly.percentage == 0
+    assert quota.monthly.reset_at is None
 
 
 def test_parse_booster_disabled_shows_zero_balance():
@@ -70,7 +107,7 @@ def test_parse_missing_sections_yield_unknown_windows():
     assert quota.status is QuotaStatus.UNKNOWN
     assert quota.weekly is None
     assert quota.five_hour is None
-    assert quota.total_quota is None
+    assert quota.monthly is None
     assert quota.membership_level is None
     assert quota.booster is None
 
