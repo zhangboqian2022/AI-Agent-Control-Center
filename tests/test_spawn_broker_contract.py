@@ -8,19 +8,21 @@ ROOT = Path(__file__).parents[1]
 
 
 def safe_broker_failure_summary(stderr: str) -> str:
-    diagnostic = re.search(
-        r"\bdiagnostic=AACC_BROKER_VALIDATOR code=\d+ reason=([a-z-]+) "
-        r"pos=(none|\d+)(?: byte=(?:none|\d+) prev=(?:none|\d+))? "
-        r"response_len=(unavailable|\d+)\b",
-        stderr,
-    )
+    reason = re.search(r"\bAACC_BROKER_VALIDATOR code=\d+ reason=([a-z-]+)\b", stderr)
     exit_code = re.search(r"\bbroker JSON validation failed exit=(\d+)\b", stderr)
-    reason_token = diagnostic.group(1) if diagnostic else "unavailable"
-    position_token = diagnostic.group(2) if diagnostic else "unavailable"
-    response_length_token = diagnostic.group(3) if diagnostic else "unavailable"
+    position = re.search(r"\bpos=(none|\d+)\b", stderr)
+    byte = re.search(r"\bbyte=(none|\d+)\b", stderr)
+    previous_byte = re.search(r"\bprev=(none|\d+)\b", stderr)
+    response_length = re.search(r"\bresponse_len=(unavailable|\d+)\b", stderr)
+    reason_token = reason.group(1) if reason else "unavailable"
+    position_token = position.group(1) if position else "unavailable"
+    byte_token = byte.group(1) if byte else "unavailable"
+    previous_byte_token = previous_byte.group(1) if previous_byte else "unavailable"
+    response_length_token = response_length.group(1) if response_length else "unavailable"
     exit_token = exit_code.group(1) if exit_code else "unavailable"
     return (
-        f"reason={reason_token} exit={exit_token} pos={position_token} "
+        f"reason={reason_token} exit={exit_token} pos={position_token} byte={byte_token} "
+        f"prev={previous_byte_token} "
         f"response_len={response_length_token}"
     )
 
@@ -29,11 +31,11 @@ def test_safe_broker_failure_summary_keeps_only_reason_and_exit_tokens() -> None
     summary = safe_broker_failure_summary(
         "broker JSON validation failed exit=4 "
         "diagnostic=AACC_BROKER_VALIDATOR code=4 reason=request-payload "
-        "pos=none response_len=1 response_sha256=0 payload_len=1 "
+        "pos=none byte=none prev=none\nresponse_len=1 response_sha256=0 payload_len=1 "
         "payload_sha256=0 AACC_SECRET_MARKER_4ce1"
     )
 
-    assert summary == "reason=request-payload exit=4 pos=none response_len=1"
+    assert summary == ("reason=request-payload exit=4 pos=none byte=none prev=none response_len=1")
     assert "AACC_SECRET_MARKER_4ce1" not in summary
 
 
