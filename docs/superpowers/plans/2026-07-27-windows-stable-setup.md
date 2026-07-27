@@ -816,9 +816,17 @@ def test_inno_setup_is_per_user_and_upgrade_stable():
     text = (ROOT / "installer" / "AACC.iss").read_text()
     assert "PrivilegesRequired=lowest" in text
     assert "DefaultDirName={localappdata}\\Programs\\AACC" in text
+    assert "UsePreviousAppDir=yes" in text
+    assert "UninstallLogMode=append" in text
     assert "ArchitecturesAllowed=x64compatible" in text
     assert "C174E242-E193-5863-8A46-F16152875173" in text
+    assert "CloseApplications=no" in text
+    assert "RestartApplications=no" in text
     assert "--shutdown-for-update" in text
+    assert "taskkill" not in text.lower()
+    assert "terminateprocess" not in text.lower()
+    assert "stop-process" not in text.lower()
+    assert "wm_close" not in text.lower()
     assert "{userappdata}\\AACC" not in text.split("[UninstallDelete]")[-1]
     assert 'Name: "{app}\\_internal"' in text
     assert 'Name: "{app}\\*"' not in text
@@ -827,7 +835,9 @@ def test_inno_setup_is_per_user_and_upgrade_stable():
 def test_windows_installer_build_pins_iscc():
     text = (ROOT / "scripts" / "build_windows_installer.ps1").read_text()
     assert "6.7.1" in text
+    assert "4d11e8050b6185e0d49bd9e8cc661a7a59f44959a621d31d11033124c4e8a7b0" in text
     assert "AACC_ISCC_PATH" in text
+    assert "innosetup-6.7.1.exe" in text
     assert "uv version --short" in text
     assert "Get-FileHash" in text
 ```
@@ -853,9 +863,11 @@ AppName=AACC
 AppVersion={#MyAppVersion}
 DefaultDirName={localappdata}\Programs\AACC
 PrivilegesRequired=lowest
+UsePreviousAppDir=yes
+UninstallLogMode=append
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-CloseApplications=yes
+CloseApplications=no
 RestartApplications=no
 OutputDir=..\dist\installer
 OutputBaseFilename=AACC-{#MyAppVersion}-Setup
@@ -874,9 +886,20 @@ Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; \
 Add Start Menu and unchecked desktop-icon tasks. `[Run]` launches AACC with
 `postinstall nowait skipifsilent`.
 
-`PrepareToInstall` and `InitializeUninstall` call the existing AACC executable
-with `--shutdown-for-update`, wait for completion, and return a bilingual
-error if it fails. Never use `taskkill`.
+When the existing `{app}\AACC.exe` exists, `PrepareToInstall` and
+`InitializeUninstall` call only that executable with
+`--shutdown-for-update` through Inno `Exec(..., ewWaitUntilTerminated,
+ResultCode)`. An `Exec` failure or any non-zero result aborts the install or
+uninstall with a bilingual message telling the user to exit AACC from the
+tray and retry. `CloseApplications=no` keeps Restart Manager from bypassing
+this contract. Never use `taskkill`, `WM_CLOSE`, PowerShell process control,
+`/FORCECLOSEAPPLICATIONS`, or any forced termination path.
+
+Validate `MyAppVersion` against the project's restricted numeric version
+grammar before passing it to ISPP. Keep `Filename`, `Parameters`, and
+`WorkingDir` as separate `Exec` arguments. The installer must not delete
+`{app}` recursively or mention `{userappdata}\AACC`, `config.yaml`,
+`aacc.db`, or `kimi-credentials.json` in deletion sections or Pascal code.
 
 - [ ] **Step 4: Implement the installer build script**
 
@@ -884,17 +907,28 @@ The script:
 
 1. validates the onedir root contract;
 2. reads the package version;
-3. resolves `AACC_ISCC_PATH`, `Get-Command ISCC.exe`, then the standard Inno 6
-   path;
-4. requires product/file version 6.7.1;
-5. invokes:
+3. resolves `AACC_ISCC_PATH`; otherwise downloads the immutable
+   `innosetup-6.7.1.exe` release from
+   `https://github.com/jrsoftware/issrc/releases/download/is-6_7_1/innosetup-6.7.1.exe`
+   into a versioned cache;
+4. verifies SHA-256
+   `4d11e8050b6185e0d49bd9e8cc661a7a59f44959a621d31d11033124c4e8a7b0`
+   before executing either a cached or newly downloaded installer, requires a
+   valid Authenticode signature, installs it into a task-local directory, and
+   requires product/file version 6.7.1;
+5. resolves all paths with literal-path APIs, removes only the expected stale
+   versioned Setup/checksum, validates the onedir root contains exactly
+   `AACC.exe`, `aacc-spawn.exe`, and `_internal`, and checks every external
+   command exit code;
+6. invokes:
 
 ```powershell
-& $IsccPath "/DMyAppVersion=$Version" "installer\AACC.iss"
+& $IsccPath "/DMyAppVersion=$Version" $IssPath
 ```
 
-6. requires the expected Setup path and non-zero size;
-7. writes a lowercase SHA-256 plus two spaces and filename to `.sha256`.
+7. requires exactly one expected Setup leaf with a plausible non-zero size;
+8. writes a lowercase SHA-256 plus two spaces and filename plus LF to an
+   ASCII/UTF-8-without-BOM `.sha256`, rereads it, and verifies the digest.
 
 - [ ] **Step 5: Chain Setup after the normal Windows build**
 
@@ -980,7 +1014,9 @@ or Codex processes remain.
 Install:
 
 ```powershell
-& $SetupPath /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/LOG=$InstallLog"
+& $SetupPath /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- `
+  /NOCLOSEAPPLICATIONS /NOFORCECLOSEAPPLICATIONS /NORESTARTAPPLICATIONS `
+  "/LOG=$InstallLog"
 ```
 
 Assert installed executables, `_internal`, HKCU uninstall entry, Start Menu
@@ -994,24 +1030,39 @@ Uninstall silently while AACC is running. Wait for uninstaller self-removal,
 then require program files, shortcuts, and HKCU uninstall registration gone
 while AppData and the marker remain.
 
+Exercise install, reinstall, and uninstall failure paths. A shutdown timeout
+or non-zero control result must abort before payload/registry/data mutation.
+Inject a copy failure by locking a replaceable payload during reinstall;
+require non-zero Setup exit, restoration of the previous executable, broker,
+and representative `_internal` hashes, successful restart of the old AACC,
+and unchanged `%APPDATA%\AACC`. If Inno does not restore files removed by
+`[InstallDelete]`, replace that approach with an explicit
+staging/backup/swap rollback before release.
+
 - [ ] **Step 6: Pin and extend the hosted workflow**
 
-Use `windows-2025`. Run:
+Both `windows-2022` and `windows-2025-vs2026` continue compiling the broker
+and PyInstaller onedir. Set `AACC_SKIP_INSTALLER=1` on `windows-2022`; only
+`windows-2025-vs2026` bootstraps hash-pinned Inno 6.7.1, builds the primary
+Setup, and runs the full installed-product smoke:
 
 ```yaml
 - name: Build Windows app and Setup
-  if: matrix.os == 'windows-2025'
+  if: matrix.os == 'windows-2025-vs2026'
   shell: pwsh
   run: ./scripts/build_windows.ps1
 
 - name: Smoke frozen and installed Windows product
-  if: matrix.os == 'windows-2025'
+  if: matrix.os == 'windows-2025-vs2026'
   shell: pwsh
   run: ./scripts/test_windows_package.ps1
 ```
 
-Upload Setup, SHA-256, portable debug ZIP, broker dependency output, ACL/audit
-reports, and smoke logs with `if: always()`.
+Only after the smoke succeeds, revalidate the Setup checksum and exact
+portable ZIP root structure, then upload Setup, SHA-256, and portable debug
+ZIP with `if-no-files-found: error`. Upload broker dependency output,
+ACL/audit reports, and smoke logs separately for diagnosis; a failed smoke
+must never publish a primary Setup artifact.
 
 - [ ] **Step 7: Push and inspect the hosted Windows result**
 
