@@ -89,6 +89,21 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert "pinned Inno Setup 6.7.1" in code
 
 
+def test_inno_setup_rejects_internal_root_reparse_before_install() -> None:
+    text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
+    code = _section(text, "Code")
+    prepare = code.split("function PrepareToInstall", 1)[1].split(
+        "function InitializeUninstall", 1
+    )[0]
+
+    assert "GetFileAttributesW@kernel32.dll" in code
+    assert "INVALID_FILE_ATTRIBUTES" in code
+    assert "ValidateInternalRootForInstall" in code
+    assert "FILE_ATTRIBUTE_REPARSE_POINT" in code
+    assert "internal payload root is unsafe" in code
+    assert prepare.index("ValidateInternalRootForInstall") < prepare.index("ShutdownExistingAACC")
+
+
 def test_inno_setup_preserves_user_data_and_offers_expected_shortcuts() -> None:
     text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     lowered = text.lower()
@@ -162,6 +177,31 @@ def test_windows_smoke_closes_uninstaller_clone_capture_race() -> None:
     assert "ParentProcessId" in function
     assert "Register-OwnedIdentity -Identity $Identity" in function
     assert function.count("-ExpectedRootIdentity $RootIdentity") >= 4
+    tree = text.split("function Get-OwnedProcessTree", 1)[1].split(
+        "function Stop-OwnedProcessTree", 1
+    )[0]
+    assert "Test-OwnedProcessEdge -ParentIdentity" in tree
+    assert "$Pending.Push($ChildIdentity)" in tree
+    assert "CreationTimeUtc -ge $ParentIdentity.CreationTimeUtc" in text
+
+
+def test_windows_smoke_keeps_temp_clone_filter_structurally_closed() -> None:
+    text = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+    function = text.split("function Wait-UninstallerTreeGone", 1)[1].split(
+        "function Invoke-Uninstaller", 1
+    )[0]
+
+    assert (
+        """[System.StringComparison]::OrdinalIgnoreCase
+                    )
+                }
+        )
+        Write-SmokeEvidence"""
+        in function
+    )
+    assert function.index("Write-SmokeEvidence") < function.index(
+        "function Assert-DiagnosticsTreeHasNoPrimaryArtifacts"
+    )
 
 
 def test_windows_installer_build_pins_and_authenticates_iscc() -> None:

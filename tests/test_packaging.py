@@ -455,6 +455,10 @@ def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> 
         "temporaryClones",
         "rollback-probe-observed.txt",
         "stale-obsolete.pyd",
+        "junction-external-preserve.txt",
+        "junction-refusal-external-manifest.json",
+        "Assert-DiagnosticsTreeHasNoPrimaryArtifacts",
+        "stale-parent-pid-edge.json",
     ):
         assert required in script
     assert "if (-not $Process.WaitForExit(5000))" in script
@@ -464,6 +468,10 @@ def test_windows_product_smoke_has_bounded_exact_identity_and_state_checks() -> 
     assert '$CandidateRoot "product-smoke\\$SpecialLeaf\\setup copy' in script
     assert "$Stopwatch.ElapsedMilliseconds -ge 23000" in script
     assert "$Stopwatch.ElapsedMilliseconds -le 35000" in script
+    assert '$SavedAacc = Join-Path $CandidateRoot "product-smoke\\saved-AACC.exe"' in script
+    assert 'Join-Path $SmokeRoot "reinstall\\saved-AACC.exe"' not in script
+    assert '"fake legacy AACC.exe"' not in script
+    assert '"legacy-window-fixture.exe"' in script
 
 
 def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:

@@ -154,12 +154,23 @@ function Invoke-OwnedCleanup {
     }
 }
 
+function Test-OwnedProcessEdge {
+    param(
+        [Parameter(Mandatory = $true)]$ParentIdentity,
+        [Parameter(Mandatory = $true)]$ChildIdentity
+    )
+    return (
+        $ChildIdentity.CreationTimeUtc -ge $ParentIdentity.CreationTimeUtc
+    )
+}
+
 function Get-OwnedProcessTree {
     param(
         [Parameter(Mandatory = $true)][int]$RootId,
         $ExpectedRootIdentity = $null
     )
     if ($null -ne $ExpectedRootIdentity) {
+        $RootIdentity = $ExpectedRootIdentity
         try {
             $CurrentRoot = Get-ProcessIdentity -Id $RootId
             if (
@@ -179,25 +190,106 @@ function Get-OwnedProcessTree {
             # ParentProcessId and can be enumerated from this CIM snapshot.
         }
     }
+    else {
+        try {
+            $RootIdentity = Get-ProcessIdentity -Id $RootId
+        }
+        catch {
+            return @()
+        }
+    }
     $ChildrenByParent = @{}
     foreach ($Record in @(Get-CimInstance Win32_Process)) {
         $Parent = [int]$Record.ParentProcessId
         if (-not $ChildrenByParent.ContainsKey($Parent)) {
             $ChildrenByParent[$Parent] = New-Object System.Collections.ArrayList
         }
-        [void]$ChildrenByParent[$Parent].Add([int]$Record.ProcessId)
+        [void]$ChildrenByParent[$Parent].Add($Record)
     }
     $Pending = New-Object System.Collections.Stack
-    $Pending.Push($RootId)
+    $Pending.Push($RootIdentity)
     $Identities = New-Object System.Collections.ArrayList
+    $Seen = @{}
+    $RootKey = "$($RootIdentity.Id):$($RootIdentity.CreationTimeUtc)"
+    $Seen[$RootKey] = $true
+    [void]$Identities.Add($RootIdentity)
     while ($Pending.Count -gt 0) {
-        $CurrentId = [int]$Pending.Pop()
-        try { [void]$Identities.Add((Get-ProcessIdentity -Id $CurrentId)) } catch {}
-        if ($ChildrenByParent.ContainsKey($CurrentId)) {
-            foreach ($ChildId in $ChildrenByParent[$CurrentId]) { $Pending.Push($ChildId) }
+        $ParentIdentity = $Pending.Pop()
+        try {
+            $CurrentParent = Get-ProcessIdentity -Id $ParentIdentity.Id
+            if (
+                -not $CurrentParent.Path.Equals(
+                    $ParentIdentity.Path,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                ) -or
+                $CurrentParent.CreationTimeUtc -ne $ParentIdentity.CreationTimeUtc
+            ) {
+                continue
+            }
+        }
+        catch {
+            # A verified parent may exit before its descendants. Continue only
+            # with edges whose child creation time is not older than this exact
+            # parent identity.
+        }
+        if ($ChildrenByParent.ContainsKey($ParentIdentity.Id)) {
+            foreach ($ChildRecord in $ChildrenByParent[$ParentIdentity.Id]) {
+                try {
+                    $ChildIdentity = Get-ProcessIdentity `
+                        -Id ([int]$ChildRecord.ProcessId)
+                }
+                catch {
+                    continue
+                }
+                if (-not (Test-OwnedProcessEdge -ParentIdentity $ParentIdentity `
+                    -ChildIdentity $ChildIdentity)) {
+                    continue
+                }
+                $ChildKey = "$($ChildIdentity.Id):$($ChildIdentity.CreationTimeUtc)"
+                if ($Seen.ContainsKey($ChildKey)) {
+                    continue
+                }
+                $Seen[$ChildKey] = $true
+                [void]$Identities.Add($ChildIdentity)
+                $Pending.Push($ChildIdentity)
+            }
         }
     }
     return @($Identities)
+}
+
+function Assert-StaleParentPidEdgeRejected {
+    $ReusedRoot = [pscustomobject]@{
+        Id = 4242
+        Path = "C:\fixture\new-root.exe"
+        CreationTimeUtc = 200
+    }
+    $StaleChild = [pscustomobject]@{
+        Id = 4343
+        Path = (Join-Path ([System.IO.Path]::GetTempPath()) "stale-child.exe")
+        CreationTimeUtc = 199
+    }
+    $Accepted = Test-OwnedProcessEdge -ParentIdentity $ReusedRoot `
+        -ChildIdentity $StaleChild
+    $AcceptedIdentities = @()
+    if ($Accepted) {
+        $AcceptedIdentities += $StaleChild
+    }
+    $TemporaryClones = @($AcceptedIdentities)
+    Write-SmokeEvidence -Category "process-tree" -Name "stale-parent-pid-edge.json" `
+        -Value ([ordered]@{
+            verifiedParent = $ReusedRoot
+            staleChild = $StaleChild
+            accepted = $Accepted
+            identities = $AcceptedIdentities
+            temporaryClones = $TemporaryClones
+        })
+    Assert-True (
+        -not $Accepted -and
+        $AcceptedIdentities.Count -eq 0 -and
+        $TemporaryClones.Count -eq 0
+    ) `
+        "a stale child created before a reused parent PID entered the owned tree"
 }
 
 function Stop-OwnedProcessTree {
@@ -666,6 +758,23 @@ function Wait-UninstallerTreeGone {
     }
 }
 
+function Assert-DiagnosticsTreeHasNoPrimaryArtifacts {
+    $Forbidden = @(
+        Get-ChildItem -LiteralPath $SmokeRoot -File -Recurse -Force |
+            Where-Object {
+                $_.Name -in @("AACC.exe", "aacc-spawn.exe") -or
+                $_.Name -like "*-Setup.exe" -or
+                $_.Name -like "*.sha256" -or
+                $_.Name -like "*.zip"
+            } |
+            ForEach-Object { $_.FullName }
+    )
+    Write-SmokeEvidence -Category "artifact-isolation" `
+        -Name "diagnostics-primary-artifacts.json" -Value $Forbidden
+    Assert-True ($Forbidden.Count -eq 0) `
+        "always-uploaded diagnostics tree contains a primary product artifact"
+}
+
 function Invoke-Uninstaller {
     param([Parameter(Mandatory = $true)][string]$LogPath, [bool]$ExpectSuccess)
     $LogPath = Get-SpecialSmokePath -RequestedPath $LogPath
@@ -1000,7 +1109,8 @@ function Test-InstalledControlRefusal {
         [string]$Mode,
         [bool]$Capability = $true
     )
-    $SavedAacc = Join-Path $SmokeRoot "reinstall\saved-AACC.exe"
+    $SavedAacc = Join-Path $CandidateRoot "product-smoke\saved-AACC.exe"
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $SavedAacc)) | Out-Null
     Copy-Item -LiteralPath $InstalledAacc -Destination $SavedAacc -Force
     Copy-Item -LiteralPath $LegacyFixture -Destination $InstalledAacc -Force
     if ($Capability) {
@@ -1151,6 +1261,7 @@ if (Test-Path -LiteralPath $CandidateRoot) {
 foreach ($Category in @("frozen", "installed", "reinstall", "uninstall")) {
     [System.IO.Directory]::CreateDirectory((Join-Path $SmokeRoot $Category)) | Out-Null
 }
+Assert-StaleParentPidEdgeRejected
 $FixtureRoot = Join-Path $SmokeRoot "fixtures\$SpecialLeaf\native &() %! [x]"
 [System.IO.Directory]::CreateDirectory($FixtureRoot) | Out-Null
 foreach ($Fixture in @("fake-codex.cmd", "fake_codex_server.py", "fake_codex_timeout.py")) {
@@ -1158,11 +1269,12 @@ foreach ($Fixture in @("fake-codex.cmd", "fake_codex_server.py", "fake_codex_tim
         -Destination (Join-Path $FixtureRoot $Fixture)
 }
 $FakeCodexCmd = Join-Path $FixtureRoot "fake-codex.cmd"
-$LegacyFixture = Join-Path $FixtureRoot "fake legacy AACC.exe"
+$LegacyFixture = Join-Path $FixtureRoot "legacy-window-fixture.exe"
 $LockerFixture = Join-Path $FixtureRoot "lock payload.exe"
 
 Write-Host "AACC_WINDOWS_SMOKE evidence=hosted-Windows-Server"
 Invoke-FrozenSmoke
+Assert-DiagnosticsTreeHasNoPrimaryArtifacts
 
 if ($FrozenOnly) {
     Write-Host "Hosted Windows Server evidence only; consumer Windows 10/11 not claimed"
@@ -1273,6 +1385,58 @@ Invoke-GracefulShutdown -Executable $InstalledAacc -Owned $Installed
 Set-SmokeDatabaseRow
 $StableAppData = Get-StableAppDataState
 Assert-StableAppDataState -Expected $StableAppData -EvidenceCategory "installed"
+
+$InstalledInternalRoot = Join-Path $InstallRoot "_internal"
+$InternalBackupRoot = Join-Path $CandidateRoot "product-smoke\internal-root-backup"
+$ExternalJunctionRoot = Join-Path $CandidateRoot `
+    "product-smoke\junction target $SpecialLeaf"
+[System.IO.Directory]::CreateDirectory($ExternalJunctionRoot) | Out-Null
+$ExternalPreserveMarker = Join-Path `
+    $ExternalJunctionRoot "junction-external-preserve.txt"
+[System.IO.File]::WriteAllBytes(
+    $ExternalPreserveMarker,
+    [System.Text.UTF8Encoding]::new($false).GetBytes("external-preserve-v1`n")
+)
+$ExternalBefore = Get-TreeManifest -Path $ExternalJunctionRoot
+Move-Item -LiteralPath $InstalledInternalRoot -Destination $InternalBackupRoot
+try {
+    New-Item -ItemType Junction -Path $InstalledInternalRoot `
+        -Target $ExternalJunctionRoot | Out-Null
+    $JunctionItem = Get-Item -LiteralPath $InstalledInternalRoot -Force
+    Assert-True (
+        ($JunctionItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    ) "_internal junction fixture is not a reparse point"
+    $JunctionRequestedLog = Join-Path $SmokeRoot "reinstall\junction-refusal.log"
+    Invoke-Setup -LogPath $JunctionRequestedLog `
+        -ExpectSuccess $false
+    $JunctionLog = Get-SpecialSmokePath -RequestedPath $JunctionRequestedLog
+    Assert-True (
+        [System.IO.File]::ReadAllText($JunctionLog).Contains(
+            "AACC internal payload root is unsafe"
+        )
+    ) "junction refusal log did not prove the pre-install safety gate"
+    $ExternalAfter = Get-TreeManifest -Path $ExternalJunctionRoot
+    Write-SmokeEvidence -Category "reinstall\junction-refusal" `
+        -Name "junction-refusal-external-manifest.json" `
+        -Value ([ordered]@{ before = $ExternalBefore; after = $ExternalAfter })
+    Assert-True ($ExternalAfter -ceq $ExternalBefore) `
+        "Setup traversed or mutated the external _internal junction target"
+}
+finally {
+    if (Test-Path -LiteralPath $InstalledInternalRoot) {
+        $InternalRootItem = Get-Item -LiteralPath $InstalledInternalRoot -Force
+        Assert-True (
+            ($InternalRootItem.Attributes -band
+                [System.IO.FileAttributes]::ReparsePoint) -ne 0
+        ) "unsafe cleanup refused to delete a non-reparse _internal root"
+        [System.IO.Directory]::Delete($InstalledInternalRoot)
+    }
+    Assert-True (Test-Path -LiteralPath $ExternalPreserveMarker -PathType Leaf) `
+        "junction cleanup removed the external preserve marker"
+    Move-Item -LiteralPath $InternalBackupRoot -Destination $InstalledInternalRoot
+}
+Assert-InstalledInternalMatchesManifest -EvidenceCategory "reinstall\junction-refusal"
+Assert-InstalledRootPayloadHashes -EvidenceCategory "reinstall\junction-refusal"
 
 Test-InstalledControlRefusal -Action setup -Mode nonzero -Capability $false
 foreach ($Mode in @("nonzero", "false-success", "timeout")) {
@@ -1466,6 +1630,7 @@ Assert-StableAppDataState -Expected $StableAppData -EvidenceCategory "installed\
 Invoke-Uninstaller -LogPath (Join-Path $SmokeRoot "uninstall\final-cleanup.log") `
     -ExpectSuccess $true
 
+Assert-DiagnosticsTreeHasNoPrimaryArtifacts
 Write-Host "Hosted Windows Server evidence only; consumer Windows 10/11 not claimed"
 }
 
