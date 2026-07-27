@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import io
+import json
+import queue
 import subprocess
+import sys
 import textwrap
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import psutil
 import pytest
 
-from aacc.codex_app_server import CodexAppServerReader, find_codex_executable
+from aacc.codex_app_server import (
+    WINDOWS_PROCESS_CREATION_FLAGS,
+    CodexAppServerReader,
+    find_codex_executable,
+)
 from aacc.codex_quota import (
     CodexQuotaStatus,
     parse_app_server_rate_limits,
@@ -262,6 +272,125 @@ print(json.dumps({
     assert snapshot.weekly is not None
     assert snapshot.weekly.used_percent == 9
     assert snapshot.plan_type == "prolite"
+
+
+def test_stdout_notifications_cannot_evict_a_matching_response() -> None:
+    response = json.dumps({"id": 2, "result": {"rateLimits": {}}})
+    notifications = [
+        json.dumps({"method": "account/updated", "params": {"index": index}}) for index in range(64)
+    ]
+    stream = io.StringIO("\n".join([response, *notifications]) + "\n")
+    output: queue.Queue[str | None] = queue.Queue(maxsize=32)
+
+    CodexAppServerReader._read_stdout(stream, output)
+
+    assert CodexAppServerReader._wait_for_response(
+        output,
+        request_id=2,
+        deadline=time.monotonic() + 1,
+    ) == {"rateLimits": {}}
+
+
+def test_windows_reader_hides_process_and_kills_the_process_tree(tmp_path: Path) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    class FakeStream:
+        def write(self, _value: str) -> int:
+            return 0
+
+        def flush(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        pid = 4321
+        stdin = FakeStream()
+        stdout = io.StringIO("")
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float) -> int:
+            return 0
+
+        def terminate(self) -> None:
+            raise AssertionError("taskkill should handle the Windows process tree")
+
+        def kill(self) -> None:
+            raise AssertionError("taskkill should handle the Windows process tree")
+
+    popen_kwargs: dict[str, object] = {}
+
+    def popen(_args: list[str], **kwargs: object) -> FakeProcess:
+        popen_kwargs.update(kwargs)
+        return FakeProcess()
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    reader = CodexAppServerReader(
+        tmp_path / "codex.cmd",
+        timeout_seconds=0.05,
+        popen=popen,
+        platform="win32",
+        run=run,
+    )
+    reader.read_latest()
+
+    assert popen_kwargs["creationflags"] == WINDOWS_PROCESS_CREATION_FLAGS
+    assert calls == [
+        (
+            ["taskkill", "/PID", "4321", "/T", "/F"],
+            {
+                "capture_output": True,
+                "text": True,
+                "timeout": 2.0,
+                "check": False,
+                "shell": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows cmd.exe and taskkill")
+def test_windows_cmd_timeout_does_not_leave_a_descendant(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    child = tmp_path / "child.py"
+    child.write_text(
+        "import os, pathlib, sys, time\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8')\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    wrapper = tmp_path / "fake-codex.cmd"
+    wrapper.write_text(
+        f'@echo off\r\n"{sys.executable}" "{child}" "{pid_file}"\r\n',
+        encoding="utf-8",
+    )
+
+    snapshot = CodexAppServerReader(
+        wrapper,
+        timeout_seconds=2.0,
+        platform="win32",
+    ).read_latest()
+
+    assert snapshot.status is CodexQuotaStatus.UNKNOWN
+    deadline = time.monotonic() + 2
+    while not pid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pid_file.exists()
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 2
+    while _pid_exists(pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not _pid_exists(pid)
+
+
+def _pid_exists(pid: int) -> bool:
+    return psutil.pid_exists(pid)
 
 
 def test_app_server_reader_times_out_and_reaps_child(tmp_path: Path) -> None:

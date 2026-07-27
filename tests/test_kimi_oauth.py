@@ -312,7 +312,39 @@ def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
     assert load_credentials(tmp_path) == {"auth_method": "api_key", "api_key": "sk-kimi-x"}
     assert len(protected) == 2
     assert protected[0].name.startswith(".kimi-credentials.json.")
-    assert protected[1] == credentials_path(tmp_path)
+    assert protected[1] == protected[0]
+
+
+def test_save_credentials_protects_empty_windows_temp_before_secret(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    protected_sizes = []
+    monkeypatch.setattr(
+        kimi_oauth_module,
+        "protect_file",
+        lambda path, **_kwargs: protected_sizes.append(path.stat().st_size),
+    )
+
+    save_credentials(tmp_path, {"api_key": "private-token"})
+
+    assert protected_sizes[0] == 0
+    assert protected_sizes[1] > 0
+
+
+def test_load_credentials_republishes_unseen_windows_file_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    path = credentials_path(tmp_path)
+    path.write_text('{"api_key": "private-token"}', encoding="utf-8")
+    saved = []
+    monkeypatch.setattr(
+        kimi_oauth_module,
+        "save_credentials",
+        lambda config_dir, raw: saved.append((config_dir, raw)),
+    )
+
+    expected = {"api_key": "private-token"}
+    assert load_credentials(tmp_path) == expected
+    assert load_credentials(tmp_path) == expected
+    assert saved == [(tmp_path, expected)]
 
 
 def test_save_credentials_does_not_replace_target_when_protection_fails(

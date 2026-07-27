@@ -142,22 +142,70 @@ def main() -> int:
     )
 
     demo = [
-        _task("codex:demo-auth", 1, "重构登录鉴权模块", "codex_cli", "Codex",
-              "RUNNING", "正在修改代码", minutes_ago=7.5),
-        _task("kimi:demo-payment", 2, "修复支付回调重试", "kimi_code", "Kimi Code",
-              "RUNNING", "正在运行", minutes_ago=3.2,
-              work_dir="/Users/dev/Desktop/codelight",
-              usage={"total_input_tokens": 48_200, "output_tokens": 6_100,
-                     "cache_read_pct": 76, "speed_tps": 58}),
-        _task("codex:demo-deps", 3, "升级依赖并跑回归", "codex_cli", "Codex",
-              "WAITING_APPROVAL", "等待批准：写 pyproject.toml", minutes_ago=12.0),
-        _task("kimi_desktop:demo-notes", 4, "整理周会纪要", "kimi_desktop", "Kimi Desktop",
-              "COMPLETED", "回合已完成", minutes_ago=25.0),
-        _task("kimi:demo-migrate", 5, "数据迁移脚本", "kimi_code", "Kimi Code",
-              "ERROR", "进程异常退出", minutes_ago=41.0,
-              work_dir="/Users/dev/Desktop/servercheck",
-              usage={"total_input_tokens": 12_300, "output_tokens": 1_200,
-                     "cache_read_pct": 68, "speed_tps": 42}),
+        _task(
+            "codex:demo-auth",
+            1,
+            "重构登录鉴权模块",
+            "codex_cli",
+            "Codex",
+            "RUNNING",
+            "正在修改代码",
+            minutes_ago=7.5,
+        ),
+        _task(
+            "kimi:demo-payment",
+            2,
+            "修复支付回调重试",
+            "kimi_code",
+            "Kimi Code",
+            "RUNNING",
+            "正在运行",
+            minutes_ago=3.2,
+            work_dir="/Users/dev/Desktop/codelight",
+            usage={
+                "total_input_tokens": 48_200,
+                "output_tokens": 6_100,
+                "cache_read_pct": 76,
+                "speed_tps": 58,
+            },
+        ),
+        _task(
+            "codex:demo-deps",
+            3,
+            "升级依赖并跑回归",
+            "codex_cli",
+            "Codex",
+            "WAITING_APPROVAL",
+            "等待批准：写 pyproject.toml",
+            minutes_ago=12.0,
+        ),
+        _task(
+            "kimi_desktop:demo-notes",
+            4,
+            "整理周会纪要",
+            "kimi_desktop",
+            "Kimi Desktop",
+            "COMPLETED",
+            "回合已完成",
+            minutes_ago=25.0,
+        ),
+        _task(
+            "kimi:demo-migrate",
+            5,
+            "数据迁移脚本",
+            "kimi_code",
+            "Kimi Code",
+            "ERROR",
+            "进程异常退出",
+            minutes_ago=41.0,
+            work_dir="/Users/dev/Desktop/servercheck",
+            usage={
+                "total_input_tokens": 12_300,
+                "output_tokens": 1_200,
+                "cache_read_pct": 68,
+                "speed_tps": 42,
+            },
+        ),
     ]
     for task_config, task_state in demo:
         manager.register(task_config, task_state)
@@ -168,7 +216,7 @@ def main() -> int:
     window.show()
     quota_service.quota_updated.emit(_demo_quota())
     codex_quota_service.quota_updated.emit(codex_snapshot)
-    window.resize(window.sizeHint())
+    window.resize(420, window.sizeHint().height())
     app.processEvents()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     if not window.grab().save(str(OUTPUT)):
