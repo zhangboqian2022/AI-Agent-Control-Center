@@ -323,13 +323,23 @@ function Get-SafeBrokerValidatorDiagnostic {
         'payload-encoding|response-type|args|bundle-in-path|preserved-path|' +
         'broker-target|pid-type|pid-range|request-type|request-id-type|' +
         'request-id|request-method|request-payload|pid-write) ' +
-        'pos=(?:none|\d+) response_len=(?:\d+|unavailable) ' +
+        'pos=(?:none|\d+)(?: byte=(?:none|\d+) prev=(?:none|\d+))? ' +
+        'response_len=(?:\d+|unavailable) ' +
         'response_sha256=(?:[0-9a-f]{64}|unavailable) ' +
         'payload_len=(?:\d+|unavailable) ' +
         'payload_sha256=(?:[0-9a-f]{64}|unavailable)$'
     )
     $Match = [regex]::Match($Diagnostic.Trim(), $Pattern)
-    if ($Match.Success) {
+    if (
+        $Match.Success -and
+        (
+            $Match.Value -match 'reason=response-json pos=\d+ byte=(?:none|\d+) prev=(?:none|\d+)' -or
+            (
+                $Match.Value -notmatch 'reason=response-json' -and
+                $Match.Value -notmatch '\bbyte='
+            )
+        )
+    ) {
         return $Match.Value
     }
     return "unavailable"

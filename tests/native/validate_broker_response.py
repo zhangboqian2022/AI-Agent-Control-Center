@@ -14,6 +14,8 @@ def emit_failure(
     payload_bytes: bytes | None,
     *,
     position: int | None = None,
+    byte: int | None = None,
+    previous_byte: int | None = None,
 ) -> int:
     def metadata(value: bytes | None) -> tuple[str, str]:
         if value is None:
@@ -23,8 +25,13 @@ def emit_failure(
     response_length, response_digest = metadata(response_bytes)
     payload_length, payload_digest = metadata(payload_bytes)
     position_token = "none" if position is None else str(position)
+    byte_tokens = ""
+    if reason == "response-json":
+        byte_token = "none" if byte is None else str(byte)
+        previous_byte_token = "none" if previous_byte is None else str(previous_byte)
+        byte_tokens = f" byte={byte_token} prev={previous_byte_token}"
     print(
-        f"AACC_BROKER_VALIDATOR code={code} reason={reason} pos={position_token} "
+        f"AACC_BROKER_VALIDATOR code={code} reason={reason} pos={position_token}{byte_tokens} "
         f"response_len={response_length} response_sha256={response_digest} "
         f"payload_len={payload_length} payload_sha256={payload_digest}",
         file=sys.stderr,
@@ -55,12 +62,16 @@ def main() -> int:
     except UnicodeDecodeError:
         return emit_failure(3, "response-encoding", response_bytes, payload_bytes)
     except json.JSONDecodeError as error:
+        byte = response_bytes[error.pos] if error.pos < len(response_bytes) else None
+        previous_byte = response_bytes[error.pos - 1] if error.pos > 0 else None
         return emit_failure(
             3,
             "response-json",
             response_bytes,
             payload_bytes,
             position=error.pos,
+            byte=byte,
+            previous_byte=previous_byte,
         )
     try:
         payload = payload_bytes.decode("utf-8")

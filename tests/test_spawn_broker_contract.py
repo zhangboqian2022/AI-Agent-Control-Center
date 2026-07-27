@@ -8,11 +8,21 @@ ROOT = Path(__file__).parents[1]
 
 
 def safe_broker_failure_summary(stderr: str) -> str:
-    reason = re.search(r"\bdiagnostic=AACC_BROKER_VALIDATOR code=\d+ reason=([a-z-]+)\b", stderr)
+    diagnostic = re.search(
+        r"\bdiagnostic=AACC_BROKER_VALIDATOR code=\d+ reason=([a-z-]+) "
+        r"pos=(none|\d+)(?: byte=(?:none|\d+) prev=(?:none|\d+))? "
+        r"response_len=(unavailable|\d+)\b",
+        stderr,
+    )
     exit_code = re.search(r"\bbroker JSON validation failed exit=(\d+)\b", stderr)
-    reason_token = reason.group(1) if reason else "unavailable"
+    reason_token = diagnostic.group(1) if diagnostic else "unavailable"
+    position_token = diagnostic.group(2) if diagnostic else "unavailable"
+    response_length_token = diagnostic.group(3) if diagnostic else "unavailable"
     exit_token = exit_code.group(1) if exit_code else "unavailable"
-    return f"reason={reason_token} exit={exit_token}"
+    return (
+        f"reason={reason_token} exit={exit_token} pos={position_token} "
+        f"response_len={response_length_token}"
+    )
 
 
 def test_safe_broker_failure_summary_keeps_only_reason_and_exit_tokens() -> None:
@@ -23,7 +33,7 @@ def test_safe_broker_failure_summary_keeps_only_reason_and_exit_tokens() -> None
         "payload_sha256=0 AACC_SECRET_MARKER_4ce1"
     )
 
-    assert summary == "reason=request-payload exit=4"
+    assert summary == "reason=request-payload exit=4 pos=none response_len=1"
     assert "AACC_SECRET_MARKER_4ce1" not in summary
 
 

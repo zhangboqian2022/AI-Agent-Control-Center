@@ -88,10 +88,15 @@ def test_validator_preserves_a_70k_payload(tmp_path: Path) -> None:
     assert pid_path.read_text(encoding="ascii") == "123"
 
 
-def test_validator_reports_json_position_without_echoing_a_secret(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("response", "position", "byte", "previous_byte"),
+    [("{invalid", 1, "105", "123"), ("{", 1, "none", "123")],
+)
+def test_validator_reports_json_position_without_echoing_a_secret(
+    tmp_path: Path, response: str, position: int, byte: str, previous_byte: str
+) -> None:
     marker = "AACC_SECRET_MARKER_4ce1"
     payload = marker * 10
-    response = "{invalid"
 
     completed = run_validator(tmp_path, response, payload)
 
@@ -100,7 +105,8 @@ def test_validator_reports_json_position_without_echoing_a_secret(tmp_path: Path
     assert marker not in completed.stdout
     assert marker not in completed.stderr
     assert completed.stderr == (
-        "AACC_BROKER_VALIDATOR code=3 reason=response-json pos=1 "
+        "AACC_BROKER_VALIDATOR code=3 reason=response-json "
+        f"pos={position} byte={byte} prev={previous_byte} "
         f"response_len={len(response.encode())} "
         f"response_sha256={hashlib.sha256(response.encode()).hexdigest()} "
         f"payload_len={len(payload.encode())} "
