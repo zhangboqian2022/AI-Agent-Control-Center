@@ -4,7 +4,7 @@
 
 **Goal:** Deliver a non-elevated Windows Setup whose frozen and installed AACC builds start reliably, protect credentials with native exact ACLs, and isolate Codex child processes behind a static Job Object broker.
 
-**Architecture:** Replace `whoami`/`icacls` with a Windows-only `win32security` adapter. Compile a fixed-purpose static `aacc-spawn.exe` that sanitizes only its own DLL environment and owns the Codex cmd/Node process tree. Package the onedir pair with Inno Setup and make frozen first launch, installed first launch, reinstall, graceful shutdown, and uninstall mandatory Windows CI stages.
+**Architecture:** Replace `whoami`/`icacls` with a Windows-only `win32security` adapter. Compile a fixed-purpose static `aacc-spawn.exe` that sanitizes only its own DLL environment and owns the Codex cmd/Node process tree. Use a protected per-process Windows Event for graceful Setup shutdown. Package the onedir pair with Inno Setup and make frozen first launch, installed first launch, reinstall, graceful shutdown, and uninstall mandatory Windows CI stages.
 
 **Tech Stack:** Python 3.12+, PySide6, pywin32 312, PyInstaller 6.x onedir, MSVC x64 C++17, Win32 Job Objects, Inno Setup 6.7.1, PowerShell, GitHub Actions `windows-2025`.
 
@@ -34,8 +34,8 @@
 - `native/aacc_spawn/aacc_spawn.rc.in`: product/protocol version resource template.
 - `scripts/build_spawn_broker.ps1`: locate MSVC, compile broker, and verify dependencies.
 - `src/aacc/codex_app_server.py`: use broker command on packaged Windows and remove `taskkill`.
-- `src/aacc/win32.py`: exact-window/message/process-wait wrappers for upgrade shutdown.
-- `src/aacc/shutdown_windows.py`: Qt native shutdown listener and control client.
+- `src/aacc/win32.py`: exact-window and verified-process wrappers for upgrade shutdown.
+- `src/aacc/shutdown_windows.py`: protected named-Event listener and control client.
 - `src/aacc/app.py`: early control-command handling and friendly fail-closed startup.
 - `installer/AACC.iss`: per-user Inno Setup definition.
 - `scripts/build_windows_installer.ps1`: verify ISCC 6.7.1 and build Setup/SHA-256.
@@ -718,20 +718,20 @@ git commit -m "fix: broker Windows Codex quota processes"
 - [ ] **Step 1: Add failing shutdown listener/client tests**
 
 ```python
-def test_shutdown_message_quits_through_window(qtbot):
+def test_shutdown_event_quits_through_window_once(qtbot):
     window = FakeWindow()
     api = FakeWin32ShutdownApi()
     listener = WindowsShutdownListener(win32_module=api)
     listener.start(QApplication.instance(), window)
-    listener.dispatch_message(api.shutdown_message)
-    QCoreApplication.processEvents()
+    api.event_signaled = True
+    qtbot.waitUntil(lambda: window.quit_calls == 1)
     assert window.quit_calls == 1
 
 
 def test_shutdown_client_waits_for_exact_aacc_process():
     api = FakeWin32ShutdownApi(exact_window=100, pid=200, image="AACC.exe")
     assert request_shutdown_for_update(win32_module=api) == 0
-    assert api.posted == [(100, api.shutdown_message)]
+    assert api.signaled_events == [shutdown_event_name(200)]
     assert api.waited == [(200, 20_000)]
 ```
 
@@ -741,33 +741,35 @@ def test_shutdown_client_waits_for_exact_aacc_process():
 .venv/bin/python -m pytest tests/test_shutdown_windows.py tests/test_win32.py tests/test_app.py -q
 ```
 
-- [ ] **Step 3: Add exact Win32 wrappers**
+- [ ] **Step 3: Add exact Win32 process verification and Event adapter**
 
-Extend `win32.py` with injectable wrappers for:
+Keep the exact-window and retained verified-process wrappers in `win32.py`:
 
 ```python
-register_window_message(name: str) -> int
 find_exact_window(title: str) -> int | None
 window_process_id(hwnd: int) -> int
-process_image_name(pid: int) -> str
-post_message(hwnd: int, message: int) -> None
-wait_for_process_exit(pid: int, timeout_ms: int) -> bool
+open_verified_process(pid: int) -> VerifiedProcessHandle
 ```
 
-Set `argtypes`/`restype` for every new ctypes call. `find_exact_window`
-compares full titles, and the client additionally requires the executable
-basename `AACC.exe`.
+Add a lazily loaded pywin32 Event adapter for `CreateEvent`, `OpenEvent`,
+`SetEvent`, `WaitForSingleObject`, and exact owner/DACL verification. The
+client compares the full executable path, rechecks the window PID, and waits
+on the same retained process handle.
 
-- [ ] **Step 4: Implement the independent Qt native event filter**
+- [ ] **Step 4: Implement the independent protected Event listener**
 
-Use `RegisterWindowMessageW("AACC.ShutdownForUpdate.v1")`. The filter posts:
+Create `Local\AACC.ShutdownForUpdate.v2.<pid>` with current-user owner and an
+exact protected current-user/System/Administrators DACL. Reject
+`ERROR_ALREADY_EXISTS`. A main-thread Qt timer polls the manual-reset Event
+and calls:
 
 ```python
-QTimer.singleShot(0, self._window.quit_application)
+self._window.quit_application()
 ```
 
-It is installed independently from the hotkey event filter and remains active
-even if global hotkeys fail.
+Keep the Event handle open until `aboutToQuit` cleanup. Timer stop,
+disconnect, deletion, and handle close are independent best-effort cleanup
+operations; none may block the normal quit path.
 
 - [ ] **Step 5: Handle the control command before config and instance lock**
 

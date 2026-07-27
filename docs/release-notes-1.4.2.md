@@ -38,6 +38,10 @@
   程序、快捷方式与卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC` 中由
   AACC 管理的设置、历史、数据库、凭据与复用决定。原生 WebView 存储由操作
   系统另行管理，因此不声称 Setup 会保留或移除网页会话。
+- 优雅退出使用当前会话内、按目标 PID 命名的 Windows Event；Event 的 Owner
+  固定为当前用户，DACL 仅允许当前用户、Local System 与 Administrators。
+  控制端仍会核对精确窗口标题、PID 与完整 EXE 路径，并等待同一个进程句柄
+  退出；同名对象抢占、权限错误或超时都会安全失败，绝不强杀应用。
 - 敏感目录、配置、Kimi 凭据、SQLite 数据库及存在时的 WAL/SHM 使用原生精确
   受保护 DACL，仅允许当前用户、Local System 与本机 Administrators 完全控制；
   不再依赖 `whoami.exe` 或 `icacls.exe`。
@@ -93,6 +97,12 @@
   reuse decision under `%APPDATA%\AACC`. The operating system owns the native
   WebView store separately, so this is not a claim that Setup preserves or
   removes the website session.
+- Graceful shutdown uses a per-target-PID Windows Event in the current session.
+  Its owner is the current user and its protected DACL allows only that user,
+  Local System, and Administrators. The controller still verifies the exact
+  window title, PID, and full executable path, then waits on that same process
+  handle. Name squatting, access errors, and timeouts fail closed; the installer
+  never force-kills AACC.
 - A native DACL protects sensitive directories, configuration, credentials,
   SQLite database, WAL, and SHM with the exact current-user, Local System, and
   Administrators allowlist. Runtime protection no longer executes

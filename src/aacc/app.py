@@ -87,10 +87,13 @@ class Runtime:
             ("manager", self.manager.close),
         )
         for stage, operation in operations:
+            _logger.info("Runtime cleanup starting stage=%s", stage)
             try:
                 operation()
             except Exception:  # noqa: BLE001 - cleanup must reach SQLite close
                 _logger.error("Runtime cleanup failed stage=%s", stage)
+            else:
+                _logger.info("Runtime cleanup completed stage=%s", stage)
 
 
 def _default_quota_service_factory(config_dir: Path, config: AppConfig) -> QuotaService | None:
@@ -419,10 +422,13 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
             ("runtime", runtime.close),
         )
         for stage, operation in operations:
+            _logger.info("Application cleanup starting stage=%s", stage)
             try:
                 operation()
             except Exception:  # noqa: BLE001 - all remaining cleanup must run
                 _logger.error("Application cleanup failed stage=%s", stage)
+            else:
+                _logger.info("Application cleanup completed stage=%s", stage)
 
     qt_app.aboutToQuit.connect(cleanup)
     try:
