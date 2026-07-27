@@ -1,5 +1,5 @@
 #requires -Version 5.1
-param()
+param([string]$TestPythonPath = "")
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -35,16 +35,15 @@ if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
     throw "vswhere.exe is required to locate an installed Visual Studio MSVC toolchain"
 }
 
-$PythonExecutable = ((
-    & uv run python -c "import sys; print(sys.executable)" |
-        Select-Object -First 1
-) | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($TestPythonPath)) {
+    $TestPythonPath = Join-Path $Root ".venv\Scripts\python.exe"
+}
 try {
-    $PythonExecutable = ConvertTo-AaccLocalPath -Path $PythonExecutable
+    $PythonExecutable = ConvertTo-AaccLocalPath -Path $TestPythonPath
 } catch {
     throw "failed to locate the integration-test Python executable"
 }
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $PythonExecutable -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $PythonExecutable -PathType Leaf)) {
     throw "failed to locate the integration-test Python executable"
 }
 

@@ -69,26 +69,26 @@ try {
     Assert-Throws -Message "empty JSON array did not fail closed" -Action {
         ConvertTo-AaccVsCandidates -Json "[]"
     }
-    $singleObject = ConvertTo-AaccVsCandidates -Json '{"installationPath":"C:\\VS17","installationVersion":"17.9.0"}'
+    $singleObject = @(ConvertTo-AaccVsCandidates -Json '{"installationPath":"C:\\VS17","installationVersion":"17.9.0"}')
     Assert-True -Condition ($singleObject.Count -eq 1) -Message "single JSON object was not parsed"
-    $singleElementArray = ConvertTo-AaccVsCandidates -Json '[{"installationPath":"C:\\VS17","installationVersion":"17.9.0"}]'
+    $singleElementArray = @(ConvertTo-AaccVsCandidates -Json '[{"installationPath":"C:\\VS17","installationVersion":"17.9.0"}]')
     Assert-True -Condition ($singleElementArray.Count -eq 1) -Message "single JSON array element was not parsed"
-    $sorted = ConvertTo-AaccVsCandidates -Json @'
+    $sorted = @(ConvertTo-AaccVsCandidates -Json @'
 [
   {"installationPath":"C:\\VS17","installationVersion":"17.9.0"},
   {"installationPath":"C:\\VS18","installationVersion":"18.7.0"},
   {"installationPath":"c:\\vs18\\","installationVersion":"18.6.0"}
 ]
-'@
+'@)
     Assert-True -Condition ($sorted.Count -eq 2) -Message "candidates were not deduplicated"
     Assert-True -Condition ($sorted[0].InstallationVersionText -eq "18.7.0") -Message "candidates were not sorted"
-    foreach ($unsafePath in @("relative", "\\\\server\\share", "\\\\?\\C:\\VS", "C:\\bad$([char]1)path")) {
+    foreach ($unsafePath in @("relative", "\\server\share", "\\?\C:\VS", "C:\bad$([char]1)path")) {
         Assert-Throws -Message "unsafe candidate path was accepted" -Action {
             ConvertTo-AaccLocalPath -Path $unsafePath
         }
     }
-    $normalized = ConvertTo-AaccLocalPath -Path "C:\\VS\\1\\..\\2\\"
-    Assert-True -Condition ($normalized -eq "C:\\VS\\2") -Message "candidate path was not normalized"
+    $normalized = ConvertTo-AaccLocalPath -Path "C:\VS\1\..\2\"
+    Assert-True -Condition ($normalized -eq "C:\VS\2") -Message "candidate path was not normalized"
 
     $prefixRoot = Join-Path $root "VS\1"
     $prefixCollision = Join-Path $root "VS\10\cl.exe"
@@ -109,7 +109,9 @@ try {
     $borrowedEnvironment = @{}
     foreach ($key in $olderValid.Environment.Keys) { $borrowedEnvironment[$key] = $olderValid.Environment[$key] }
     $borrowedEnvironment["VCToolsInstallDir"] = $borrowedVc.Environment["VCToolsInstallDir"]
-    $borrowedEnvironment["PATH"] = "$($borrowedVc.Environment["PATH"]);$($olderValid.Environment["WindowsSdkDir"])\\bin\\x64"
+    $borrowedVcBin = Join-Path $borrowedVc.Environment["VCToolsInstallDir"] "bin\Hostx64\x64"
+    $olderSdkBin = Join-Path $olderValid.Environment["WindowsSdkDir"] "bin\x64"
+    $borrowedEnvironment["PATH"] = "$borrowedVcBin;$olderSdkBin"
     Assert-Throws -Message "candidate accepted another Visual Studio VC root" -Action {
         Get-AaccToolPaths -Candidate $olderValid.Candidate -Environment $borrowedEnvironment
     }
