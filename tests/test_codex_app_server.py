@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import queue
 import subprocess
 import sys
@@ -272,6 +273,7 @@ print(json.dumps({
         timeout_seconds=2,
         now=lambda: NOW,
         popen=_capturing_popen(calls),
+        platform="darwin",
     )
 
     snapshot = reader.read_latest()
@@ -387,6 +389,66 @@ def test_windows_reader_without_broker_factory_fails_closed_before_popen(
     assert popen_calls == 0
 
 
+@pytest.mark.parametrize(
+    "error",
+    (
+        ValueError(r"invalid C:\Users\private\codex.cmd"),
+        RuntimeError(r"failed C:\Users\private\aacc-spawn.exe"),
+    ),
+)
+def test_windows_reader_sanitizes_command_factory_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+) -> None:
+    popen_calls = 0
+
+    def command_factory(_codex: Path) -> BrokerCommand:
+        raise error
+
+    def popen(*_args: object, **_kwargs: object) -> None:
+        nonlocal popen_calls
+        popen_calls += 1
+
+    caplog.set_level(logging.DEBUG, logger="aacc.codex_quota")
+    snapshot = CodexAppServerReader(
+        tmp_path / "codex.cmd",
+        platform="win32",
+        command_factory=command_factory,
+        popen=popen,
+    ).read_latest()
+
+    assert snapshot.status is CodexQuotaStatus.UNKNOWN
+    assert popen_calls == 0
+    assert "Codex app-server command unavailable" in caplog.text
+    assert "private" not in caplog.text
+    assert "codex.cmd" not in caplog.text
+    assert "aacc-spawn.exe" not in caplog.text
+
+
+def test_reader_sanitizes_process_start_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_path = r"C:\Users\private\aacc-spawn.exe"
+
+    def popen(*_args: object, **_kwargs: object) -> None:
+        raise OSError(f"cannot start {private_path}")
+
+    caplog.set_level(logging.DEBUG, logger="aacc.codex_quota")
+    snapshot = CodexAppServerReader(
+        tmp_path / "codex.cmd",
+        platform="win32",
+        command_factory=lambda _codex: BrokerCommand((private_path,), 0),
+        popen=popen,
+    ).read_latest()
+
+    assert snapshot.status is CodexQuotaStatus.UNKNOWN
+    assert "Codex app-server quota source unavailable" in caplog.text
+    assert "private" not in caplog.text
+    assert "aacc-spawn.exe" not in caplog.text
+
+
 def test_reader_reap_kills_broker_only_after_wait_timeout(tmp_path: Path) -> None:
     class FakeStream:
         close_calls = 0
@@ -493,6 +555,34 @@ def test_reader_reap_suppresses_process_os_errors_and_closes_streams(
     assert process.stdout.close_calls == 1
 
 
+def test_reader_reap_suppresses_value_error_from_already_closed_streams(
+    tmp_path: Path,
+) -> None:
+    class ClosedStream:
+        def close(self) -> None:
+            raise ValueError("I/O operation on closed file")
+
+    class FakeProcess:
+        stdin = ClosedStream()
+        stdout = ClosedStream()
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout: float) -> int:
+            return 0
+
+        def terminate(self) -> None:
+            raise AssertionError("already-exited process must not be terminated")
+
+        def kill(self) -> None:
+            raise AssertionError("already-exited process must not be killed")
+
+    reader = CodexAppServerReader(tmp_path / "codex", platform="darwin")
+
+    reader._reap(FakeProcess())  # type: ignore[arg-type]
+
+
 def test_python_sources_contain_no_taskkill() -> None:
     source_root = Path(__file__).parents[1] / "src"
     sources = "\n".join(path.read_text(encoding="utf-8") for path in source_root.rglob("*.py"))
@@ -520,6 +610,7 @@ time.sleep(10)
         timeout_seconds=0.1,
         now=lambda: NOW,
         popen=start,
+        platform="darwin",
     ).read_latest()
 
     assert snapshot.status is CodexQuotaStatus.UNKNOWN
