@@ -281,17 +281,20 @@ def test_windows_installer_build_pins_and_authenticates_iscc() -> None:
     ) in text
     assert "Get-AuthenticodeSignature -LiteralPath $Path" in text
     assert "Get-AuthenticodeSignature -FilePath" not in text
-    for exact_version_part in (
-        "$VersionInfo.FileMajorPart -ne 6",
-        "$VersionInfo.FileMinorPart -ne 7",
-        "$VersionInfo.FileBuildPart -ne 1",
+    for zero_version_part in (
+        "$VersionInfo.FileMajorPart -ne 0",
+        "$VersionInfo.FileMinorPart -ne 0",
+        "$VersionInfo.FileBuildPart -ne 0",
         "$VersionInfo.FilePrivatePart -ne 0",
-        "$VersionInfo.ProductMajorPart -ne 6",
-        "$VersionInfo.ProductMinorPart -ne 7",
-        "$VersionInfo.ProductBuildPart -ne 1",
+        "$VersionInfo.ProductMajorPart -ne 0",
+        "$VersionInfo.ProductMinorPart -ne 0",
+        "$VersionInfo.ProductBuildPart -ne 0",
         "$VersionInfo.ProductPrivatePart -ne 0",
     ):
-        assert exact_version_part in text
+        assert zero_version_part in text
+    assert "Compiler engine version: Inno Setup $InnoVersion" in text
+    assert '"/O-"' in text
+    assert "ISCC version probe failed" in text
     assert "Get-Command ISCC.exe" not in text
     assert "/PORTABLE=1" in text
     assert "/CURRENTUSER" in text
