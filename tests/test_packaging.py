@@ -316,6 +316,7 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
         "aacc.automation_windows",
         "aacc.hotkeys_windows",
         "aacc.windows_broker",
+        "win32event",
     ):
         assert module in workflow
     assert 'Compress-Archive -Path "dist\\AACC"' in workflow
@@ -325,6 +326,7 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
 
     spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
     hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]
+    assert "'win32event'" in hidden_imports
     assert "aacc.win32" not in hidden_imports
     assert "aacc.automation_windows" not in hidden_imports
     assert "aacc.hotkeys_windows" not in hidden_imports
