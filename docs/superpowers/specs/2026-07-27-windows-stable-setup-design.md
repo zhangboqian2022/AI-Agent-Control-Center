@@ -56,6 +56,8 @@ engineering, and release reliability. Their second-round consensus is:
 - Use a small statically linked native broker for the unavoidable Codex
   app-server child process.
 - Replace `taskkill.exe` with broker-owned Job Object lifetime management.
+- Use a protected per-process Windows Event for Setup shutdown signaling;
+  keep the event alive until normal application cleanup.
 - Use Inno Setup for a per-user, non-elevated installer.
 - Treat frozen first launch, installed first launch, exact ACL verification,
   broker process-tree cleanup, reinstall, and uninstall as `main` merge
@@ -197,12 +199,20 @@ The packaged executable gains:
 AACC.exe --shutdown-for-update
 ```
 
-A dedicated Qt native event filter receives a registered
-`AACC.ShutdownForUpdate.v1` Windows message. The control invocation finds the
-exact AACC window, validates that the target PID belongs to `AACC.exe`, posts
-the registered message, and waits up to 20 seconds for the process to exit.
-The main instance quits through its normal Qt path so hotkeys, services,
-broker processes, the API thread, and SQLite close normally.
+AACC creates a manual-reset event named
+`Local\AACC.ShutdownForUpdate.v2.<pid>`. Its security descriptor has the
+current user as owner and an exact protected DACL for the current user, Local
+System, and Administrators. Existing-name detection fails startup closed,
+rather than binding to an object created by another process.
+
+The control invocation finds the exact AACC window, validates its PID and full
+`AACC.exe` image path through a retained process handle, opens only that PID's
+event with `EVENT_MODIFY_STATE`, signals it, and waits up to 20 seconds on the
+same process handle. A Qt main-thread timer observes the event and calls the
+normal quit path. The event remains open until `aboutToQuit` cleanup so
+concurrent or repeated shutdown requests cannot race a still-running process.
+Hotkeys, services, broker processes, the API thread, and SQLite therefore close
+normally.
 
 No-instance is success. Send failure or timeout is a non-zero result. Setup
 then stops and asks the user to exit AACC from the tray; it never force-kills

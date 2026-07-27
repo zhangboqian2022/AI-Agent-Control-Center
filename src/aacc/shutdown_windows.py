@@ -411,7 +411,9 @@ class WindowsShutdownListener:
         self._window = None
         self._release_timer()
         if window is not None:
+            _logger.info("Shutdown listener requesting Qt quit")
             window.quit_application()
+            _logger.info("Shutdown listener Qt quit request returned")
 
     def stop(self) -> None:
         self._release_resources()
