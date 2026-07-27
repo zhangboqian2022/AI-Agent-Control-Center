@@ -1283,6 +1283,22 @@ function Start-And-VerifyProduct {
         }
     }
     catch {
+        $ExitCode = if ($Owned.Process.HasExited) { $Owned.Process.ExitCode } else { $null }
+        Write-SmokeEvidence -Category $Category -Name "product-exit.json" `
+            -Value ([ordered]@{
+                exited = $Owned.Process.HasExited
+                exitCode = $ExitCode
+            })
+        if (Test-Path -LiteralPath $LogPath -PathType Leaf) {
+            try {
+                Write-SmokeEvidence -Category $Category -Name "app-log.txt" `
+                    -Value ([System.IO.File]::ReadAllText($LogPath))
+            }
+            catch {
+                Write-SmokeEvidence -Category $Category -Name "app-log-copy-error.txt" `
+                    -Value $_.Exception.GetType().Name
+            }
+        }
         Stop-OwnedProcessIdentity -Identity $Owned.Identity
         $Owned.Process.Dispose()
         throw
