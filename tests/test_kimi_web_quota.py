@@ -94,6 +94,27 @@ def test_parse_membership_quota_accepts_top_level_numeric_rate_limits():
     assert result.monthly.percentage == 31
 
 
+def test_monthly_reset_prefers_quota_window_over_annual_subscription_renewal():
+    result = parse_membership_quota(
+        {
+            "subscriptionBalance": {
+                "amountUsedRatio": 0.312,
+                "expireTime": "2026-08-20T13:28:47Z",
+            }
+        },
+        {
+            "subscription": {
+                "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                "nextBillingTime": "2027-07-20T13:28:47Z",
+            }
+        },
+        now=NOW,
+    )
+
+    assert result.monthly is not None
+    assert result.monthly.reset_at == datetime(2026, 8, 20, 13, 28, 47, tzinfo=UTC)
+
+
 def test_parse_membership_quota_rejects_invalid_values_without_fabricating_zero():
     result = parse_membership_quota(
         {
