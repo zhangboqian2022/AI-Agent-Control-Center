@@ -373,7 +373,18 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
     if runtime.quota_service is not None:
         runtime.quota_service.start()
     if runtime.kimi_web_quota_service is not None:
-        runtime.kimi_web_quota_service.start()
+        kimi_web_quota_service = runtime.kimi_web_quota_service
+
+        def start_kimi_web_quota() -> None:
+            _logger.info("Application deferred startup starting stage=kimi-web-quota")
+            try:
+                kimi_web_quota_service.start()
+            except Exception:  # noqa: BLE001 - optional web quota must not block the app
+                _logger.error("Application deferred startup failed stage=kimi-web-quota")
+            else:
+                _logger.info("Application deferred startup completed stage=kimi-web-quota")
+
+        QTimer.singleShot(0, start_kimi_web_quota)
     if runtime.codex_quota_service is not None:
         runtime.codex_quota_service.start()
 
@@ -432,6 +443,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
 
     qt_app.aboutToQuit.connect(cleanup)
     try:
+        _logger.info("Application entering Qt event loop")
         return qt_app.exec()
     finally:
         cleanup()
