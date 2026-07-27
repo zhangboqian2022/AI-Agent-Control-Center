@@ -100,6 +100,8 @@ def test_inno_setup_rejects_internal_root_reparse_before_install() -> None:
     assert "INVALID_FILE_ATTRIBUTES" in code
     assert "ValidateInternalRootForInstall" in code
     assert "FILE_ATTRIBUTE_REPARSE_POINT" in code
+    assert "FILE_ATTRIBUTE_DIRECTORY =" not in code
+    assert "FILE_ATTRIBUTE_REPARSE_POINT =" not in code
     assert "internal payload root is unsafe" in code
     assert prepare.index("ValidateInternalRootForInstall") < prepare.index("ShutdownExistingAACC")
 
