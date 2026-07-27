@@ -153,14 +153,10 @@ def parse_membership_quota(
     weekly = _detail(root.get("ratelimitCode7d"))
     active = _active_subscription(subscription)
 
-    # The balance expiry is the quota-window reset. A subscription's next
-    # billing time can instead be the annual renewal date.
+    # Only the balance object describes the quota-window reset. Subscription
+    # and root-level billing dates can instead be annual renewal dates.
     monthly_reset = _timestamp(_first(balance, "expireTime", "resetTime"))
-    if monthly_reset is None:
-        monthly_reset = _timestamp(_first(active, "nextBillingTime", "expireTime"))
-    if monthly_reset is None:
-        monthly_reset = _timestamp(_first(root, "expireTime", "nextBillingTime"))
-    if monthly is not None and monthly_reset is not None:
+    if monthly is not None:
         monthly = QuotaDetail(
             used=monthly.used,
             limit=monthly.limit,
