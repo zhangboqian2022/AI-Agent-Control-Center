@@ -229,6 +229,29 @@ bool HasAllowedTargetExtension(const std::wstring& path) noexcept {
            _wcsicmp(extension.c_str(), L".bat") == 0;
 }
 
+bool IsExtendedOrDevicePath(const std::wstring& path) noexcept {
+    return path.size() >= 4 && IsSeparator(path[0]) &&
+           IsSeparator(path[1]) &&
+           (path[2] == L'?' || path[2] == L'.') &&
+           IsSeparator(path[3]);
+}
+
+bool HasSafeBrokerPathSyntax(const std::wstring& path) noexcept {
+    if (IsExtendedOrDevicePath(path)) {
+        return false;
+    }
+    for (size_t index = 0; index < path.size(); ++index) {
+        const wchar_t character = path[index];
+        if (character >= 0x0001 && character <= 0x001F) {
+            return false;
+        }
+        if (character == L':' && index != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ParsePid(const std::wstring& value, DWORD* pid) noexcept {
     if (value.empty()) {
         return false;
@@ -251,7 +274,10 @@ bool ParsePid(const std::wstring& value, DWORD* pid) noexcept {
 }
 
 bool ValidateOptions(const Options& options) noexcept {
-    if (options.parent_pid == 0 || !IsAbsolutePath(options.bundle_dir) ||
+    if (options.parent_pid == 0 ||
+        !HasSafeBrokerPathSyntax(options.bundle_dir) ||
+        !HasSafeBrokerPathSyntax(options.codex_path) ||
+        !IsAbsolutePath(options.bundle_dir) ||
         !IsAbsolutePath(options.codex_path) ||
         !HasAllowedTargetExtension(options.codex_path)) {
         return false;

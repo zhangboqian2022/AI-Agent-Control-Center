@@ -75,6 +75,22 @@ def test_broker_source_is_fixed_to_codex_app_server() -> None:
     assert "taskkill" not in source.lower()
 
 
+def test_broker_rejects_unsafe_windows_path_syntax_before_filesystem_io() -> None:
+    source = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.cpp").read_text(encoding="utf-8")
+
+    assert "HasSafeBrokerPathSyntax" in source
+    assert "IsExtendedOrDevicePath" in source
+    assert "character >= 0x0001 && character <= 0x001F" in source
+    assert "index != 1" in source
+    assert "!HasSafeBrokerPathSyntax(options.bundle_dir)" in source
+    assert "!HasSafeBrokerPathSyntax(options.codex_path)" in source
+
+    validation = source.index("bool ValidateOptions")
+    syntax_check = source.index("HasSafeBrokerPathSyntax", validation)
+    filesystem_check = source.index("GetFileAttributesW", validation)
+    assert syntax_check < filesystem_check
+
+
 def test_broker_source_has_fixed_sanitized_diagnostics_and_stages() -> None:
     source = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.cpp").read_text(encoding="utf-8")
 
@@ -112,6 +128,21 @@ def test_windows_integration_covers_real_script_executable_and_job_cleanup() -> 
     assert "Stop-Process" in script
     assert "descendant" in script.lower()
     assert "ReadToEndAsync" in script
+
+
+def test_windows_integration_rejects_c0_ads_and_extended_paths_without_side_effects() -> None:
+    script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
+    fixture = (ROOT / "tests" / "native" / "fake_codex_server.cpp").read_text(encoding="utf-8")
+
+    assert "--prepare-unsafe-path-fixtures" in script
+    assert "--prepare-unsafe-path-fixtures" in fixture
+    assert "foreach ($ControlCode in 1..31)" in script
+    assert "${UnsafeCarrier}:payload.cmd" in script
+    assert '"\\\\?\\$UnsafeCarrier"' in script
+    assert "unsafe-path-sentinel.txt" in script
+    assert "Assert-BrokerRejectsUnsafeTarget" in script
+    assert "Test-Path -LiteralPath $SentinelPath" in script
+    assert "CreateFileW" in fixture
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires MSVC and Windows Job Objects")
