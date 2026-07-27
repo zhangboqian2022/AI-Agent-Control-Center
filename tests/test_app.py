@@ -358,6 +358,13 @@ def test_api_server_does_not_configure_console_logging(
     logging.getLogger("uvicorn.error").error("bind failed: %s", "smoke")
     assert forwarded == [(logging.ERROR, "API server: %s", ("bind failed: smoke",))]
 
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module._logger,
+        "log",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("logging unavailable")),
+    )
+    logging.getLogger("uvicorn.error").error("bridge must not crash the GUI")
+
     server.stop()
     logging.getLogger("uvicorn.error").error("after stop")
     assert len(forwarded) == 1
