@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -511,6 +512,10 @@ def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
     assert "initialize" in fake_server
     assert "account/rateLimits/read" in fake_server
     assert "AACC_FAKE_CODEX_MARKER" in fake_server
+    fake_main = fake_server.split("def main()", 1)[1]
+    marker_commit = fake_main.index("os.replace(")
+    quota_reply = fake_main.rindex("_reply(")
+    assert marker_commit < quota_reply
     assert "CREATE_NEW_PROCESS_GROUP" in timeout_server
     assert "creation_time" in timeout_server
     assert "image_path" in timeout_server
@@ -528,6 +533,55 @@ def test_windows_product_smoke_fixtures_are_strict_and_bounded() -> None:
     assert "LOCK_READY" in locker
     assert "ROLLBACK_PROBE_OBSERVED" in locker
     assert "ReadAllBytes" in locker
+
+
+def test_windows_fake_codex_commits_marker_before_quota_reply(tmp_path: Path) -> None:
+    marker = tmp_path / "测试 marker &() %! [x].json"
+    environment = os.environ.copy()
+    environment["AACC_FAKE_CODEX_MARKER"] = str(marker)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(ROOT / "tests" / "windows" / "fake_codex_server.py"),
+            "app-server",
+            "--stdio",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+    try:
+        assert process.stdin is not None
+        assert process.stdout is not None
+        process.stdin.write('{"id":1,"method":"initialize"}\n')
+        process.stdin.flush()
+        assert json.loads(process.stdout.readline()) == {"id": 1, "result": {}}
+        process.stdin.write('{"method":"initialized"}\n')
+        process.stdin.write('{"id":2,"method":"account/rateLimits/read"}\n')
+        process.stdin.flush()
+        quota_reply = json.loads(process.stdout.readline())
+
+        marker_bytes = marker.read_bytes()
+        marker_record = json.loads(marker_bytes)
+        assert marker_bytes
+        assert quota_reply["id"] == 2
+        assert marker_record["pid"] == process.pid
+        assert marker_record["initialize"] == "initialize"
+        assert marker_record["request"] == "account/rateLimits/read"
+        assert Path(marker_record["image_path"]).is_file()
+        assert isinstance(marker_record["creation_time"], float)
+
+        process.stdin.close()
+        assert process.wait(timeout=5) == 0
+        assert json.loads(marker.read_bytes()) == marker_record
+        assert not marker.with_name(marker.name + ".tmp").exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def test_windows_artifact_verifier_rejects_malformed_checksum_and_zip_layout() -> None:
