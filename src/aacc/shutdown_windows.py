@@ -126,10 +126,23 @@ def request_shutdown_for_update(
                     saw_candidate_failure = True
                     continue
                 try:
+                    current_pid = api.window_process_id(hwnd)
+                except OSError as error:
+                    if _is_natural_exit_error(error):
+                        continue
+                    saw_candidate_failure = True
+                    continue
+                except KeyError:
+                    saw_candidate_failure = True
+                    continue
+                if current_pid != pid:
+                    saw_candidate_failure = True
+                    continue
+                try:
                     api.post_message(hwnd, message)
                 except (OSError, ProcessLookupError):
                     try:
-                        if process.wait_for_exit(0):
+                        if process.wait_for_exit(timeout_ms):
                             return 0
                     except OSError:
                         pass
@@ -206,13 +219,25 @@ class WindowsShutdownListener:
         message = self._win32.register_window_message(SHUTDOWN_MESSAGE_NAME)
         if not message:
             raise OSError("RegisterWindowMessageW failed")
+        hwnd = int(window.winId())
+        if not hwnd:
+            raise OSError("MainWindow HWND is unavailable")
         event_filter = _ShutdownEventFilter(self)
-        qt_app.installNativeEventFilter(event_filter)
         self._qt_app = qt_app
         self._window = window
-        self._hwnd = int(window.winId())
+        self._hwnd = hwnd
         self._message = int(message)
         self._filter = event_filter
+        self._quit_scheduled = False
+        try:
+            qt_app.installNativeEventFilter(event_filter)
+        except Exception:
+            try:
+                qt_app.removeNativeEventFilter(event_filter)
+            except Exception:  # noqa: BLE001 - preserve original install failure
+                _logger.error("Shutdown listener rollback failed stage=remove-filter")
+            self._clear_state()
+            raise
 
     def dispatch_message(
         self,
@@ -242,8 +267,14 @@ class WindowsShutdownListener:
     def stop(self) -> None:
         event_filter = self._filter
         qt_app = self._qt_app
+        self._clear_state()
+        if event_filter is not None and qt_app is not None:
+            qt_app.removeNativeEventFilter(event_filter)
+
+    def _clear_state(self) -> None:
         self._filter = None
         self._qt_app = None
         self._window = None
-        if event_filter is not None and qt_app is not None:
-            qt_app.removeNativeEventFilter(event_filter)
+        self._hwnd = 0
+        self._message = 0
+        self._quit_scheduled = False
