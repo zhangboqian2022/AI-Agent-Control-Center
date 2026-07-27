@@ -244,6 +244,9 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
     assert "pyi-archive_viewer -r" in workflow
     for module in ("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows"):
         assert module in workflow
+    assert 'Compress-Archive -Path "dist\\AACC"' in workflow
+    assert "AACC-*-windows-x64.zip" in workflow
+    assert "Upload Windows portable package" in workflow
 
     spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
     hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]

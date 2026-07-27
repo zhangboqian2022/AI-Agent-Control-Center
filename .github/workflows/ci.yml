@@ -61,3 +61,20 @@ jobs:
           foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows")) {
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
+      - name: Package Windows portable app
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = uv version --short
+          $archive = "AACC-$version-windows-x64.zip"
+          Compress-Archive -Path "dist\AACC" -DestinationPath $archive -Force
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $entries = [System.IO.Compression.ZipFile]::OpenRead($archive).Entries.FullName
+          if ($entries -notcontains "AACC/AACC.exe") { throw "AACC.exe missing from $archive" }
+      - name: Upload Windows portable package
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AACC-windows-x64
+          path: AACC-*-windows-x64.zip
+          if-no-files-found: error
