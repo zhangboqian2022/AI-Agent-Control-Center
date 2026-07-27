@@ -248,6 +248,20 @@ def test_windows_build_script_invokes_pyinstaller() -> None:
     assert "uv sync --locked --extra dev" in script
 
 
+def test_windows_build_packages_spawn_broker_at_exact_onedir_root() -> None:
+    script = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
+
+    broker_build = script.index("build_spawn_broker.ps1")
+    pyinstaller_build = script.index("uv run pyinstaller")
+    broker_copy = script.index(
+        'Copy-Item "build\\native\\aacc-spawn.exe" "dist\\AACC\\aacc-spawn.exe" -Force'
+    )
+    assert broker_build < pyinstaller_build < broker_copy
+    assert (
+        '@($rootFiles | Sort-Object) -join "," -ne "_internal,AACC.exe,aacc-spawn.exe"'
+    ) in script
+
+
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "fetch-depth: 0" in workflow

@@ -1,0 +1,114 @@
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).parents[1]
+
+
+def test_windows_build_compiles_static_spawn_broker() -> None:
+    script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
+
+    for compiler_flag in ("/std:c++17", "/O2", "/MT", "/GS", "/guard:cf", "/W4", "/WX"):
+        assert compiler_flag in script
+    for linker_flag in ("/DYNAMICBASE", "/NXCOMPAT", "/HIGHENTROPYVA"):
+        assert linker_flag in script
+    assert "vswhere.exe" in script
+    assert "Visual Studio 2022" in script
+    assert "uv version --short" in script
+    assert "dumpbin" in script.lower()
+    for forbidden_dependency in ("VCRUNTIME", "MSVCP", "ucrtbase", "Python", "Qt"):
+        assert forbidden_dependency in script
+
+
+def test_broker_dependency_check_is_an_explicit_allowlist() -> None:
+    script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
+
+    match = re.search(
+        r"\$AllowedDependencies\s*=\s*@\((?P<dependencies>[^)]*)\)",
+        script,
+        flags=re.MULTILINE,
+    )
+    assert match is not None
+    assert re.findall(r'["\']([^"\']+\.dll)["\']', match.group("dependencies")) == ["KERNEL32.dll"]
+    assert "unexpected broker dependency" in script
+    assert "dependency section was not found" in script
+    assert "Image has the following (?:delay load )?dependencies:" in script
+    assert "$ParsedDependencies += $Candidate" in script
+    assert "A-Za-z0-9._-" not in script
+
+
+def test_broker_source_is_fixed_to_codex_app_server() -> None:
+    source = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.cpp").read_text(encoding="utf-8")
+
+    assert 'L"app-server"' in source
+    assert 'L"--stdio"' in source
+    assert "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in source
+    assert "CREATE_SUSPENDED" in source
+    assert "PROC_THREAD_ATTRIBUTE_HANDLE_LIST" in source
+    assert "AssignProcessToJobObject" in source
+    assert "SetDllDirectoryW(nullptr)" in source
+    assert "GetSystemDirectoryW" in source
+    assert "AACC_BROKER_CODEX_TARGET" in source
+    assert 'L" /D /V:OFF /S /C' in source
+    assert "taskkill" not in source.lower()
+
+
+def test_broker_source_has_fixed_sanitized_diagnostics_and_stages() -> None:
+    source = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.cpp").read_text(encoding="utf-8")
+
+    assert 'L"AACC_BROKER_ERROR stage=%d win32=%lu\\n"' in source
+    assert "AACC_BROKER_PROTOCOL=1" not in source
+    for stage in (10, 11, 12, 20, 21, 22, 23, 24, 25):
+        assert f"Fail({stage}," in source
+
+
+def test_broker_resource_template_tracks_product_and_protocol() -> None:
+    resource = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.rc.in").read_text(encoding="utf-8")
+
+    assert "@VERSION_COMMA@" in resource
+    assert "@VERSION@" in resource
+    assert '"ProtocolVersion", "1"' in resource
+    assert '"OriginalFilename", "aacc-spawn.exe"' in resource
+
+
+def test_windows_integration_covers_real_script_executable_and_job_cleanup() -> None:
+    script = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
+
+    for fixture in (
+        "fake_codex.cmd",
+        "fake_codex_server.py",
+        "fake_codex_server.cpp",
+        "spawn_descendant.py",
+    ):
+        assert fixture in script
+    assert "[char]0x4E34" in script
+    assert "[char]0x65F6" in script
+    assert '" AACC &(broker)"' in script
+    assert "'%AACC_UNSET%!literal!'" in script
+    assert '"AACC_UNSET"] = "SHOULD_NOT_EXPAND"' in script
+    assert re.search(r"1\.\.20|1\.\.`?20", script)
+    assert "Stop-Process" in script
+    assert "descendant" in script.lower()
+    assert "ReadToEndAsync" in script
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires MSVC and Windows Job Objects")
+def test_spawn_broker_windows_integration() -> None:
+    import subprocess
+
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ROOT / "scripts" / "build_spawn_broker.ps1"),
+        ],
+        cwd=ROOT,
+        check=False,
+    )
+    assert completed.returncode == 0
