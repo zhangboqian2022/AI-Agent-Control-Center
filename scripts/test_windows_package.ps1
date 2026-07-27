@@ -1440,8 +1440,29 @@ function Test-InstalledControlRefusal {
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $LegacyEvidence)) | Out-Null
     Remove-Item -LiteralPath $LegacyEvidence -Force -ErrorAction SilentlyContinue
     $env:AACC_LEGACY_EVIDENCE_FILE = $LegacyEvidence
-    $Legacy = Start-OwnedProcess -FilePath $InstalledAacc
+    $StopEventName = (
+        "Local\AACC.LegacySmokeStop." + [guid]::NewGuid().ToString("N")
+    )
+    $CreatedNew = $false
+    $StopEvent = [System.Threading.EventWaitHandle]::new(
+        $false,
+        [System.Threading.EventResetMode]::ManualReset,
+        $StopEventName,
+        [ref]$CreatedNew
+    )
+    $Legacy = $null
     try {
+        Assert-True $CreatedNew "legacy fixture stop event name collided"
+        $env:AACC_LEGACY_STOP_EVENT = $StopEventName
+        try {
+            $Legacy = Start-OwnedProcess -FilePath $InstalledAacc
+        }
+        finally {
+            # The test-only stop channel belongs only to the already-started
+            # main fixture. Setup, Uninstall, and control children must not
+            # inherit it.
+            Remove-Item Env:AACC_LEGACY_STOP_EVENT -ErrorAction SilentlyContinue
+        }
         Start-Sleep -Seconds 1
         Assert-True (-not $Legacy.Process.HasExited) "legacy fixture did not own its window"
         $Before = Get-FullStateManifest
@@ -1515,10 +1536,28 @@ function Test-InstalledControlRefusal {
         }
     }
     finally {
-        Stop-OwnedProcessIdentity -Identity $Legacy.Identity
-        $Legacy.Process.Dispose()
-        Restore-LiteralFileAfterProcessExit -Source $SavedAacc `
-            -Destination $InstalledAacc -Identity $Legacy.Identity
+        Remove-Item Env:AACC_LEGACY_STOP_EVENT -ErrorAction SilentlyContinue
+        try {
+            if ($null -ne $Legacy) {
+                [void]$StopEvent.Set()
+                Assert-ProcessExitedByDeadline -Identity $Legacy.Identity -TimeoutSeconds 10
+                Assert-True ($Legacy.Process.ExitCode -eq 0) `
+                    "legacy fixture did not exit through its harness stop event"
+            }
+        }
+        finally {
+            if ($null -ne $Legacy) {
+                $Legacy.Process.Dispose()
+            }
+            $StopEvent.Dispose()
+        }
+        if ($null -ne $Legacy) {
+            Restore-LiteralFileAfterProcessExit -Source $SavedAacc `
+                -Destination $InstalledAacc -Identity $Legacy.Identity
+        }
+        else {
+            [System.IO.File]::Copy($SavedAacc, $InstalledAacc, $true)
+        }
         [System.IO.Directory]::CreateDirectory((Split-Path -Parent $CapabilityPath)) | Out-Null
         [System.IO.File]::WriteAllText($CapabilityPath, "AACC shutdown protocol v1`n")
         Remove-Item Env:AACC_LEGACY_CONTROL_MODE -ErrorAction SilentlyContinue
