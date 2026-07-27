@@ -45,6 +45,7 @@ class FakeView:
         self._url = QUrl()
         self.scripts = []
         self.script_result = None
+        self.respond_to_scripts = True
         self.cookies_deleted = False
         self.deleted = False
 
@@ -59,7 +60,8 @@ class FakeView:
 
     def runJavaScript(self, script, callback):
         self.scripts.append(script)
-        callback(self.script_result)
+        if self.respond_to_scripts:
+            callback(self.script_result)
 
     def deleteAllCookies(self):
         self.cookies_deleted = True
@@ -90,8 +92,15 @@ def test_membership_script_uses_cached_web_token_for_both_connect_services():
     assert "credentials: 'include'" in script
     assert "localStorage.getItem('access_token')" in script
     assert "'Authorization': 'Bearer ' + accessToken" in script
-    assert "emit({kind: 'quota', stats, subscription})" in script
+    assert "emit({kind: 'quota', generation, stats, subscription})" in script
     assert KIMI_MEMBERSHIP_URL.startswith("https://www.kimi.com/")
+
+
+def test_membership_script_aborts_both_requests_after_fifteen_seconds():
+    script = membership_fetch_script()
+
+    assert "AbortController" in script
+    assert "15000" in script
 
 
 def test_web_session_uses_native_system_webview_without_import_time_initialization():
@@ -139,7 +148,8 @@ def test_native_webview_initialization_is_once_and_must_precede_app(monkeypatch)
         raise AssertionError("late native webview initialization must fail")
 
 
-def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
+def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path):
+    del qapp
     session = make_session(monkeypatch, tmp_path)
     login_states = []
     quotas = []
@@ -164,9 +174,12 @@ def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
 
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
     assert "GetSubscriptionStats" in session.view.scripts[-1]
+    generation = session._active_refresh_generation
+    assert generation is not None
 
     payload = {
         "kind": "quota",
+        "generation": generation,
         "stats": {"value": 1, "large": "x" * 100_000},
         "subscription": {"value": 2},
     }
@@ -178,18 +191,21 @@ def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
     assert quotas == [({"value": 1, "large": "x" * 100_000}, {"value": 2})]
     assert web_session.BRIDGE_PAYLOAD_KEY in session.view.scripts[-1]
 
-    session._handle_bridge({"kind": "unauthorized"})
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session._handle_bridge({"kind": "unauthorized", "generation": generation})
     assert session.login_state.may_reuse() is False
-    session._handle_bridge({"kind": "error", "message": "network"})
-    session._handle_bridge("invalid")
+    session.login_state.set_may_reuse(True)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session._handle_bridge({"kind": "error", "generation": generation, "message": "network"})
+    session.refresh()
     session.view.script_result = "{"
     session._on_title_changed(web_session.BRIDGE_PREFIX + "ready")
     assert login_states[-1] == (False, False)
-    assert errors == [
-        "network",
-        "Kimi 会员响应格式无效",
-        "invalid membership response",
-    ]
+    assert errors == ["network", "invalid membership response"]
 
     session.logout()
     assert session.login_state.may_reuse() is False
@@ -199,7 +215,117 @@ def test_web_session_refresh_bridge_logout_and_close(monkeypatch, tmp_path):
     assert session.view.deleted is True
 
 
-def test_web_session_loading_failure_and_login_dialog(monkeypatch, tmp_path):
+def test_logout_disables_reuse_before_same_origin_webview_cleanup(monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    calls = []
+    original_set_may_reuse = session.login_state.set_may_reuse
+    original_run_javascript = session.view.runJavaScript
+
+    def set_may_reuse(value):
+        calls.append(("gate", value))
+        original_set_may_reuse(value)
+
+    def run_javascript(script, callback):
+        calls.append(("javascript", script))
+        original_run_javascript(script, callback)
+
+    monkeypatch.setattr(session.login_state, "set_may_reuse", set_may_reuse)
+    monkeypatch.setattr(session.view, "runJavaScript", run_javascript)
+
+    session.logout()
+
+    assert calls[0] == ("gate", False)
+    assert calls[1][0] == "javascript"
+    assert session.login_state.may_reuse() is False
+
+
+def test_logout_waits_for_kimi_origin_before_clearing_webview_data(monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl("https://example.com/account")
+
+    session.logout()
+
+    assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
+    assert session.view.scripts == []
+    assert session.view.cookies_deleted is False
+    assert session.login_state.may_reuse() is False
+
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+
+    assert "localStorage.clear" in session.view.scripts[-1]
+    assert "sessionStorage.clear" in session.view.scripts[-1]
+    assert session.view.cookies_deleted is True
+    assert session.login_state.may_reuse() is False
+
+
+def test_logout_cleanup_callback_loss_keeps_reuse_gate_closed(monkeypatch, tmp_path):
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    session.view.respond_to_scripts = False
+
+    session.logout()
+
+    assert session.login_state.may_reuse() is False
+    assert session.view.cookies_deleted is True
+
+
+def test_refresh_watchdog_releases_request_and_allows_new_generation(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    errors = []
+    session.error_occurred.connect(errors.append)
+
+    session.refresh()
+    first_generation = session._active_refresh_generation
+    assert first_generation is not None
+
+    session._refresh_watchdog_fired(first_generation)
+
+    assert session._refreshing is False
+    assert errors == ["Kimi 会员额度刷新超时"]
+
+    session.refresh()
+
+    assert session._active_refresh_generation is not None
+    assert session._active_refresh_generation > first_generation
+
+
+def test_bridge_payload_from_older_generation_is_ignored(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    quotas = []
+    session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
+
+    session.refresh()
+    old_generation = session._active_refresh_generation
+    assert old_generation is not None
+    session._refresh_watchdog_fired(old_generation)
+    session.refresh()
+    active_generation = session._active_refresh_generation
+    assert active_generation is not None
+
+    session._handle_bridge(
+        {
+            "kind": "quota",
+            "generation": old_generation,
+            "stats": {"old": True},
+            "subscription": {},
+        }
+    )
+
+    assert active_generation > old_generation
+    assert session._refreshing is True
+    assert quotas == []
+
+
+def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_path):
+    del qapp
     session = make_session(monkeypatch, tmp_path)
     errors = []
     session.error_occurred.connect(errors.append)
@@ -269,7 +395,11 @@ def test_web_session_loading_failure_and_login_dialog(monkeypatch, tmp_path):
     assert session.login_state.may_reuse() is False
     assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
 
-    session._handle_bridge({"kind": "quota", "stats": {}, "subscription": {}})
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session._handle_bridge(
+        {"kind": "quota", "generation": generation, "stats": {}, "subscription": {}}
+    )
     assert dialog.accepted is True
     session._login_dialog_closed()
     assert session._login_dialog is None

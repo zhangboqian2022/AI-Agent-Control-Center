@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
@@ -34,7 +34,7 @@ def initialize_native_webview() -> None:
     _webview_initialized = True
 
 
-def membership_fetch_script() -> str:
+def membership_fetch_script(generation: int = 0) -> str:
     """Return the same-origin metadata request used by Kimi's native web view."""
 
     base = "/apiv2/kimi.gateway.membership.v2.MembershipService/"
@@ -42,6 +42,9 @@ def membership_fetch_script() -> str:
 (() => {{
   const prefix = {json.dumps(BRIDGE_PREFIX)};
   const payloadKey = {json.dumps(BRIDGE_PAYLOAD_KEY)};
+  const generation = {generation};
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 15000);
   const emit = (payload) => {{
     window[payloadKey] = JSON.stringify(payload);
     document.title = prefix + 'ready:' + Date.now() + ':' + Math.random();
@@ -65,6 +68,7 @@ def membership_fetch_script() -> str:
         'Authorization': 'Bearer ' + accessToken
       }},
       credentials: 'include',
+      signal: controller.signal,
       body: '{{}}'
     }});
     if (response.status === 401 || response.status === 403) {{
@@ -79,14 +83,15 @@ def membership_fetch_script() -> str:
     request('GetSubscriptionStats'),
     request('GetSubscription')
   ]).then(([stats, subscription]) => {{
-    emit({{kind: 'quota', stats, subscription}});
+    emit({{kind: 'quota', generation, stats, subscription}});
   }}).catch((error) => {{
     const message = String(error && error.message || error);
     emit({{
       kind: message.startsWith('UNAUTHORIZED:') ? 'unauthorized' : 'error',
+      generation,
       message: message.slice(0, 120)
     }});
-  }});
+  }}).finally(() => clearTimeout(deadline));
 }})();
 """
 
@@ -119,6 +124,14 @@ class KimiWebSession(QObject):
         self.view.titleChanged.connect(self._on_title_changed)
         self._refreshing = False
         self._refresh_after_load = False
+        self._refresh_generation = 0
+        self._active_refresh_generation: int | None = None
+        self._refresh_watchdog_generation: int | None = None
+        self._refresh_watchdog = QTimer(self)
+        self._refresh_watchdog.setSingleShot(True)
+        self._refresh_watchdog.timeout.connect(self._refresh_watchdog_timeout)
+        self._logout_after_load = False
+        self._logout_cleanup_generation: int | None = None
         self._login_dialog: QDialog | None = None
 
     def open_login(self, parent: QWidget | None = None) -> None:
@@ -140,26 +153,29 @@ class KimiWebSession(QObject):
         self._login_dialog.show()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
+        self._begin_refresh()
+        self._refresh_after_load = True
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def refresh(self) -> None:
         if self._refreshing or not self.login_state.may_reuse():
             return
-        self._refreshing = True
+        generation = self._begin_refresh()
         url = self.view.url()
         if url.scheme() == "https" and url.host() == KIMI_ORIGIN_HOST:
-            self._run_fetch()
+            self._run_fetch(generation)
             return
         self._refresh_after_load = True
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def logout(self) -> None:
         self.login_state.set_may_reuse(False)
-        self.view.runJavaScript(
-            "try { localStorage.clear(); sessionStorage.clear(); } catch (_) {}",
-            lambda _result: None,
-        )
-        self.view.deleteAllCookies()
+        self._invalidate_refresh()
+        self._logout_after_load = True
+        if self._is_kimi_origin():
+            self._run_logout_cleanup()
+        else:
+            self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
         self.login_state_changed.emit(False)
 
     def close(self) -> None:
@@ -167,25 +183,93 @@ class KimiWebSession(QObject):
             self._login_dialog.close()
         self.view.deleteLater()
 
-    def _run_fetch(self) -> None:
+    def _begin_refresh(self) -> int:
+        self._refresh_generation += 1
+        generation = self._refresh_generation
+        self._active_refresh_generation = generation
+        self._refresh_watchdog_generation = generation
+        self._refreshing = True
+        self._refresh_watchdog.start(25_000)
+        return generation
+
+    def _invalidate_refresh(self) -> None:
+        self._refresh_generation += 1
+        self._active_refresh_generation = None
+        self._refresh_watchdog_generation = None
+        self._refreshing = False
+        self._refresh_after_load = False
+        self._refresh_watchdog.stop()
+
+    def _run_fetch(self, generation: int) -> None:
         _logger.info("Kimi web quota refresh started url=%s", self.view.url().toString())
-        self.view.runJavaScript(membership_fetch_script(), lambda _result: None)
+        self.view.runJavaScript(membership_fetch_script(generation), lambda _result: None)
+
+    def _run_logout_cleanup(self) -> None:
+        generation = self._refresh_generation
+        self._logout_after_load = False
+        self._logout_cleanup_generation = generation
+        self.view.runJavaScript(
+            "try { localStorage.clear(); sessionStorage.clear(); return true; } "
+            "catch (_) { return false; }",
+            lambda _result: self._finish_logout_cleanup(generation),
+        )
+        self.view.deleteAllCookies()
+
+    def _finish_logout_cleanup(self, generation: int) -> None:
+        if generation != self._logout_cleanup_generation:
+            return
+        self._logout_cleanup_generation = None
+
+    def _refresh_watchdog_timeout(self) -> None:
+        generation = self._refresh_watchdog_generation
+        if generation is not None:
+            self._refresh_watchdog_fired(generation)
+
+    def _refresh_watchdog_fired(self, generation: int) -> None:
+        if generation != self._active_refresh_generation:
+            return
+        self._complete_refresh(generation)
+        self.error_occurred.emit("Kimi 会员额度刷新超时")
+
+    def _complete_refresh(self, generation: int) -> bool:
+        if generation != self._active_refresh_generation:
+            return False
+        self._refreshing = False
+        self._refresh_after_load = False
+        self._active_refresh_generation = None
+        if generation == self._refresh_watchdog_generation:
+            self._refresh_watchdog_generation = None
+            self._refresh_watchdog.stop()
+        return True
+
+    def _is_kimi_origin(self) -> bool:
+        url = self.view.url()
+        return url.scheme() == "https" and url.host() == KIMI_ORIGIN_HOST
 
     def _on_loading_changed(self, info: QWebViewLoadingInfo) -> None:
         status = info.status()
         if status is QWebViewLoadingInfo.LoadStatus.Failed:
-            self._refreshing = False
-            self._refresh_after_load = False
+            generation = self._active_refresh_generation
+            if generation is not None:
+                self._complete_refresh(generation)
+            else:
+                self._refreshing = False
+                self._refresh_after_load = False
+                self._refresh_watchdog.stop()
             self.error_occurred.emit("Kimi 官网加载失败")
             return
         if status is not QWebViewLoadingInfo.LoadStatus.Succeeded:
             return
-        if self.view.url().host() != KIMI_ORIGIN_HOST:
+        if not self._is_kimi_origin():
+            return
+        if self._logout_after_load:
+            self._run_logout_cleanup()
             return
         if self._refresh_after_load or self._login_dialog is not None:
             self._refresh_after_load = False
-            self._refreshing = True
-            self._run_fetch()
+            generation = self._active_refresh_generation
+            if generation is not None:
+                self._run_fetch(generation)
 
     def _on_title_changed(self, title: str) -> None:
         if not title.startswith(BRIDGE_PREFIX):
@@ -206,14 +290,24 @@ class KimiWebSession(QObject):
                 raise ValueError
             payload = json.loads(raw)
         except (ValueError, json.JSONDecodeError):
-            self._handle_bridge({"kind": "error", "message": "invalid membership response"})
+            generation = self._active_refresh_generation
+            if generation is not None:
+                self._handle_bridge(
+                    {
+                        "kind": "error",
+                        "generation": generation,
+                        "message": "invalid membership response",
+                    }
+                )
             return
         self._handle_bridge(payload)
 
     def _handle_bridge(self, payload: object) -> None:
-        self._refreshing = False
         if not isinstance(payload, dict):
-            self.error_occurred.emit("Kimi 会员响应格式无效")
+            return
+        generation = payload.get("generation")
+        if type(generation) is not int or not self._complete_refresh(generation):
+            _logger.info("Kimi web quota bridge ignored for stale generation=%s", generation)
             return
         kind = payload.get("kind")
         if kind == "quota":
