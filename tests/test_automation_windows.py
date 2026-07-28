@@ -66,8 +66,9 @@ def test_focus_falls_back_to_task_name() -> None:
 
 def test_focus_missing_window_raises() -> None:
     win32 = FakeWin32()
-    with pytest.raises(AutomationError):
+    with pytest.raises(AutomationError) as caught:
         _automation(win32).focus(_task())
+    assert caught.value.category == "window_not_found"
 
 
 def test_send_key_enter_focuses_then_sends() -> None:

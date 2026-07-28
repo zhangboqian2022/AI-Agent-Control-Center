@@ -51,15 +51,24 @@ class WindowsAutomation:
     @staticmethod
     def _check_cancelled(cancel_event: threading.Event | None) -> None:
         if cancel_event is not None and cancel_event.is_set():
-            raise AutomationError("Desktop automation was cancelled")
+            raise AutomationError(
+                "Desktop automation was cancelled",
+                category="cancelled",
+            )
 
     def _focus_unlocked(self, task: TaskConfig) -> str:
         title = task.terminal.window_title or task.terminal.tab_title or task.name
         hwnd = self._win32.find_window_by_title(title)
         if hwnd is None:
-            raise AutomationError(f"未找到标题包含 {title!r} 的窗口")
+            raise AutomationError(
+                f"未找到标题包含 {title!r} 的窗口",
+                category="window_not_found",
+            )
         if not self._win32.focus_window(hwnd):
-            raise AutomationError("无法将目标窗口置前")
+            raise AutomationError(
+                "无法将目标窗口置前",
+                category="window_focus_failed",
+            )
         return f"已聚焦 {task.name}"
 
     def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
@@ -69,9 +78,15 @@ class WindowsAutomation:
 
     def _ensure_injection(self) -> None:
         if not self.config.app.keyboard_injection:
-            raise AutomationError("Keyboard injection is disabled in AACC settings")
+            raise AutomationError(
+                "Keyboard injection is disabled in AACC settings",
+                category="injection_disabled",
+            )
         if not self._accessibility_trusted():
-            raise AutomationError("Accessibility permission is required")
+            raise AutomationError(
+                "Accessibility permission is required",
+                category="accessibility_required",
+            )
 
     def send_key(
         self,
@@ -85,7 +100,10 @@ class WindowsAutomation:
             self._ensure_injection()
             normalized = key.upper()
             if normalized not in {*WIN_KEY_CODES, "CTRL_C"}:
-                raise AutomationError(f"Key {normalized} is not allowed")
+                raise AutomationError(
+                    f"Key {normalized} is not allowed",
+                    category="key_not_allowed",
+                )
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)
@@ -106,9 +124,15 @@ class WindowsAutomation:
             self._check_cancelled(cancel_event)
             self._ensure_injection()
             if not text or len(text) > 2000:
-                raise AutomationError("Text must contain 1 to 2000 characters")
+                raise AutomationError(
+                    "Text must contain 1 to 2000 characters",
+                    category="text_invalid",
+                )
             if "\0" in text:
-                raise AutomationError("Text must not contain NUL")
+                raise AutomationError(
+                    "Text must not contain NUL",
+                    category="text_nul",
+                )
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)

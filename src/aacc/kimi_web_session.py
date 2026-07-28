@@ -163,7 +163,10 @@ class KimiWebSession(QObject):
         self._background_navigation_pending = False
         self._reuse_blocked = False
         self._closed = False
-        self._unsubscribe_language = self.language_manager.subscribe(self.retranslate_ui)
+        self._unsubscribe_language = self.language_manager.subscribe(
+            self.retranslate_ui,
+            component="kimi_web_session",
+        )
 
     def open_login(self, parent: QWidget | None = None) -> None:
         if self._closed:

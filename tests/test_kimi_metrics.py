@@ -102,10 +102,21 @@ def test_format_usage_line_full_and_sparse():
             "speed_tps": 42,
         }
     )
-    assert line == "↑12.3k ↓1.2k 缓存68% · 42 tok/s"
+    assert line == "↑12.3k ↓1.2k 缓存 68% · 42 tok/s"
     sparse = format_usage_line({"total_input_tokens": 0, "output_tokens": 0})
     assert sparse == "↑0 ↓0"
     no_cache = format_usage_line(
         {"total_input_tokens": 100, "output_tokens": 50, "cache_read_pct": None}
     )
     assert "缓存" not in no_cache
+
+
+def test_format_usage_line_accepts_a_localized_cache_label() -> None:
+    usage = {
+        "total_input_tokens": 12_300,
+        "output_tokens": 1_200,
+        "cache_read_pct": 68,
+        "speed_tps": 42,
+    }
+
+    assert format_usage_line(usage, cache_label="Cache") == ("↑12.3k ↓1.2k Cache 68% · 42 tok/s")

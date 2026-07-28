@@ -36,7 +36,7 @@ from aacc.kimi_quota import (
     KimiQuotaUnauthorizedError,
     fetch_quota,
 )
-from aacc.security import redact
+from aacc.kimi_web_error import KimiCodeQuotaErrorCategory
 
 STATE_UNAUTHORIZED = "unauthorized"
 STATE_PENDING = "pending"
@@ -189,7 +189,10 @@ class QuotaService(QObject):
         if changed:
             self.auth_state_changed.emit(STATE_AUTHORIZED)
         if cancelled_flow:
-            self.oauth_finished.emit(False, "授权已取消")
+            self.oauth_finished.emit(
+                False,
+                KimiCodeQuotaErrorCategory.OAUTH_CANCELLED.value,
+            )
         self.refresh_now()
 
     def logout(self) -> None:
@@ -202,7 +205,10 @@ class QuotaService(QObject):
         if changed:
             self.auth_state_changed.emit(STATE_UNAUTHORIZED)
         if cancelled_flow:
-            self.oauth_finished.emit(False, "授权已取消")
+            self.oauth_finished.emit(
+                False,
+                KimiCodeQuotaErrorCategory.OAUTH_CANCELLED.value,
+            )
 
     # ---------- internals (worker thread) ----------
 
@@ -228,11 +234,11 @@ class QuotaService(QObject):
     def _poll_guarded(self) -> None:
         try:
             self._poll_once()
-        except Exception as error:  # polling must never kill the thread
-            message = self._safe_error(error)
-            self._logger.warning("Kimi quota poll failed: %s", message)
+        except Exception:  # noqa: BLE001 - polling must never kill the thread
+            category = KimiCodeQuotaErrorCategory.REFRESH_FAILED
+            self._logger.warning("Kimi quota poll failed category=%s", category.value)
             try:
-                self.error_occurred.emit(message)
+                self.error_occurred.emit(category.value)
             except RuntimeError:
                 return  # application shutting down
 
@@ -293,8 +299,8 @@ class QuotaService(QObject):
             if not self._clear_credentials_if_current(snapshot):
                 self._reconcile_state_from_credentials()
             return
-        except KimiOAuthError as error:
-            self.error_occurred.emit(self._safe_error(error))
+        except KimiOAuthError:
+            self.error_occurred.emit(KimiCodeQuotaErrorCategory.REFRESH_FAILED.value)
             return
         if grant is None:
             self._set_state_if_current(snapshot, STATE_UNAUTHORIZED)
@@ -305,8 +311,8 @@ class QuotaService(QObject):
             if not self._clear_credentials_if_current(grant.snapshot):
                 self._reconcile_state_from_credentials()
             return
-        except (KimiQuotaError, httpx.HTTPError) as error:
-            self.error_occurred.emit(self._safe_error(error))
+        except (KimiQuotaError, httpx.HTTPError):
+            self.error_occurred.emit(KimiCodeQuotaErrorCategory.REFRESH_FAILED.value)
             return
         if not self._set_state_if_current(grant.snapshot, STATE_AUTHORIZED):
             self._reconcile_state_from_credentials()
@@ -449,22 +455,35 @@ class QuotaService(QObject):
                     self._last_fetch_monotonic = 0.0
                     changed = self._set_state_locked(STATE_AUTHORIZED)
             if credential_conflict:
-                self._finish_oauth_failure(flow_id, "凭据已被更新，已忽略过期授权结果")
+                self._finish_oauth_failure(
+                    flow_id,
+                    KimiCodeQuotaErrorCategory.OAUTH_CONFLICT,
+                )
                 return
             if changed:
                 self.auth_state_changed.emit(STATE_AUTHORIZED)
             self.oauth_finished.emit(True, "")
             self.refresh_now()
         except KimiOAuthCancelledError:
-            self._finish_oauth_failure(flow_id, "授权已取消")
-        except (KimiOAuthError, httpx.HTTPError) as error:
-            self._finish_oauth_failure(flow_id, self._safe_error(error))
-        except Exception as error:
-            message = self._safe_error(error)
-            self._logger.warning("Unexpected Kimi OAuth failure: %s", message)
-            self._finish_oauth_failure(flow_id, message)
+            self._finish_oauth_failure(
+                flow_id,
+                KimiCodeQuotaErrorCategory.OAUTH_CANCELLED,
+            )
+        except (KimiOAuthError, httpx.HTTPError):
+            self._finish_oauth_failure(
+                flow_id,
+                KimiCodeQuotaErrorCategory.OAUTH_FAILED,
+            )
+        except Exception:  # noqa: BLE001 - worker boundary must always finish
+            category = KimiCodeQuotaErrorCategory.OAUTH_FAILED
+            self._logger.warning("Unexpected Kimi OAuth failure category=%s", category.value)
+            self._finish_oauth_failure(flow_id, category)
 
-    def _finish_oauth_failure(self, flow_id: str, message: str) -> None:
+    def _finish_oauth_failure(
+        self,
+        flow_id: str,
+        category: KimiCodeQuotaErrorCategory,
+    ) -> None:
         with self._state_lock:
             if self._active_flow_id != flow_id:
                 return
@@ -474,11 +493,7 @@ class QuotaService(QObject):
             changed = self._set_state_locked(state)
         if changed:
             self.auth_state_changed.emit(state)
-        self.oauth_finished.emit(False, message)
-
-    @staticmethod
-    def _safe_error(error: Exception) -> str:
-        return redact(str(error) or type(error).__name__)[:160]
+        self.oauth_finished.emit(False, category.value)
 
     @staticmethod
     def _state_for_credentials(credentials: object) -> str:

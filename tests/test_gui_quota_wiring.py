@@ -17,7 +17,8 @@ pytest.importorskip("pytestqt")
 class FakeWebQuotaService(QObject):
     quota_updated = Signal(object)
     login_state_changed = Signal(bool)
-    error_occurred = Signal(str)
+    web_error_occurred = Signal(str)
+    code_error_occurred = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -114,14 +115,14 @@ def test_web_error_category_retranslates_full_prompt_both_directions(qtbot, tmp_
     )
     assert window.quota_bar is not None
 
-    web.error_occurred.emit("load_failed")
+    web.web_error_occurred.emit("web_load_failed")
     assert "Kimi 官网加载失败" in window.quota_bar.toolTip()
 
     language_manager.set_language(EN_US)
     assert "The Kimi website failed to load" in window.quota_bar.toolTip()
     assert "官网加载失败" not in window.quota_bar.toolTip()
 
-    web.error_occurred.emit("refresh_timeout")
+    web.web_error_occurred.emit("web_refresh_timeout")
     assert "Kimi membership quota refresh timed out" in window.quota_bar.toolTip()
 
     language_manager.set_language(ZH_CN)
@@ -132,6 +133,35 @@ def test_web_error_category_retranslates_full_prompt_both_directions(qtbot, tmp_
 def test_quota_bar_absent_without_service(qtbot, tmp_path):
     window, _, _ = make_window(qtbot, tmp_path, with_service=False)
     assert window.quota_bar is None
+
+
+def test_code_and_web_quota_errors_keep_separate_safe_slots_and_retranslate(qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    language_manager = LanguageManager(ZH_CN)
+    window, code, _ = make_window(
+        qtbot,
+        tmp_path,
+        web_quota_service=web,
+        language_manager=language_manager,
+    )
+    assert code is not None
+    assert window.quota_bar is not None
+
+    code.error_occurred.emit("token=private-code-secret")
+    web.web_error_occurred.emit("access_token=private-web-secret")
+
+    tooltip = window.quota_bar.toolTip()
+    assert "Kimi Code 额度刷新失败" in tooltip
+    assert "Kimi 会员额度刷新失败" in tooltip
+    assert "private-code-secret" not in tooltip
+    assert "private-web-secret" not in tooltip
+
+    language_manager.set_language(EN_US)
+
+    tooltip = window.quota_bar.toolTip()
+    assert "Kimi Code quota refresh failed" in tooltip
+    assert "Kimi membership quota refresh failed" in tooltip
+    assert "额度刷新失败" not in tooltip
 
 
 def test_quota_bar_present_and_click_triggers_refresh(qtbot, tmp_path):
@@ -278,13 +308,13 @@ def test_persist_failure_signal_chain_keeps_final_logout_warning(qtbot, tmp_path
     code_logouts: list[bool] = []
     code.logout = lambda: code_logouts.append(True)  # type: ignore[method-assign]
     propagated_errors: list[str] = []
-    web.error_occurred.connect(propagated_errors.append)
+    web.web_error_occurred.connect(propagated_errors.append)
 
     window.kimi_logout()
 
     assert code_logouts == [True]
     assert web.last_quota is None
-    assert propagated_errors == ["refresh_failed"]
+    assert propagated_errors == ["web_refresh_failed"]
     assert window.quota_bar is not None
     tooltip = window.quota_bar.toolTip()
     assert "Kimi 退出登录未完全完成" in tooltip

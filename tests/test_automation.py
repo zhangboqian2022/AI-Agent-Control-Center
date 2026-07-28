@@ -191,6 +191,7 @@ def test_timeout_becomes_sanitized_automation_error() -> None:
     with pytest.raises(AutomationError, match="timed out") as caught:
         MacAutomation(config, runner=timeout).focus(config.tasks[0])
     assert "secret payload" not in str(caught.value)
+    assert caught.value.category == "timeout"
 
 
 def test_os_error_becomes_sanitized_automation_error() -> None:
@@ -202,6 +203,7 @@ def test_os_error_becomes_sanitized_automation_error() -> None:
     with pytest.raises(AutomationError, match="unavailable") as caught:
         MacAutomation(config, runner=missing).focus(config.tasks[0])
     assert "private filesystem detail" not in str(caught.value)
+    assert caught.value.category == "unavailable"
 
 
 def test_concurrent_send_text_keeps_focus_and_input_together() -> None:

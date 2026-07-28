@@ -124,7 +124,11 @@ def format_token_count(value: int) -> str:
     return str(number)
 
 
-def format_usage_line(usage: Mapping[str, Any]) -> str:
+def format_usage_line(
+    usage: Mapping[str, Any],
+    *,
+    cache_label: str = "缓存",
+) -> str:
     total_input = _to_non_negative_int(usage.get("total_input_tokens"))
     output = _to_non_negative_int(usage.get("output_tokens"))
     cache_pct = usage.get("cache_read_pct")
@@ -132,7 +136,7 @@ def format_usage_line(usage: Mapping[str, Any]) -> str:
     tokens_part = f"↑{format_token_count(total_input)} ↓{format_token_count(output)}"
     details: list[str] = []
     if isinstance(cache_pct, int) and not isinstance(cache_pct, bool):
-        details.append(f"缓存{cache_pct}%")
+        details.append(f"{cache_label} {cache_pct}%")
     if speed > 0:
         details.append(f"{speed} tok/s")
     if not details:

@@ -265,7 +265,7 @@ def test_poll_emits_quota_with_api_key(qapp, tmp_path):
     assert "/coding/v1/usages" in calls
 
 
-def test_poll_redacts_server_secret_from_error_signal(qapp, tmp_path):
+def test_poll_collapses_server_error_to_safe_code_category(qapp, tmp_path, caplog):
     save_credentials(tmp_path, {"auth_method": "api_key", "api_key": "sk-kimi-x"})
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -278,11 +278,12 @@ def test_poll_redacts_server_secret_from_error_signal(qapp, tmp_path):
     errors: list[str] = []
     service.error_occurred.connect(errors.append)
 
-    service.refresh_now()
+    with caplog.at_level("WARNING", logger="aacc.quota"):
+        service.refresh_now()
 
     assert wait_for(lambda: len(errors) == 1)
-    assert "private-token-sentinel" not in errors[0]
-    assert "[REDACTED]" in errors[0]
+    assert errors == ["code_refresh_failed"]
+    assert "private-token-sentinel" not in caplog.text
 
 
 def test_poll_401_clears_credentials(qapp, tmp_path):
@@ -793,7 +794,7 @@ def test_oauth_closes_created_http_client(qapp, tmp_path):
     assert wait_for(lambda: bool(clients) and clients[0].close_calls == 1)
 
 
-def test_oauth_save_oserror_exits_pending_and_finishes_once(qapp, tmp_path, monkeypatch):
+def test_oauth_save_oserror_exits_pending_and_finishes_once(qapp, tmp_path, monkeypatch, caplog):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/oauth/device_authorization":
             return httpx.Response(
@@ -823,9 +824,10 @@ def test_oauth_save_oserror_exits_pending_and_finishes_once(qapp, tmp_path, monk
         raise OSError("disk unavailable")
 
     monkeypatch.setattr("aacc.credential_store.save_credentials", fail_save)
-    service.begin_oauth()
-
-    assert wait_for(lambda: len(finished) == 1, timeout=2)
+    with caplog.at_level("WARNING", logger="aacc.quota"):
+        service.begin_oauth()
+        assert wait_for(lambda: len(finished) == 1, timeout=2)
     assert finished[0][0] is False
-    assert "disk unavailable" in finished[0][1]
+    assert finished[0][1] == "code_oauth_failed"
+    assert "disk unavailable" not in caplog.text
     assert service.state() == STATE_UNAUTHORIZED
