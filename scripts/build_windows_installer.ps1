@@ -181,11 +181,13 @@ function Assert-BootstrapTrusted {
 function Assert-WebView2BootstrapTrusted {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Path
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedLeafName
     )
 
     $Item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-    if ($Item.Name -cne $WebView2BootstrapName -or
+    if ($Item.Name -cne $ExpectedLeafName -or
         $Item.PSIsContainer -or
         (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
         throw "WebView2 bootstrapper must be a regular file with the expected name"
@@ -288,9 +290,12 @@ if (
 }
 
 $WebView2BootstrapPath = Join-Path $ManifestBuildRoot $WebView2BootstrapName
-$WebView2DownloadPath = "$WebView2BootstrapPath.download"
+$WebView2DownloadName = "$WebView2BootstrapName.download"
+$WebView2DownloadPath = Join-Path $ManifestBuildRoot $WebView2DownloadName
 if (Test-Path -LiteralPath $WebView2BootstrapPath) {
-    Assert-WebView2BootstrapTrusted -Path $WebView2BootstrapPath
+    Assert-WebView2BootstrapTrusted `
+        -Path $WebView2BootstrapPath `
+        -ExpectedLeafName $WebView2BootstrapName
 }
 else {
     if (Test-Path -LiteralPath $WebView2DownloadPath) {
@@ -300,10 +305,14 @@ else {
         -UseBasicParsing `
         -Uri $WebView2BootstrapUrl `
         -OutFile $WebView2DownloadPath
-    Assert-WebView2BootstrapTrusted -Path $WebView2DownloadPath
+    Assert-WebView2BootstrapTrusted `
+        -Path $WebView2DownloadPath `
+        -ExpectedLeafName $WebView2DownloadName
     Move-Item -LiteralPath $WebView2DownloadPath -Destination $WebView2BootstrapPath
 }
-Assert-WebView2BootstrapTrusted -Path $WebView2BootstrapPath
+Assert-WebView2BootstrapTrusted `
+    -Path $WebView2BootstrapPath `
+    -ExpectedLeafName $WebView2BootstrapName
 
 $VersionOutput = @(& uv version --short)
 if ($LASTEXITCODE -ne 0) {

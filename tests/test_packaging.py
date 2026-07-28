@@ -289,6 +289,31 @@ def test_windows_installer_stages_a_verified_webview2_bootstrapper() -> None:
     assert "build\\installer" in script
 
 
+def test_windows_installer_validates_download_before_move_and_final_cache_after_move() -> None:
+    script = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
+
+    assert '$WebView2DownloadName = "$WebView2BootstrapName.download"' in script
+    download_validation_match = re.search(
+        r"Assert-WebView2BootstrapTrusted\s*`?\s*"
+        r"-Path \$WebView2DownloadPath\s*`?\s*"
+        r"-ExpectedLeafName \$WebView2DownloadName",
+        script,
+    )
+    assert download_validation_match is not None
+    move = script.index(
+        "Move-Item -LiteralPath $WebView2DownloadPath -Destination $WebView2BootstrapPath"
+    )
+    final_revalidation_match = re.search(
+        r"Assert-WebView2BootstrapTrusted\s*`?\s*"
+        r"-Path \$WebView2BootstrapPath\s*`?\s*"
+        r"-ExpectedLeafName \$WebView2BootstrapName",
+        script[move:],
+    )
+    assert final_revalidation_match is not None
+    final_revalidation = move + final_revalidation_match.start()
+    assert download_validation_match.start() < move < final_revalidation
+
+
 def test_windows_installer_requires_webview2_runtime_before_installing() -> None:
     installer = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
 
@@ -311,6 +336,22 @@ def test_windows_installer_requires_webview2_runtime_before_installing() -> None
     )[1]
     assert "Microsoft Edge WebView2 Runtime" in installer
     assert "WebView2 运行时" in installer
+
+
+def test_windows_installer_rejects_malformed_or_zero_webview2_runtime_versions() -> None:
+    installer = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
+    version_validator = installer.split(
+        "function IsUsableWebView2RuntimeVersion", 1
+    )[1].split("function WebView2RuntimeInstalled", 1)[0]
+    runtime_gate = installer.split("function WebView2RuntimeInstalled", 1)[1].split(
+        "function EnsureWebView2Runtime", 1
+    )[0]
+
+    assert "ComponentCount <> 4" in version_validator
+    assert "Component[DigitIndex] in ['0'..'9']" in version_validator
+    assert "HasNonZeroDigit" in version_validator
+    assert "StrToInt" not in version_validator
+    assert runtime_gate.count("IsUsableWebView2RuntimeVersion(RuntimeVersion)") == 2
 
 
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
