@@ -20,6 +20,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QAction,
     QCloseEvent,
     QColor,
     QDesktopServices,
@@ -64,6 +65,7 @@ from aacc.codex_quota import CodexQuotaSnapshot, CodexQuotaStatus
 from aacc.codex_quota_service import CodexQuotaService
 from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH
 from aacc.discovery_service import DiscoveryHealth
+from aacc.i18n import ZH_CN, LanguageManager, other_language
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
 from aacc.kimi_metrics import format_usage_line
@@ -99,39 +101,57 @@ STATUS_COLORS = {
     TaskStatus.UNKNOWN: "#b8c0cc",
 }
 
-STATUS_NAMES = {
-    TaskStatus.UNCONFIGURED: "未配置",
-    TaskStatus.IDLE: "空闲",
-    TaskStatus.STARTING: "启动中",
-    TaskStatus.THINKING: "思考中",
-    TaskStatus.RUNNING: "执行中",
-    TaskStatus.WAITING_INPUT: "等待输入",
-    TaskStatus.WAITING_APPROVAL: "等待批准",
-    TaskStatus.COMPLETED: "已完成",
-    TaskStatus.WARNING: "警告",
-    TaskStatus.ERROR: "失败",
-    TaskStatus.PAUSED: "已暂停",
-    TaskStatus.CANCELLED: "已取消",
-    TaskStatus.STOPPED: "已停止",
-    TaskStatus.UNKNOWN: "状态未知",
+STATUS_NAME_KEYS = {
+    TaskStatus.UNCONFIGURED: "status.unconfigured",
+    TaskStatus.IDLE: "status.idle",
+    TaskStatus.STARTING: "status.starting",
+    TaskStatus.THINKING: "status.thinking",
+    TaskStatus.RUNNING: "status.running",
+    TaskStatus.WAITING_INPUT: "status.waiting_input",
+    TaskStatus.WAITING_APPROVAL: "status.waiting_approval",
+    TaskStatus.COMPLETED: "status.completed",
+    TaskStatus.WARNING: "status.warning",
+    TaskStatus.ERROR: "status.error",
+    TaskStatus.PAUSED: "status.paused",
+    TaskStatus.CANCELLED: "status.cancelled",
+    TaskStatus.STOPPED: "status.stopped",
+    TaskStatus.UNKNOWN: "status.unknown",
 }
 
 STATUS_LIGHT_FONT_SIZE = 64
 
 
+def status_name(status: TaskStatus, language: LanguageManager) -> str:
+    return language.text(STATUS_NAME_KEYS[status])
+
+
 def format_quota_reset(
     reset_at: datetime | None,
+    language: LanguageManager,
     *,
     local_zone: tzinfo | None = None,
 ) -> str:
     if reset_at is None:
         return "--"
     local = reset_at.astimezone(local_zone)
-    return f"{local.month}月{local.day}日 {local.hour:02d}:{local.minute:02d} 重置"
+    return language.text(
+        "quota.reset",
+        month=local.month,
+        day=local.day,
+        hour=local.hour,
+        minute=local.minute,
+    )
 
 
 def load_stylesheet() -> str:
-    return resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
+    stylesheet = resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
+    return stylesheet.replace(
+        "#headerButton {",
+        "#headerButton, #languageButton {",
+    ).replace(
+        "#headerButton:hover {",
+        "#headerButton:hover, #languageButton:hover {",
+    )
 
 
 TERMINAL_STATUSES = {
@@ -151,9 +171,15 @@ def _elapsed(state: TaskState, now: datetime | None = None) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def _elapsed_label(state: TaskState, now: datetime | None = None) -> str:
-    prefix = "总用时 " if state.status in TERMINAL_STATUSES else ""
-    return f"{prefix}{_elapsed(state, now)}"
+def _elapsed_label(
+    state: TaskState,
+    language: LanguageManager,
+    now: datetime | None = None,
+) -> str:
+    elapsed = _elapsed(state, now)
+    if state.status in TERMINAL_STATUSES:
+        return language.text("time.total", elapsed=elapsed)
+    return elapsed
 
 
 class ElidedLabel(QLabel):
@@ -225,12 +251,13 @@ def _set_quota_metric(
     row: _QuotaMetricRow,
     percentage: int | None,
     reset_at: datetime | None,
+    language: LanguageManager,
 ) -> None:
     unknown = percentage is None
     row.percent_label.setText("--" if unknown else f"{percentage}%")
     row.progress_bar.setValue(0 if percentage is None else percentage)
     row.progress_bar.setProperty("unknown", unknown)
-    row.reset_label.setText(format_quota_reset(reset_at) if not unknown else "--")
+    row.reset_label.setText(format_quota_reset(reset_at, language) if not unknown else "--")
 
 
 class QuotaBar(QFrame):
@@ -238,10 +265,14 @@ class QuotaBar(QFrame):
 
     clicked = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, language_manager: LanguageManager | None = None) -> None:
         super().__init__()
+        self.language_manager = language_manager or LanguageManager(ZH_CN)
         self._has_known_quota = False
         self._last_quota_tooltip = ""
+        self._last_quota: KimiQuota | None = None
+        self._display_state = "unauthorized"
+        self._last_error = ""
         self.setObjectName("quotaBar")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QGridLayout(self)
@@ -304,71 +335,148 @@ class QuotaBar(QFrame):
         return [(row.percent_label, row.reset_label) for row in self._metric_rows]
 
     def show_unauthorized(self) -> None:
+        self._display_state = "unauthorized"
+        self._last_quota = None
+        self._last_error = ""
         self._has_known_quota = False
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #e06c75;")
-        self.summary_label.setText("Kimi 额度\n点击授权")
+        self.summary_label.setText(
+            "Kimi 额度\n点击授权"
+            if self.language_manager.language == ZH_CN
+            else "Kimi quota\nAuthorize"
+        )
         for row in self._metric_rows:
-            _set_quota_metric(row, None, None)
+            _set_quota_metric(row, None, None, self.language_manager)
         self.balance_label.setText("")
-        self.setToolTip("点击通过 Kimi 官方设备授权登录，查询账户额度")
+        self.setToolTip(
+            "点击通过 Kimi 官方设备授权登录，查询账户额度"
+            if self.language_manager.language == ZH_CN
+            else "Authorize with Kimi's official device flow to view account quota"
+        )
 
     def show_pending(self) -> None:
+        self._display_state = "pending"
+        self._last_error = ""
         self.dot.setStyleSheet("color: #e5c07b;")
-        self.summary_label.setText("Kimi 额度\n授权中…")
+        self.summary_label.setText(
+            f"{self.language_manager.text('quota.kimi')}\n"
+            f"{self.language_manager.text('quota.authorizing')}"
+        )
+        self.setToolTip(self.language_manager.text("quota.authorizing"))
 
     def show_quota(self, quota: KimiQuota) -> None:
+        self._display_state = "quota"
+        self._last_quota = quota
+        self._last_error = ""
+        self._render_quota(quota)
+
+    def _render_quota(self, quota: KimiQuota) -> None:
         self._has_known_quota = quota.status is not QuotaStatus.UNKNOWN
         if quota.status is QuotaStatus.UNKNOWN:
             self.dot.setStyleSheet("color: #8997aa;")
-            self.summary_label.setText("Kimi 额度\n数据不可用")
+            self.summary_label.setText(
+                "Kimi 额度\n数据不可用"
+                if self.language_manager.language == ZH_CN
+                else "Kimi quota\nQuota unavailable"
+            )
         elif quota.status is QuotaStatus.PARTIAL:
             self.dot.setStyleSheet("color: #e5c07b;")
-            self.summary_label.setText("Kimi 额度\n部分数据")
+            self.summary_label.setText(
+                "Kimi 额度\n部分数据"
+                if self.language_manager.language == ZH_CN
+                else "Kimi quota\nPartial quota data"
+            )
         else:
             self.dot.setStyleSheet("color: #98c379;")
-            self.summary_label.setText("Kimi 额度")
+            self.summary_label.setText(self.language_manager.text("quota.kimi"))
         self._show_detail(self._five_hour_row, quota.five_hour)
         self._show_detail(self._weekly_row, quota.weekly)
         self._show_detail(self._monthly_row, quota.monthly)
         balance = format_balance(quota.booster.balance_yuan) if quota.booster is not None else ""
         self.balance_label.setText(balance)
         tooltip_lines = [
-            self._detail_tooltip("5 小时额度", quota.five_hour),
-            self._detail_tooltip("每周额度", quota.weekly),
-            self._detail_tooltip("每月额度", quota.monthly),
+            self._detail_tooltip(self.language_manager.text("quota.five_hour"), quota.five_hour),
+            self._detail_tooltip(self.language_manager.text("quota.week"), quota.weekly),
+            self._detail_tooltip(self.language_manager.text("quota.month"), quota.monthly),
         ]
         if quota.membership_level:
-            tooltip_lines.append(f"会员等级：{quota.membership_level}")
+            tooltip_lines.append(
+                f"{self.language_manager.text('quota.membership')}: {quota.membership_level}"
+            )
         if balance:
-            tooltip_lines.append(f"加油包余额：{balance}")
+            tooltip_lines.append(f"{self.language_manager.text('quota.booster')}: {balance}")
         if quota.fetched_at is not None:
-            tooltip_lines.append(f"最后更新：{quota.fetched_at.astimezone().strftime('%H:%M:%S')}")
-        tooltip_lines.append("点击刷新")
+            tooltip_lines.append(
+                self.language_manager.text(
+                    "quota.last_update",
+                    updated=quota.fetched_at.astimezone().strftime("%H:%M:%S"),
+                )
+            )
+        tooltip_lines.append(self.language_manager.text("quota.refresh"))
         self._last_quota_tooltip = "\n".join(tooltip_lines)
         self.setToolTip(self._last_quota_tooltip)
 
     def show_error(self, message: str) -> None:
+        self._display_state = "error"
+        self._last_error = message
+        self._render_error()
+
+    def _render_error(self) -> None:
+        if self._last_quota is not None:
+            self._render_quota(self._last_quota)
         self.dot.setStyleSheet("color: #8997aa;")
         if self._has_known_quota:
-            self.summary_label.setText("Kimi 额度\n数据过期")
+            state_text = (
+                "数据过期"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.stale")
+            )
         else:
-            self.summary_label.setText("Kimi 额度\n数据不可用")
+            state_text = (
+                "数据不可用"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.unavailable")
+            )
+        self.summary_label.setText(f"{self.language_manager.text('quota.kimi')}\n{state_text}")
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
-        self.setToolTip(f"{previous}额度刷新失败：{message}\n点击重试")
+        error_prefix = (
+            "额度刷新失败" if self.language_manager.language == ZH_CN else "Quota refresh failed"
+        )
+        retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
+        self.setToolTip(f"{previous}{error_prefix}: {self._last_error}\n{retry}")
 
-    @staticmethod
-    def _show_detail(row: _QuotaMetricRow, detail: QuotaDetail | None) -> None:
+    def _show_detail(self, row: _QuotaMetricRow, detail: QuotaDetail | None) -> None:
         if detail is None:
-            _set_quota_metric(row, None, None)
+            _set_quota_metric(row, None, None, self.language_manager)
             return
-        _set_quota_metric(row, detail.percentage, detail.reset_at)
+        _set_quota_metric(
+            row,
+            detail.percentage,
+            detail.reset_at,
+            self.language_manager,
+        )
 
-    @staticmethod
-    def _detail_tooltip(name: str, detail: QuotaDetail | None) -> str:
+    def _detail_tooltip(self, name: str, detail: QuotaDetail | None) -> str:
         if detail is None:
-            return f"{name}：未知"
-        return f"{name}：{detail.percentage}%（{format_reset_countdown(detail.reset_at)}）"
+            unknown = "未知" if self.language_manager.language == ZH_CN else "Unknown"
+            return f"{name}: {unknown}"
+        reset = (
+            format_reset_countdown(detail.reset_at)
+            if self.language_manager.language == ZH_CN
+            else format_quota_reset(detail.reset_at, self.language_manager)
+        )
+        return f"{name}: {detail.percentage}% ({reset})"
+
+    def retranslate_ui(self) -> None:
+        if self._display_state == "pending":
+            self.show_pending()
+        elif self._display_state == "quota" and self._last_quota is not None:
+            self._render_quota(self._last_quota)
+        elif self._display_state == "error":
+            self._render_error()
+        else:
+            self.show_unauthorized()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -381,10 +489,14 @@ class CodexQuotaBar(QFrame):
 
     clicked = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, language_manager: LanguageManager | None = None) -> None:
         super().__init__()
+        self.language_manager = language_manager or LanguageManager(ZH_CN)
         self._has_known_quota = False
         self._last_quota_tooltip = ""
+        self._last_codex_quota: CodexQuotaSnapshot | None = None
+        self._display_state = "unknown"
+        self._last_error = ""
         self.setObjectName("quotaBar")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QGridLayout(self)
@@ -431,45 +543,106 @@ class CodexQuotaBar(QFrame):
         return [(row.percent_label, row.reset_label) for row in self._metric_rows]
 
     def show_unknown(self) -> None:
+        self._display_state = "unknown"
+        self._last_codex_quota = None
+        self._last_error = ""
         self._has_known_quota = False
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #8997aa;")
-        self.summary_label.setText("Codex 额度\n数据不可用")
-        _set_quota_metric(self._weekly_row, None, None)
-        self.setToolTip("尚未发现有效 Codex 周额度；点击重新读取")
+        self.summary_label.setText(
+            "Codex 额度\n数据不可用"
+            if self.language_manager.language == ZH_CN
+            else "Codex quota\nQuota unavailable"
+        )
+        _set_quota_metric(self._weekly_row, None, None, self.language_manager)
+        self.setToolTip(
+            "尚未发现有效 Codex 周额度；点击重新读取"
+            if self.language_manager.language == ZH_CN
+            else "No valid Codex weekly quota found; click to read again"
+        )
 
     def show_quota(self, quota: CodexQuotaSnapshot) -> None:
         if quota.status is CodexQuotaStatus.UNKNOWN or quota.weekly is None:
             self.show_unknown()
             return
+        self._display_state = "quota"
+        self._last_codex_quota = quota
+        self._last_error = ""
+        self._render_quota(quota)
+
+    def _render_quota(self, quota: CodexQuotaSnapshot) -> None:
+        if quota.weekly is None:
+            return
         self._has_known_quota = True
         self.dot.setStyleSheet("color: #98c379;")
-        self.summary_label.setText("Codex 额度")
+        self.summary_label.setText(self.language_manager.text("quota.codex"))
         _set_quota_metric(
             self._weekly_row,
             quota.weekly.used_percent,
             quota.weekly.resets_at,
+            self.language_manager,
         )
-        tooltip_lines = [
-            f"每周已用：{quota.weekly.used_percent}%"
-            f"（{format_reset_countdown(quota.weekly.resets_at)}）"
-        ]
+        weekly_prefix = "每周已用" if self.language_manager.language == ZH_CN else "Weekly used"
+        reset_text = (
+            format_reset_countdown(quota.weekly.resets_at)
+            if self.language_manager.language == ZH_CN
+            else format_quota_reset(quota.weekly.resets_at, self.language_manager)
+        )
+        tooltip_lines = [f"{weekly_prefix}: {quota.weekly.used_percent}% ({reset_text})"]
         if quota.plan_type:
-            tooltip_lines.append(f"套餐：{quota.plan_type}")
+            plan_prefix = "套餐" if self.language_manager.language == ZH_CN else "Plan"
+            tooltip_lines.append(f"{plan_prefix}: {quota.plan_type}")
         if quota.observed_at is not None:
-            tooltip_lines.append(f"本机观测：{quota.observed_at.astimezone().strftime('%H:%M:%S')}")
-        tooltip_lines.append("点击刷新 Codex 周额度")
+            observed_prefix = (
+                "本机观测" if self.language_manager.language == ZH_CN else "Observed locally"
+            )
+            tooltip_lines.append(
+                f"{observed_prefix}: {quota.observed_at.astimezone().strftime('%H:%M:%S')}"
+            )
+        tooltip_lines.append(
+            "点击刷新 Codex 周额度"
+            if self.language_manager.language == ZH_CN
+            else "Refresh Codex weekly quota"
+        )
         self._last_quota_tooltip = "\n".join(tooltip_lines)
         self.setToolTip(self._last_quota_tooltip)
 
     def show_error(self, message: str) -> None:
+        self._display_state = "error"
+        self._last_error = message
+        self._render_error()
+
+    def _render_error(self) -> None:
+        if self._last_codex_quota is not None:
+            self._render_quota(self._last_codex_quota)
         self.dot.setStyleSheet("color: #8997aa;")
         if self._has_known_quota:
-            self.summary_label.setText("Codex 额度\n数据过期")
+            state_text = (
+                "数据过期"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.stale")
+            )
         else:
-            self.summary_label.setText("Codex 额度\n数据不可用")
+            state_text = (
+                "数据不可用"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.unavailable")
+            )
+        self.summary_label.setText(f"{self.language_manager.text('quota.codex')}\n{state_text}")
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
-        self.setToolTip(f"{previous}额度读取失败：{message}\n点击重试")
+        error_prefix = (
+            "额度读取失败" if self.language_manager.language == ZH_CN else "Quota read failed"
+        )
+        retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
+        self.setToolTip(f"{previous}{error_prefix}: {self._last_error}\n{retry}")
+
+    def retranslate_ui(self) -> None:
+        if self._display_state == "quota" and self._last_codex_quota is not None:
+            self._render_quota(self._last_codex_quota)
+        elif self._display_state == "error":
+            self._render_error()
+        else:
+            self.show_unknown()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -539,15 +712,16 @@ class TaskCard(QFrame):
         state: TaskState,
         blink_attention: bool = True,
         display_name: str | None = None,
+        language_manager: LanguageManager | None = None,
     ) -> None:
         super().__init__()
         self.task = task
         self.state = state
         self.blink_attention = blink_attention
         self.display_name = display_name or task.name
+        self.language_manager = language_manager or LanguageManager(ZH_CN)
         self.setObjectName("taskCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("单击切换任务，右键查看更多操作")
 
         root = QHBoxLayout(self)
         root.setContentsMargins(11, 8, 10, 8)
@@ -616,15 +790,13 @@ class TaskCard(QFrame):
         self.updated_label.hide()
         root.addWidget(self.details, 1)
 
+        self.remove_button: QPushButton | None = None
         if task.id.startswith(("codex:", "kimi:", "kimi_desktop:")):
-            remove_button = QPushButton("×")
-            remove_button.setObjectName("removeTaskButton")
-            remove_button.setAccessibleName("从面板移除")
-            remove_button.setToolTip("停止监控并从面板移除")
-            remove_button.setFixedSize(24, 24)
-            remove_button.clicked.connect(lambda: self.remove_requested.emit(self.task.id))
-            root.addWidget(remove_button, 0, Qt.AlignmentFlag.AlignTop)
-
+            self.remove_button = QPushButton("×")
+            self.remove_button.setObjectName("removeTaskButton")
+            self.remove_button.setFixedSize(24, 24)
+            self.remove_button.clicked.connect(lambda: self.remove_requested.emit(self.task.id))
+            root.addWidget(self.remove_button, 0, Qt.AlignmentFlag.AlignTop)
         self._effect = QGraphicsOpacityEffect(self.dot)
         self.dot.setGraphicsEffect(self._effect)
         self._pulse = QPropertyAnimation(self._effect, b"opacity", self)
@@ -634,6 +806,7 @@ class TaskCard(QFrame):
         self._pulse.setEasingCurve(QEasingCurve.Type.InOutSine)
         self._pulse.setLoopCount(-1)
         self.set_state(state)
+        self.retranslate_ui()
 
     def set_display_name(self, display_name: str) -> None:
         self.display_name = display_name
@@ -643,9 +816,13 @@ class TaskCard(QFrame):
 
     def set_state(self, state: TaskState) -> None:
         self.state = state
+        self._render_state()
+
+    def _render_state(self) -> None:
+        state = self.state
         color = STATUS_COLORS[state.status]
         self.dot.setStyleSheet(f"color: {color}; font-size: {STATUS_LIGHT_FONT_SIZE}px;")
-        self.status_label.setText(STATUS_NAMES[state.status])
+        self.status_label.setText(status_name(state.status, self.language_manager))
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
         work_dir = state.metadata.get("work_dir")
         if self.task.agent.type == "kimi_code" and isinstance(work_dir, str) and work_dir:
@@ -660,15 +837,32 @@ class TaskCard(QFrame):
             self.usage_label.show()
         else:
             self.usage_label.hide()
-        self.message_label.setText(state.message or "暂无状态说明")
+        self.message_label.setText(state.message or self.language_manager.text("task.no_message"))
+        updated_time = state.updated_at.astimezone().strftime("%H:%M:%S")
         self.updated_label.setText(
-            f"最后活动：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
+            f"最后活动：{updated_time}"
+            if self.language_manager.language == ZH_CN
+            else self.language_manager.text(
+                "task.last_activity",
+                elapsed=updated_time,
+            )
         )
-        self.timer_label.setText(_elapsed_label(state))
+        self.timer_label.setText(_elapsed_label(state, self.language_manager))
+        updated_text = (
+            f"更新：{updated_time}"
+            if self.language_manager.language == ZH_CN
+            else self.language_manager.text("task.updated", updated=updated_time)
+        )
+        interaction_text = (
+            "单击切换任务，右键查看更多操作"
+            if self.language_manager.language == ZH_CN
+            else "Click to switch tasks; right-click for more actions"
+        )
         self.setToolTip(
-            f"{self.display_name}\n{STATUS_NAMES[state.status]} · {state.source} · "
+            f"{interaction_text}\n{self.display_name}\n"
+            f"{status_name(state.status, self.language_manager)} · {state.source} · "
             f"{state.confidence:.0%}\n"
-            f"更新：{state.updated_at.astimezone().strftime('%H:%M:%S')}"
+            f"{updated_text}"
         )
         attention = state.status in {TaskStatus.WAITING_INPUT, TaskStatus.WAITING_APPROVAL}
         if attention and self.blink_attention:
@@ -678,6 +872,18 @@ class TaskCard(QFrame):
             self._pulse.stop()
             self._effect.setOpacity(1.0)
 
+    def retranslate_ui(self) -> None:
+        if self.remove_button is not None:
+            self.remove_button.setAccessibleName(
+                "从面板移除" if self.language_manager.language == ZH_CN else "Remove from panel"
+            )
+            self.remove_button.setToolTip(
+                "停止监控并从面板移除"
+                if self.language_manager.language == ZH_CN
+                else "Stop monitoring and remove from panel"
+            )
+        self._render_state()
+
     def set_compact(self, compact: bool) -> None:
         self.details.setVisible(not compact)
         card_layout = self.layout()
@@ -686,9 +892,12 @@ class TaskCard(QFrame):
 
     def create_context_menu(self) -> QMenu:
         menu = QMenu(self)
-        actions = [
-            ("切换到任务", "focus"),
-        ]
+        switch_text = (
+            "切换到任务"
+            if self.language_manager.language == ZH_CN
+            else self.language_manager.text("task.switch")
+        )
+        actions = [(switch_text, "focus")]
         for label, command in actions:
             action = menu.addAction(label)
             action.triggered.connect(
@@ -697,29 +906,54 @@ class TaskCard(QFrame):
                 )
             )
         menu.addSeparator()
-        state_menu = menu.addMenu("手动标记状态")
-        for label, status in (
-            ("执行中", "RUNNING"),
-            ("等待输入", "WAITING_INPUT"),
-            ("等待批准", "WAITING_APPROVAL"),
-            ("已完成", "COMPLETED"),
-            ("失败", "ERROR"),
-            ("重置", "IDLE"),
+        state_menu = menu.addMenu(
+            "手动标记状态"
+            if self.language_manager.language == ZH_CN
+            else self.language_manager.text("task.manual_status")
+        )
+        for status, chinese_label in (
+            (TaskStatus.RUNNING, "执行中"),
+            (TaskStatus.WAITING_INPUT, "等待输入"),
+            (TaskStatus.WAITING_APPROVAL, "等待批准"),
+            (TaskStatus.COMPLETED, "已完成"),
+            (TaskStatus.ERROR, "失败"),
+            (TaskStatus.IDLE, "重置"),
         ):
+            label = (
+                chinese_label
+                if self.language_manager.language == ZH_CN
+                else (
+                    "Reset"
+                    if status is TaskStatus.IDLE
+                    else status_name(status, self.language_manager)
+                )
+            )
             action = state_menu.addAction(label)
             action.triggered.connect(
-                lambda _checked=False, value=status: self.action_requested.emit(
+                lambda _checked=False, value=status.value: self.action_requested.emit(
                     f"status:{value}", self.task.id
                 )
             )
-        copy_action = menu.addAction("复制任务信息")
+        copy_action = menu.addAction(
+            "复制任务信息"
+            if self.language_manager.language == ZH_CN
+            else self.language_manager.text("task.copy")
+        )
         copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
         if self.task.id.startswith(("codex:", "kimi:", "kimi_desktop:")):
-            rename_action = menu.addAction("重命名任务")
+            rename_action = menu.addAction(
+                "重命名任务"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("task.rename")
+            )
             rename_action.triggered.connect(
                 lambda: self.action_requested.emit("rename", self.task.id)
             )
-            remove_action = menu.addAction("从面板移除")
+            remove_action = menu.addAction(
+                "从面板移除"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("task.remove")
+            )
             remove_action.triggered.connect(lambda: self.remove_requested.emit(self.task.id))
         return menu
 
@@ -1009,6 +1243,7 @@ class MainWindow(QWidget):
         kimi_web_quota_service: KimiWebQuotaService | None = None,
         codex_quota_service: CodexQuotaService | None = None,
         open_url: Callable[[str], None] | None = None,
+        language_manager: LanguageManager | None = None,
     ) -> None:
         super().__init__()
         self.manager = manager
@@ -1021,6 +1256,7 @@ class MainWindow(QWidget):
         self._adaptive_resize_pending = False
         self._quitting = False
         self._settings = settings or QSettings("AACC", "AACC")
+        self.language_manager = language_manager or LanguageManager(ZH_CN, self._settings)
         self._codex_sessions = codex_sessions or (lambda: [])
         self._codex_auto_active_ids = codex_auto_active_ids or (lambda: set())
         self._codex_retained_ids = codex_retained_ids or (lambda: set())
@@ -1211,32 +1447,35 @@ class MainWindow(QWidget):
         titles.addWidget(self.subtitle)
         header.addLayout(titles)
         header.addStretch()
-        compact_button = QPushButton("↕")
-        compact_button.setToolTip("紧凑 / 展开")
-        compact_button.clicked.connect(lambda: self.set_compact(not self.compact_mode))
+        self.language_button = QPushButton()
+        self.language_button.setObjectName("languageButton")
+        self.language_button.clicked.connect(self.toggle_language)
         self.about_button = QPushButton("ⓘ")
-        self.about_button.setToolTip("关于 AACC")
         self.about_button.clicked.connect(self.show_about)
-        settings_button = QPushButton("⚙")
-        settings_button.setToolTip("设置")
-        settings_button.clicked.connect(self.open_settings)
-        hide_button = QPushButton("—")
-        hide_button.setToolTip("隐藏到菜单栏")
-        hide_button.clicked.connect(self.hide)
-        for button in (compact_button, self.about_button, settings_button, hide_button):
-            button.setObjectName("headerButton")
+        self.settings_button = QPushButton("⚙")
+        self.settings_button.clicked.connect(self.open_settings)
+        self.hide_button = QPushButton("—")
+        self.hide_button.clicked.connect(self.hide)
+        for button in (
+            self.language_button,
+            self.about_button,
+            self.settings_button,
+            self.hide_button,
+        ):
+            if button is not self.language_button:
+                button.setObjectName("headerButton")
             button.setFixedSize(28, 28)
             header.addWidget(button)
         layout.addLayout(header)
 
         if self.codex_quota_service is not None:
-            self.codex_quota_bar = CodexQuotaBar()
+            self.codex_quota_bar = CodexQuotaBar(self.language_manager)
             self.codex_quota_bar.clicked.connect(self.codex_quota_service.refresh_now)
             layout.addWidget(self.codex_quota_bar)
             self.codex_quota_service.quota_updated.connect(self._on_codex_quota_updated)
             self.codex_quota_service.error_occurred.connect(self._on_codex_quota_error)
         if self.quota_service is not None or self.kimi_web_quota_service is not None:
-            self.quota_bar = QuotaBar()
+            self.quota_bar = QuotaBar(self.language_manager)
             self.quota_bar.clicked.connect(self._on_quota_bar_clicked)
             layout.addWidget(self.quota_bar)
         if self.quota_service is not None:
@@ -1258,11 +1497,11 @@ class MainWindow(QWidget):
         self.discovery_warning_label = QLabel()
         self.discovery_warning_label.setObjectName("discoveryWarningLabel")
         self.discovery_warning_label.setWordWrap(True)
-        copy_diagnostics = QPushButton("复制详情")
-        copy_diagnostics.setObjectName("copyDiagnosticsButton")
-        copy_diagnostics.clicked.connect(self.copy_discovery_diagnostics)
+        self.copy_diagnostics_button = QPushButton("复制详情")
+        self.copy_diagnostics_button.setObjectName("copyDiagnosticsButton")
+        self.copy_diagnostics_button.clicked.connect(self.copy_discovery_diagnostics)
         discovery_warning_layout.addWidget(self.discovery_warning_label, 1)
-        discovery_warning_layout.addWidget(copy_diagnostics)
+        discovery_warning_layout.addWidget(self.copy_diagnostics_button)
         layout.addWidget(self.discovery_warning)
         self._refresh_discovery_warning()
 
@@ -1335,6 +1574,9 @@ class MainWindow(QWidget):
             self.setWindowOpacity(float(saved_opacity))
 
         self.tray: QSystemTrayIcon | None = None
+        self.tray_show_action: QAction | None = None
+        self.tray_compact_action: QAction | None = None
+        self.tray_quit_action: QAction | None = None
         if enable_tray and QSystemTrayIcon.isSystemTrayAvailable():
             self._create_tray()
         # macOS: clicking the Dock icon (or Cmd-Tabbing back) activates the
@@ -1347,9 +1589,66 @@ class MainWindow(QWidget):
         self._timer.timeout.connect(self.refresh)
         self._timer.start(1000)
         self.sync_cards()
+        self._unsubscribe_language = self.language_manager.subscribe(self.retranslate_ui)
+        self.retranslate_ui()
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(load_stylesheet())
+
+    def toggle_language(self) -> None:
+        self.language_manager.set_language(other_language(self.language_manager.language))
+
+    def retranslate_ui(self) -> None:
+        english_target = self.language_manager.language == ZH_CN
+        self.language_button.setText("EN" if english_target else "中")
+        self.language_button.setToolTip("Switch to English" if english_target else "切换到中文")
+        self.about_button.setToolTip(self.language_manager.text("header.about"))
+        self.settings_button.setToolTip(self.language_manager.text("header.settings"))
+        self.hide_button.setToolTip(self.language_manager.text("header.hide"))
+        self.running_group_label.setText(self.language_manager.text("group.running"))
+        self.retained_group_label.setText(
+            "已完成 · 保留直到移除"
+            if self.language_manager.language == ZH_CN
+            else "Completed · Retained until removed"
+        )
+        self.clear_retained_button.setText(self.language_manager.text("group.clear_all"))
+        self.empty_tasks_label.setText(
+            "未选择 Codex / Kimi Code / Kimi Desktop 任务 · 点击 ⚙ 选择监控任务"
+            if self.language_manager.language == ZH_CN
+            else ("No Codex / Kimi Code / Kimi Desktop tasks selected · Click ⚙ to select tasks")
+        )
+        self.copy_diagnostics_button.setText(
+            "复制详情" if self.language_manager.language == ZH_CN else "Copy details"
+        )
+        self._render_task_summary()
+        for card in self.cards.values():
+            card.retranslate_ui()
+        if self.quota_bar is not None:
+            self.quota_bar.retranslate_ui()
+        if self.codex_quota_bar is not None:
+            self.codex_quota_bar.retranslate_ui()
+        if self.tray_show_action is not None:
+            self.tray_show_action.setText(self.language_manager.text("tray.show_hide"))
+        if self.tray_compact_action is not None:
+            self.tray_compact_action.setText(self.language_manager.text("compact.toggle"))
+        if self.tray_quit_action is not None:
+            self.tray_quit_action.setText(self.language_manager.text("tray.quit"))
+        self._schedule_adaptive_resize()
+
+    def _render_task_summary(self) -> None:
+        running_count, terminal_count = (len(group) for group in self._layout_group_ids)
+        if self.language_manager.language == ZH_CN:
+            self.task_summary_label.setText(
+                f"运行中：{running_count} · 已完成：{terminal_count} · "
+                f"显示：{len(self._card_order_ids)}"
+            )
+        else:
+            shown = self.language_manager.text("summary.tasks", count=len(self._card_order_ids))
+            self.task_summary_label.setText(
+                f"{self.language_manager.text('group.running')}: {running_count} · "
+                f"{self.language_manager.text('group.completed')}: {terminal_count} · "
+                f"{shown}"
+            )
 
     def _create_tray(self) -> None:
         pixmap = QPixmap(24, 24)
@@ -1364,15 +1663,16 @@ class MainWindow(QWidget):
         painter.end()
         self.tray = QSystemTrayIcon(QIcon(pixmap), self)
         menu = QMenu()
-        show_action = menu.addAction("显示 / 隐藏 AACC")
-        show_action.triggered.connect(self.toggle_visible)
-        compact_action = menu.addAction("紧凑 / 展开")
-        compact_action.triggered.connect(lambda: self.set_compact(not self.compact_mode))
+        self.tray_show_action = menu.addAction("")
+        self.tray_show_action.triggered.connect(self.toggle_visible)
+        self.tray_compact_action = menu.addAction("")
+        self.tray_compact_action.triggered.connect(lambda: self.set_compact(not self.compact_mode))
         menu.addSeparator()
-        quit_action = menu.addAction("退出")
-        quit_action.triggered.connect(self.quit_application)
+        self.tray_quit_action = menu.addAction("")
+        self.tray_quit_action.triggered.connect(self.quit_application)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(lambda _reason: self.toggle_visible())
+        self.retranslate_ui()
         self.tray.show()
 
     def refresh(self) -> None:
@@ -1467,7 +1767,11 @@ class MainWindow(QWidget):
             existing_card = self.cards.get(task.id)
             if existing_card is None:
                 new_card = TaskCard(
-                    task, states[task.id], self.config.app.blink_attention, display_name
+                    task,
+                    states[task.id],
+                    self.config.app.blink_attention,
+                    display_name,
+                    self.language_manager,
                 )
                 new_card.action_requested.connect(self._perform_action)
                 new_card.remove_requested.connect(self._remove_task_requested)
@@ -1487,10 +1791,7 @@ class MainWindow(QWidget):
             self._rebuild_card_layout(self.retained_cards_layout, terminal_tasks)
             self._layout_group_ids = group_ids
         self._card_order_ids = [task.id for task in running_tasks + terminal_tasks]
-        self.task_summary_label.setText(
-            f"运行中：{len(running_tasks)} · 已完成：{len(terminal_tasks)} · "
-            f"显示：{len(self._card_order_ids)}"
-        )
+        self._render_task_summary()
         self.empty_tasks_label.setVisible(not self.cards)
         self.task_summary_label.setVisible(bool(self.cards))
         self.running_group_label.setVisible(bool(running_tasks))
@@ -1573,7 +1874,10 @@ class MainWindow(QWidget):
                     TaskStatus.ERROR,
                 }
             ):
-                self.tray.showMessage(card.task.name, state.message or STATUS_NAMES[state.status])
+                self.tray.showMessage(
+                    card.task.name,
+                    state.message or status_name(state.status, self.language_manager),
+                )
 
     def _on_quota_bar_clicked(self) -> None:
         if self.kimi_web_quota_service is not None:
@@ -2008,7 +2312,12 @@ class MainWindow(QWidget):
                 self.manager.update(
                     TaskState.new(task_id, status, message="手动更新", source="manual")
                 )
-                result = f"已标记为 {STATUS_NAMES[TaskStatus.parse(status)]}"
+                marked_status = status_name(TaskStatus.parse(status), self.language_manager)
+                result = (
+                    f"已标记为 {marked_status}"
+                    if self.language_manager.language == ZH_CN
+                    else f"Marked as {marked_status}"
+                )
             elif action == "rename":
                 self.rename_task(task_id)
                 return
@@ -2183,6 +2492,7 @@ class MainWindow(QWidget):
             event.ignore()
             return
         self._timer.stop()
+        self._unsubscribe_language()
         self._unsubscribe()
         self._unsubscribe_discovery_health()
         self._unsubscribe_kimi_discovery_health()
