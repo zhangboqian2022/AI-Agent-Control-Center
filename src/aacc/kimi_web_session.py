@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
@@ -146,7 +147,8 @@ class KimiWebSession(QObject):
         self._refresh_watchdog.timeout.connect(self._refresh_watchdog_timeout)
         self._webview_startup_watchdog = QTimer(self)
         self._webview_startup_watchdog.setSingleShot(True)
-        self._webview_startup_watchdog.timeout.connect(self._webview_startup_watchdog_timeout)
+        self._webview_startup_watchdog_attempt: int | None = None
+        self._webview_startup_watchdog_callback: Callable[[], None] | None = None
         self._logout_after_load = False
         self._logout_cleanup_generation: int | None = None
         self._logout_cleanup_watchdog = QTimer(self)
@@ -157,6 +159,9 @@ class KimiWebSession(QObject):
         self._login_container: QWidget | None = None
         self._login_status_label: QLabel | None = None
         self._login_repair_button: QPushButton | None = None
+        self._login_attempt = 0
+        self._active_login_attempt: int | None = None
+        self._login_dialog_open = False
         self._reuse_blocked = False
         self._closed = False
 
@@ -189,13 +194,17 @@ class KimiWebSession(QObject):
             self._login_container = container
             self._login_status_label = status_label
             self._login_repair_button = repair_button
+        self._login_attempt += 1
+        attempt = self._login_attempt
+        self._active_login_attempt = attempt
+        self._login_dialog_open = True
         self._login_dialog.show()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
         self._show_login_waiting()
         self._begin_refresh()
         self._refresh_after_load = True
-        self._webview_startup_watchdog.start(WEBVIEW_STARTUP_TIMEOUT_MS)
+        self._start_webview_startup_watchdog(attempt)
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def refresh(self) -> None:
@@ -238,7 +247,7 @@ class KimiWebSession(QObject):
             return
         self._closed = True
         self._invalidate_refresh()
-        self._webview_startup_watchdog.stop()
+        self._clear_webview_startup_watchdog()
         self._cancel_logout_cleanup()
         if self._login_dialog is not None:
             self._login_dialog.close()
@@ -320,10 +329,36 @@ class KimiWebSession(QObject):
         if generation is not None:
             self._refresh_watchdog_fired(generation)
 
-    def _webview_startup_watchdog_timeout(self) -> None:
-        if self._closed:
-            return
+    def _start_webview_startup_watchdog(self, attempt: int) -> None:
+        self._clear_webview_startup_watchdog()
+        self._webview_startup_watchdog_attempt = attempt
+
+        def callback() -> None:
+            self._webview_startup_watchdog_timeout(attempt)
+
+        self._webview_startup_watchdog_callback = callback
+        self._webview_startup_watchdog.timeout.connect(callback)
+        self._webview_startup_watchdog.start(WEBVIEW_STARTUP_TIMEOUT_MS)
+
+    def _clear_webview_startup_watchdog(self) -> None:
         self._webview_startup_watchdog.stop()
+        callback = self._webview_startup_watchdog_callback
+        if callback is not None:
+            self._webview_startup_watchdog.timeout.disconnect(callback)
+        self._webview_startup_watchdog_callback = None
+        self._webview_startup_watchdog_attempt = None
+
+    def _webview_startup_watchdog_timeout(self, attempt: int | None = None) -> None:
+        if attempt is None:
+            attempt = self._webview_startup_watchdog_attempt
+        if (
+            self._closed
+            or not self._login_dialog_open
+            or attempt is None
+            or attempt != self._active_login_attempt
+        ):
+            return
+        self._clear_webview_startup_watchdog()
         generation = self._active_refresh_generation
         if generation is not None:
             self._complete_refresh(generation)
@@ -359,7 +394,7 @@ class KimiWebSession(QObject):
             return
         status = info.status()
         if status is QWebViewLoadingInfo.LoadStatus.Failed:
-            self._webview_startup_watchdog.stop()
+            self._clear_webview_startup_watchdog()
             logout_generation = self._logout_cleanup_generation
             if logout_generation is not None:
                 self._finish_logout_cleanup(logout_generation)
@@ -373,7 +408,7 @@ class KimiWebSession(QObject):
             self._show_login_diagnostic()
             self.error_occurred.emit(LOGIN_LOAD_ERROR)
             return
-        self._webview_startup_watchdog.stop()
+        self._clear_webview_startup_watchdog()
         self._show_login_container()
         if status is not QWebViewLoadingInfo.LoadStatus.Succeeded:
             return
@@ -386,7 +421,7 @@ class KimiWebSession(QObject):
         if should_fetch:
             self._refresh_after_load = False
         generation = self._active_refresh_generation
-        if generation is None and self._login_dialog is not None:
+        if generation is None and self._login_dialog_open:
             generation = self._begin_refresh()
             should_fetch = True
         if should_fetch and generation is not None:
@@ -453,7 +488,8 @@ class KimiWebSession(QObject):
             _logger.info("Kimi web quota refresh completed")
             self.login_state_changed.emit(True)
             self.quota_received.emit(stats, subscription)
-            if self._login_dialog is not None:
+            if self._login_dialog_open and self._login_dialog is not None:
+                self._login_dialog_closed()
                 self._login_dialog.accept()
             return
         if kind == "unauthorized":
@@ -498,8 +534,8 @@ class KimiWebSession(QObject):
         QDesktopServices.openUrl(QUrl(WEBVIEW2_HELP_URL))
 
     def _login_dialog_closed(self) -> None:
-        self._webview_startup_watchdog.stop()
-        self._login_dialog = None
-        self._login_container = None
-        self._login_status_label = None
-        self._login_repair_button = None
+        self._login_dialog_open = False
+        self._active_login_attempt = None
+        self._clear_webview_startup_watchdog()
+        if not self._closed:
+            self._invalidate_refresh()
