@@ -12,6 +12,16 @@
 
 ## 中文
 
+### 中英文即时切换
+
+- 面板头部新增目的语言按钮：中文界面显示 `EN`，英文界面显示 `中`；点击后
+  macOS 与 Windows 的完整界面立即切换，无需重启。
+- 首次启动跟随系统语言（中文系统使用中文，其他系统使用英文），之后的明确
+  选择会持久保存。切换不会刷新额度，也不会改变监控任务、任务状态、Kimi
+  登录状态、窗口或紧凑模式。
+- 紧凑模式保留在设置和托盘菜单，只是不再占用头部按钮。本功能仍属于 1.4.2
+  候选版，不改变未发布边界。
+
 ### 额度显示
 
 - Codex 只显示一行更大的 `WEEK`，数据优先来自本机已安装 Codex
@@ -80,6 +90,18 @@ mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务
 版本采用 staging/backup/swap 架构。
 
 ## English
+
+### Live Chinese/English UI
+
+- The header shows a destination-language action: `EN` in the Chinese UI and
+  `中` in the English UI. It switches the complete macOS or Windows UI
+  immediately without a restart.
+- First launch follows the system language (Chinese for a Chinese system
+  language, English otherwise), and an explicit selection persists. Switching
+  does not refresh quotas or change monitored tasks or login state, task state,
+  window state, or compact mode.
+- Compact mode remains in Settings and the tray menu; it no longer occupies a
+  header button. This feature remains inside the unreleased 1.4.2 candidate.
 
 ### Quota display
 
@@ -179,6 +201,9 @@ architecture.
   `WEEK`, and `MONTH` refresh together and survive an app restart.
 - [ ] Obtain macOS and Windows manual sign-off for native-session persistence,
   explicit logout across restart, and the shared five-minute refresh cycle.
+- [ ] On macOS, repeatedly switch Chinese/English with real tasks, quota data,
+  and an open Kimi login dialog; confirm all visible UI changes while quota,
+  task/login, window, and compact state remain unchanged.
 - [ ] Confirm a real read-only Codex `WEEK` refresh without starting a task.
 - [ ] Attach the completed checklist evidence to the release PR or notes.
 - [ ] Only then create tag and release `v1.4.2`.

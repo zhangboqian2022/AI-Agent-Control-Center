@@ -45,6 +45,10 @@ Commit and candidate SHA-256:
   shortcut follows the selected option; no startup/login item was added.
 - [ ] **First launch and tray**: the installed AACC panel opens, remains
   responsive, stays in the tray, and restores after hide/minimize.
+- [ ] **Live language switching**: repeatedly switch language with real tasks,
+  quota data, and an open Kimi login dialog. The complete visible UI updates
+  each time; the chosen language persists after restart; quota values, task
+  selection/state, Kimi login state, and compact mode do not change.
 - [ ] **Discovery and focus**: real running Kimi/Codex sessions are discovered
   with status lights, and **Switch to task** focuses the intended terminal
   window by title.
