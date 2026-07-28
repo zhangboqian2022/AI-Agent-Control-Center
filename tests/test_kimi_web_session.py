@@ -54,6 +54,7 @@ class FakeView:
         self.pending_script_callbacks = []
         self.cookies_deleted = False
         self.deleted = False
+        self.stopped = False
 
     def settings(self):
         return self._settings
@@ -76,6 +77,9 @@ class FakeView:
 
     def deleteLater(self):
         self.deleted = True
+
+    def stop(self):
+        self.stopped = True
 
 
 class FakeLoadingInfo:
@@ -793,6 +797,7 @@ def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_pat
 
     session._refreshing = True
     session._refresh_after_load = True
+    session._background_navigation_pending = True
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
     assert errors == ["Kimi 官网加载失败"]
     assert session._refreshing is False
@@ -954,6 +959,11 @@ def test_login_dialog_close_invalidates_attempt_and_ignores_late_webview_events(
     assert generation is not None
 
     session._login_dialog_closed()
+    session.login_state.set_may_reuse(True)
+    session.refresh()
+    script_count = len(session.view.scripts)
+    background_generation = session._active_refresh_generation
+    assert background_generation is not None
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
     session._handle_bridge(
@@ -965,10 +975,11 @@ def test_login_dialog_close_invalidates_attempt_and_ignores_late_webview_events(
         }
     )
 
-    assert session._active_refresh_generation is None
-    assert session._refreshing is False
-    assert session.view.scripts == []
-    assert session.login_state.may_reuse() is False
+    assert session._active_refresh_generation == background_generation
+    assert session._refreshing is True
+    assert len(session.view.scripts) == script_count
+    assert session.view.stopped is True
+    assert session.login_state.may_reuse() is True
     assert quotas == []
     assert errors == []
     assert widgets["repair"].visible is False
