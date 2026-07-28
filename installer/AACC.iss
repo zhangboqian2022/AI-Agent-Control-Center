@@ -310,6 +310,50 @@ begin
     'Check your network connection and retry.';
 end;
 
+function IsUsableWebView2RuntimeVersion(const RuntimeVersion: String): Boolean;
+var
+  Value: String;
+  Component: String;
+  DotPosition: Integer;
+  ComponentCount: Integer;
+  DigitIndex: Integer;
+  HasNonZeroDigit: Boolean;
+begin
+  Result := False;
+  Value := Trim(RuntimeVersion);
+  ComponentCount := 0;
+  HasNonZeroDigit := False;
+  while Value <> '' do
+  begin
+    DotPosition := Pos('.', Value);
+    if DotPosition = 0 then
+    begin
+      Component := Value;
+      Value := '';
+    end
+    else
+    begin
+      Component := Copy(Value, 1, DotPosition - 1);
+      Delete(Value, 1, DotPosition);
+    end;
+    if Component = '' then
+      Exit;
+    ComponentCount := ComponentCount + 1;
+    for DigitIndex := 1 to Length(Component) do
+    begin
+      if not (Component[DigitIndex] in ['0'..'9']) then
+        Exit;
+      if Component[DigitIndex] <> '0' then
+        HasNonZeroDigit := True;
+    end;
+    if (DotPosition <> 0) and (Value = '') then
+      Exit;
+  end;
+  if ComponentCount <> 4 then
+    Exit;
+  Result := HasNonZeroDigit;
+end;
+
 function WebView2RuntimeInstalled: Boolean;
 var
   RuntimeVersion: String;
@@ -322,8 +366,7 @@ begin
     'pv',
     RuntimeVersion
   ) and
-     (Trim(RuntimeVersion) <> '') and
-     (Trim(RuntimeVersion) <> '0.0.0.0') then
+     IsUsableWebView2RuntimeVersion(RuntimeVersion) then
   begin
     Result := True;
     Exit;
@@ -335,8 +378,7 @@ begin
     'pv',
     RuntimeVersion
   ) and
-     (Trim(RuntimeVersion) <> '') and
-     (Trim(RuntimeVersion) <> '0.0.0.0') then
+     IsUsableWebView2RuntimeVersion(RuntimeVersion) then
     Result := True;
 end;
 
