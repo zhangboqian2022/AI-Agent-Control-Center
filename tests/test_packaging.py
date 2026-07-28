@@ -366,8 +366,8 @@ def test_windows_webview_smoke_exercises_a_visible_native_controller_after_setup
 
     assert 'sys.platform != "win32"' in script
     assert "unsupported-platform" in script
-    assert "from aacc.webview_smoke import run_native_webview_smoke" in script
-    assert "raise SystemExit(run_native_webview_smoke())" in script
+    assert 'import_module("aacc.webview_smoke")' in script
+    assert "raise SystemExit(webview_smoke.run_native_webview_smoke())" in script
     assert "class NativeWebViewSmoke" not in script
     assert "QWebView" not in script
     assert "SMOKE_TIMEOUT_MS = 30_000" in module
