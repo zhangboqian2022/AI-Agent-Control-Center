@@ -1,6 +1,28 @@
 from __future__ import annotations
 
 
+def test_smoke_result_uses_platform_independent_lf_evidence(monkeypatch, tmp_path) -> None:
+    from aacc.webview_smoke import (  # noqa: PLC0415 - module is the behavior under test
+        SMOKE_RESULT_PATH_ENV,
+        _record_result,
+    )
+
+    result_path = tmp_path / "native-webview-result.txt"
+    monkeypatch.setenv(SMOKE_RESULT_PATH_ENV, str(result_path))
+    open_calls: list[dict[str, object]] = []
+    original_open = type(result_path).open
+
+    def recording_open(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        open_calls.append(dict(kwargs))
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(result_path), "open", recording_open)
+
+    assert _record_result("success") is True
+    assert open_calls[-1]["newline"] == "\n"
+    assert result_path.read_bytes() == b"AACC_WEBVIEW_SMOKE category=success\n"
+
+
 def test_smoke_result_is_persisted_as_a_fixed_sanitized_category(monkeypatch, tmp_path) -> None:
     from aacc.webview_smoke import (  # noqa: PLC0415 - module is the behavior under test
         SMOKE_RESULT_PATH_ENV,

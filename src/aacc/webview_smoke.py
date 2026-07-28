@@ -38,10 +38,8 @@ def _record_result(category: str) -> bool:
     try:
         path = Path(result_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            f"AACC_WEBVIEW_SMOKE category={safe_category}\n",
-            encoding="utf-8",
-        )
+        with path.open("w", encoding="utf-8", newline="\n") as evidence:
+            evidence.write(f"AACC_WEBVIEW_SMOKE category={safe_category}\n")
     except OSError:
         return False
     return True
