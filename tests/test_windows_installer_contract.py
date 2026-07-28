@@ -71,10 +71,13 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert "ShutdownControlTimeoutMilliseconds = 25000" in code
     assert "CreateProcessW@kernel32.dll" in code
     assert "WaitForSingleObject(" in code
-    assert "WaitResult = WAIT_TIMEOUT" in code
+    assert "WaitResult = AACC_WAIT_TIMEOUT" in code
     assert "TerminateProcess(ProcessInfo.hProcess, 124)" in code
     assert "if not TerminateProcess(ProcessInfo.hProcess, 124) then" in code
-    assert "WaitForSingleObject(ProcessInfo.hProcess, 5000) <> WAIT_OBJECT_0" in code
+    assert (
+        "WaitForSingleObject(ProcessInfo.hProcess, 5000) <> AACC_WAIT_OBJECT_0"
+        in code
+    )
     assert "newly created control invocation" in code
     assert "never a handle to the existing main AACC process" in code
     assert "OpenProcess(" not in code
@@ -141,6 +144,24 @@ def test_inno_setup_preflights_every_packaged_replacement_before_writing() -> No
         "AACC_PREFLIGHT result=target-unavailable",
     ):
         assert required in code
+    for inno_or_win32_name in (
+        "WAIT_OBJECT_0",
+        "WAIT_TIMEOUT",
+        "STARTF_USESHOWWINDOW",
+        "INVALID_FILE_ATTRIBUTES",
+        "INVALID_HANDLE_VALUE",
+        "ERROR_FILE_NOT_FOUND",
+        "ERROR_PATH_NOT_FOUND",
+        "GENERIC_READ",
+        "GENERIC_WRITE",
+        "DELETE_ACCESS",
+        "OPEN_EXISTING",
+        "FILE_ATTRIBUTE_NORMAL",
+        "FILE_FLAG_BACKUP_SEMANTICS",
+    ):
+        assert not re.search(
+            rf"(?m)^\s{{2}}{inno_or_win32_name}\s*=", code
+        ), f"custom constant must be AACC-prefixed: {inno_or_win32_name}"
     assert "ShutdownExistingAACC(ErrorMessage)" in prepare
     assert "ValidatePackagedTargetsForInstall(ErrorMessage)" in prepare
     assert prepare.index("ShutdownExistingAACC(ErrorMessage)") < prepare.index(
