@@ -320,7 +320,7 @@ var
   HasNonZeroDigit: Boolean;
 begin
   Result := False;
-  Value := Trim(RuntimeVersion);
+  Value := RuntimeVersion;
   ComponentCount := 0;
   HasNonZeroDigit := False;
   while Value <> '' do
