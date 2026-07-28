@@ -73,8 +73,11 @@ scripts\build_windows_installer.ps1
   门面。
 - Setup 在升级/卸载前使用 `--shutdown-for-update` 请求 20 秒内优雅退出；
   候选 CI 已加入 Windows Server 2022/2025 的冻结包启动、broker、安装、重装、
-  回滚、卸载、ACL 与进程清理产品冒烟。**最终候选提交的 hosted 全量结果尚待
-  记录，不能写成已通过。**
+  写入前锁目标拒绝、卸载、ACL 与进程清理产品冒烟。候选提交 `0b2730f` 的
+  hosted 全量运行
+  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30319350661`
+  已全绿，Setup、SHA-256 与便携 ZIP 也通过严格内容校验并成功上传；该证据不
+  替代 Windows 10/11 真机门禁。
 - 额度最终布局：Codex 仅一行 `WEEK`；Kimi 为 `5H`、`WEEK`、`MONTH`，行内
   显示百分比、进度条和完整本地重置日期时间。Kimi 会员网页会话在 AACC 本地
   缓存到明确退出，并每五分钟一起刷新三窗口；额度元数据查询不消耗模型 Token。
