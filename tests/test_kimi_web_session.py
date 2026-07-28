@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
+from types import SimpleNamespace
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QWindow
@@ -161,7 +163,7 @@ def test_qt_window_container_survives_close_when_dialog_is_retained(qapp):
     assert isValid(window)
 
 
-def test_native_webview_initialization_is_once_and_must_precede_app(monkeypatch):
+def test_native_webview_initialization_is_once_and_must_precede_app(monkeypatch, tmp_path):
     calls = []
 
     class FakeQtWebView:
@@ -178,8 +180,8 @@ def test_native_webview_initialization_is_once_and_must_precede_app(monkeypatch)
     monkeypatch.setattr(web_session, "QtWebView", FakeQtWebView)
     monkeypatch.setattr(web_session, "QGuiApplication", NoApplication)
 
-    web_session.initialize_native_webview()
-    web_session.initialize_native_webview()
+    web_session.initialize_native_webview(tmp_path)
+    web_session.initialize_native_webview(tmp_path)
 
     assert calls == [True]
 
@@ -192,11 +194,58 @@ def test_native_webview_initialization_is_once_and_must_precede_app(monkeypatch)
 
     monkeypatch.setattr(web_session, "QGuiApplication", ExistingApplication)
     try:
-        web_session.initialize_native_webview()
+        web_session.initialize_native_webview(tmp_path)
     except RuntimeError as error:
         assert "before QApplication" in str(error)
     else:
         raise AssertionError("late native webview initialization must fail")
+
+
+def test_windows_native_webview_uses_writable_aacc_user_data_before_initialize(
+    monkeypatch, tmp_path
+):
+    calls = []
+    local_app_data = tmp_path / "Local App Data"
+    expected = local_app_data / "AACC" / "kimi-web-session"
+    monkeypatch.setattr(
+        web_session,
+        "sys",
+        SimpleNamespace(platform="win32"),
+        raising=False,
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("WEBVIEW2_USER_DATA_FOLDER", str(tmp_path / "stale-override"))
+    monkeypatch.setattr(web_session, "_webview_initialized", False)
+    monkeypatch.setattr(
+        web_session,
+        "protect_directory",
+        lambda path: calls.append(("protect", path)),
+    )
+
+    class FakeQtWebView:
+        @staticmethod
+        def initialize():
+            calls.append(
+                (
+                    "initialize",
+                    os.environ.get("WEBVIEW2_USER_DATA_FOLDER"),
+                )
+            )
+
+    class NoApplication:
+        @staticmethod
+        def instance():
+            return None
+
+    monkeypatch.setattr(web_session, "QtWebView", FakeQtWebView)
+    monkeypatch.setattr(web_session, "QGuiApplication", NoApplication)
+
+    web_session.initialize_native_webview(tmp_path / "roaming")
+
+    assert calls == [
+        ("protect", expected),
+        ("initialize", str(expected)),
+    ]
 
 
 def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path):

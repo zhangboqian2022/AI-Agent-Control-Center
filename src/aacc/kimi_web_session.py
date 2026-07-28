@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -28,7 +30,17 @@ _webview_initialized = False
 _logger = logging.getLogger("aacc.kimi_web_session")
 
 
-def initialize_native_webview() -> None:
+def native_webview_user_data_path(config_dir: Path) -> Path:
+    """Return AACC's writable native web-session directory."""
+
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "AACC" / "kimi-web-session"
+    return config_dir / "kimi-web-session"
+
+
+def initialize_native_webview(config_dir: Path) -> None:
     """Initialize Qt's native backend before QApplication is constructed."""
 
     global _webview_initialized
@@ -36,6 +48,10 @@ def initialize_native_webview() -> None:
         return
     if QGuiApplication.instance() is not None:
         raise RuntimeError("native web view must be initialized before QApplication")
+    if sys.platform == "win32":
+        storage_path = native_webview_user_data_path(config_dir)
+        protect_directory(storage_path)
+        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(storage_path)
     QtWebView.initialize()
     _webview_initialized = True
 
@@ -121,7 +137,7 @@ class KimiWebSession(QObject):
         super().__init__(parent)
         if not _webview_initialized:
             raise RuntimeError("native web view is not initialized")
-        self.storage_path = config_dir / "kimi-web-session"
+        self.storage_path = native_webview_user_data_path(config_dir)
         protect_directory(self.storage_path)
         self.login_state = login_state or KimiWebLoginStateStore(config_dir)
         self.language_manager = language_manager or LanguageManager(ZH_CN)
