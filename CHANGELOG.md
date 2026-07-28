@@ -6,7 +6,7 @@
 
 [Bilingual candidate notes](docs/release-notes-1.4.2.md)
 
-- [UX] Add live Chinese/English switching for the complete macOS and Windows UI. First launch follows the system language, explicit selection persists, and switching does not refresh quotas or change monitored tasks or login state; compact mode remains in Settings and the tray menu.
+- [UX] Add live Chinese/English switching for the complete macOS and Windows UI, immediately without a restart. First launch follows the system language, explicit selection persists, and switching does not refresh quotas or change monitored tasks or login state; compact mode remains in Settings and the tray menu.
 - [Quota] Render Codex as one larger `WEEK` row and Kimi as `5H`, `WEEK`, and `MONTH`, with full local reset date/time in each available row. Refresh Kimi’s cached membership session every five minutes without consuming model tokens.
 - [Windows] Add the per-user, non-elevated `AACC-1.4.2-Setup.exe`; it installs under `%LocalAppData%\Programs\AACC`, supports graceful in-place upgrade/uninstall, and preserves `%APPDATA%\AACC`.
 - [Windows] Provision Microsoft's Evergreen WebView2 Runtime per user only when absent; Kimi login replaces a non-starting native surface with a fixed 15-second repair diagnostic instead of a blank dialog.
