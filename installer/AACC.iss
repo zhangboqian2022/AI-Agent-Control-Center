@@ -51,19 +51,19 @@ const
   AACCWindowTitle = 'AI Agent Control Center';
   ShutdownCapabilityName = 'shutdown-v1.capability';
   ShutdownControlTimeoutMilliseconds = 25000;
-  WAIT_OBJECT_0 = 0;
-  WAIT_TIMEOUT = 258;
-  STARTF_USESHOWWINDOW = 1;
-  INVALID_FILE_ATTRIBUTES = $FFFFFFFF;
-  INVALID_HANDLE_VALUE = $FFFFFFFF;
-  ERROR_FILE_NOT_FOUND = 2;
-  ERROR_PATH_NOT_FOUND = 3;
-  GENERIC_READ = $80000000;
-  GENERIC_WRITE = $40000000;
-  DELETE_ACCESS = $00010000;
-  OPEN_EXISTING = 3;
-  FILE_ATTRIBUTE_NORMAL = $80;
-  FILE_FLAG_BACKUP_SEMANTICS = $02000000;
+  AACC_WAIT_OBJECT_0 = 0;
+  AACC_WAIT_TIMEOUT = 258;
+  AACC_STARTF_USESHOWWINDOW = 1;
+  AACC_INVALID_FILE_ATTRIBUTES = $FFFFFFFF;
+  AACC_INVALID_HANDLE_VALUE = $FFFFFFFF;
+  AACC_ERROR_FILE_NOT_FOUND = 2;
+  AACC_ERROR_PATH_NOT_FOUND = 3;
+  AACC_GENERIC_READ = $80000000;
+  AACC_GENERIC_WRITE = $40000000;
+  AACC_DELETE_ACCESS = $00010000;
+  AACC_OPEN_EXISTING = 3;
+  AACC_FILE_ATTRIBUTE_NORMAL = $80;
+  AACC_FILE_FLAG_BACKUP_SEMANTICS = $02000000;
   PreflightRetryCount = 5;
   PreflightRetryDelayMilliseconds = 1000;
   CleanupRetryCount = 3;
@@ -160,7 +160,7 @@ begin
   ResultCode := -1;
   CommandLine := '"' + AACCPath + '" --shutdown-for-update';
   StartupInfo.cb := SizeOf(StartupInfo);
-  StartupInfo.dwFlags := STARTF_USESHOWWINDOW;
+  StartupInfo.dwFlags := AACC_STARTF_USESHOWWINDOW;
   StartupInfo.wShowWindow := SW_HIDE;
   if not CreateProcess(
     AACCPath,
@@ -182,17 +182,17 @@ begin
       ProcessInfo.hProcess,
       ShutdownControlTimeoutMilliseconds
     );
-    if WaitResult = WAIT_TIMEOUT then
+    if WaitResult = AACC_WAIT_TIMEOUT then
     begin
       { This handle belongs only to the newly created control invocation.
         It is never a handle to the existing main AACC process. }
       if not TerminateProcess(ProcessInfo.hProcess, 124) then
         Exit;
-      if WaitForSingleObject(ProcessInfo.hProcess, 5000) <> WAIT_OBJECT_0 then
+      if WaitForSingleObject(ProcessInfo.hProcess, 5000) <> AACC_WAIT_OBJECT_0 then
         Exit;
       Exit;
     end;
-    if WaitResult <> WAIT_OBJECT_0 then
+    if WaitResult <> AACC_WAIT_OBJECT_0 then
       Exit;
     if not GetExitCodeProcess(ProcessInfo.hProcess, ExitCode) then
       Exit;
@@ -308,11 +308,11 @@ var
 begin
   Result := False;
   Attributes := WinGetFileAttributes(Path);
-  if Attributes = INVALID_FILE_ATTRIBUTES then
+  if Attributes = AACC_INVALID_FILE_ATTRIBUTES then
   begin
     ErrorCode := DLLGetLastError;
-    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
-       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    if (ErrorCode = AACC_ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = AACC_ERROR_PATH_NOT_FOUND) then
       Result := True;
     Exit;
   end;
@@ -330,11 +330,11 @@ var
 begin
   Result := False;
   Attributes := WinGetFileAttributes(Path);
-  if Attributes = INVALID_FILE_ATTRIBUTES then
+  if Attributes = AACC_INVALID_FILE_ATTRIBUTES then
   begin
     ErrorCode := DLLGetLastError;
-    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
-       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    if (ErrorCode = AACC_ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = AACC_ERROR_PATH_NOT_FOUND) then
       Result := True;
     Exit;
   end;
@@ -345,22 +345,22 @@ begin
   begin
     FileHandle := WinCreateFile(
       Path,
-      GENERIC_READ or GENERIC_WRITE or DELETE_ACCESS,
+      AACC_GENERIC_READ or AACC_GENERIC_WRITE or AACC_DELETE_ACCESS,
       0,
       0,
-      OPEN_EXISTING,
-      FILE_ATTRIBUTE_NORMAL,
+      AACC_OPEN_EXISTING,
+      AACC_FILE_ATTRIBUTE_NORMAL,
       0
     );
-    if FileHandle <> INVALID_HANDLE_VALUE then
+    if FileHandle <> AACC_INVALID_HANDLE_VALUE then
     begin
       CloseHandle(FileHandle);
       Result := True;
       Exit;
     end;
     ErrorCode := DLLGetLastError;
-    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
-       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    if (ErrorCode = AACC_ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = AACC_ERROR_PATH_NOT_FOUND) then
     begin
       Result := True;
       Exit;
@@ -379,11 +379,11 @@ var
 begin
   Result := False;
   Attributes := WinGetFileAttributes(Path);
-  if Attributes = INVALID_FILE_ATTRIBUTES then
+  if Attributes = AACC_INVALID_FILE_ATTRIBUTES then
   begin
     ErrorCode := DLLGetLastError;
-    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
-       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    if (ErrorCode = AACC_ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = AACC_ERROR_PATH_NOT_FOUND) then
       Result := True;
     Exit;
   end;
@@ -394,22 +394,22 @@ begin
   begin
     DirectoryHandle := WinCreateFile(
       Path,
-      GENERIC_READ or DELETE_ACCESS,
+      AACC_GENERIC_READ or AACC_DELETE_ACCESS,
       0,
       0,
-      OPEN_EXISTING,
-      FILE_FLAG_BACKUP_SEMANTICS,
+      AACC_OPEN_EXISTING,
+      AACC_FILE_FLAG_BACKUP_SEMANTICS,
       0
     );
-    if DirectoryHandle <> INVALID_HANDLE_VALUE then
+    if DirectoryHandle <> AACC_INVALID_HANDLE_VALUE then
     begin
       CloseHandle(DirectoryHandle);
       Result := True;
       Exit;
     end;
     ErrorCode := DLLGetLastError;
-    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
-       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    if (ErrorCode = AACC_ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = AACC_ERROR_PATH_NOT_FOUND) then
     begin
       Result := True;
       Exit;
@@ -777,11 +777,11 @@ begin
   end;
   InternalRoot := ExpandConstant('{app}\_internal');
   Attributes := WinGetFileAttributes(InternalRoot);
-  if Attributes = INVALID_FILE_ATTRIBUTES then
+  if Attributes = AACC_INVALID_FILE_ATTRIBUTES then
   begin
     ErrorCode := DLLGetLastError;
-    if (ErrorCode = ERROR_FILE_NOT_FOUND) or
-       (ErrorCode = ERROR_PATH_NOT_FOUND) then
+    if (ErrorCode = AACC_ERROR_FILE_NOT_FOUND) or
+       (ErrorCode = AACC_ERROR_PATH_NOT_FOUND) then
     begin
       Result := True;
       Exit;
