@@ -4,7 +4,9 @@
 
 ## Panel controls
 
-Clicking a card selects it and leaves AACC visible. Double-clicking focuses the configured target and starts the platform voice input: macOS dictation on Mac or Win+H on Windows. The context menu contains **Switch to task**, manual state controls, reset, rename, and copy-task-info. The top arrow switches compact/full mode, the gear opens settings, and the dash hides the panel to the macOS menu bar or Windows system tray. Drag the panel to move it and use the lower-right corner to resize it.
+Clicking a card selects it and leaves AACC visible. Double-clicking focuses the configured target and starts the platform voice input: macOS dictation on Mac or Win+H on Windows. The context menu contains **Switch to task**, manual state controls, reset, rename, and copy-task-info. The header `EN`/`中` action provides live Chinese/English switching for the complete UI, the gear opens Settings, and the dash hides the panel to the macOS menu bar or Windows system tray. The button shows the destination language: `EN` while the UI is Chinese and `中` while it is English.
+
+On first launch, AACC uses Chinese for a Chinese system language and English for every other system language. A selection made with the header button persists across restarts on both macOS and Windows. The switch only retranslates retained UI state: it does not refresh quotas or change monitored tasks or login state. Compact mode remains in Settings and the tray menu; changing language leaves that state unchanged. Drag the panel to move it and use the lower-right corner to resize it.
 
 ## Codex task discovery
 

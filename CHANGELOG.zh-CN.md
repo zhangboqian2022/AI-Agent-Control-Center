@@ -4,6 +4,7 @@
 
 [中英文候选说明](docs/release-notes-1.4.2.md)
 
+- [体验] 完整 macOS 与 Windows 界面支持中英文即时切换；首次启动跟随系统语言，明确选择会持久保存，切换不会刷新额度，也不会改变监控任务或登录状态；紧凑模式保留在设置和托盘菜单。
 - [额度] Codex 只显示一行更清晰的 `WEEK`；Kimi 按 `5H`、`WEEK`、`MONTH` 显示，每个可用窗口均包含完整本地重置日期时间。缓存的 Kimi 会员会话每五分钟刷新一次，不消耗模型 Token。
 - [Windows] 新增当前用户、无需提权的 `AACC-1.4.2-Setup.exe`，默认安装到 `%LocalAppData%\Programs\AACC`，支持优雅原位升级/卸载，并保留 `%APPDATA%\AACC`。
 - [Windows] 仅在运行时不存在时为当前用户配置 Microsoft Evergreen WebView2 运行时；Kimi 登录原生视图不能启动时，用固定的 15 秒修复诊断替代空白对话框。

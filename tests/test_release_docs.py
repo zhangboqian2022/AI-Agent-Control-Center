@@ -83,6 +83,62 @@ def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
             assert term in text
 
 
+def test_docs_describe_live_language_toggle_and_preserved_compact_mode() -> None:
+    english = "\n".join(
+        _read(name)
+        for name in (
+            "README.md",
+            "docs/user-guide.en.md",
+            "CHANGELOG.md",
+        )
+    )
+    chinese = "\n".join(
+        _read(name)
+        for name in (
+            "README.zh-CN.md",
+            "docs/user-guide.md",
+            "CHANGELOG.zh-CN.md",
+        )
+    )
+
+    assert "live Chinese/English" in english
+    assert "compact mode remains in Settings and the tray menu" in english
+    assert "does not refresh quotas or change monitored tasks or login state" in english
+    assert "中英文即时切换" in chinese
+    assert "紧凑模式保留在设置和托盘菜单" in chinese
+    assert "不会刷新额度，也不会改变监控任务或登录状态" in chinese
+
+
+def test_screenshot_uses_explicit_synthetic_chinese_locale() -> None:
+    script = _read("scripts/capture_panel_screenshot.py")
+
+    assert "LanguageManager(ZH_CN" in script
+    assert "language_manager=language_manager" in script
+    assert 'findChild(QPushButton, "languageButton")' in script
+
+
+def test_bilingual_manual_gates_cover_repeated_live_switching() -> None:
+    english_checklist = _read("docs/windows-verification-checklist.en.md")
+    chinese_checklist = _read("docs/windows-verification-checklist.zh-CN.md")
+    notes = _read("docs/release-notes-1.4.2.md")
+
+    assert re.search(
+        r"- \[ \].*repeated.*language.*real tasks.*quota.*open Kimi login dialog",
+        english_checklist,
+        re.DOTALL | re.IGNORECASE,
+    )
+    assert re.search(
+        r"- \[ \].*反复.*语言.*真实任务.*额度.*打开的\s+Kimi 登录对话框",
+        chinese_checklist,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"- \[ \].*macOS.*(?:中英文|Chinese/English).*(?:Kimi 登录|Kimi login)",
+        notes,
+        re.DOTALL,
+    )
+
+
 def test_release_docs_keep_windows_manual_gates_open() -> None:
     notes = _read("docs/release-notes-1.4.2.md")
 

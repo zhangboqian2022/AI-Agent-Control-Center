@@ -19,7 +19,7 @@ if hasattr(time, "tzset"):
     time.tzset()
 
 from PySide6.QtCore import QObject, QSettings, Signal  # noqa: E402
-from PySide6.QtWidgets import QApplication, QFrame, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton  # noqa: E402
 
 from aacc import gui as gui_module  # noqa: E402
 from aacc.automation import MacAutomation  # noqa: E402
@@ -32,6 +32,7 @@ from aacc.codex_quota import (  # noqa: E402
 from aacc.codex_quota_service import CodexQuotaService  # noqa: E402
 from aacc.config import default_config  # noqa: E402
 from aacc.gui import MainWindow  # noqa: E402
+from aacc.i18n import ZH_CN, LanguageManager  # noqa: E402
 from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail  # noqa: E402
 from aacc.models import AgentConfig, TaskConfig, TaskState, TerminalConfig  # noqa: E402
 from aacc.persistence import StateStore  # noqa: E402
@@ -147,6 +148,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     tmp = Path(tempfile.mkdtemp())
     config = default_config()
+    settings = QSettings(str(tmp / "s.ini"), QSettings.Format.IniFormat)
+    language_manager = LanguageManager(ZH_CN, settings)
     store = StateStore(tmp / "demo.db")
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
@@ -171,7 +174,8 @@ def main() -> int:
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
-        settings=QSettings(str(tmp / "s.ini"), QSettings.Format.IniFormat),
+        settings=settings,
+        language_manager=language_manager,
         kimi_web_quota_service=kimi_web_quota_service,  # type: ignore[arg-type]
         codex_quota_service=codex_quota_service,
         open_url=lambda _url: None,
@@ -184,6 +188,8 @@ def main() -> int:
         if header_layout is not None:
             header_layout.setSpacing(4)
     title = window.findChild(QLabel, "title")
+    language_button = window.findChild(QPushButton, "languageButton")
+    assert language_button is not None and language_button.text() == "EN"
 
     demo = [
         _task(
