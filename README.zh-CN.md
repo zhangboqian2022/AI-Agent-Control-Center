@@ -73,6 +73,11 @@ cd AI-Agent-Control-Center
 
 Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC` 下由 AACC 管理的设置、历史、数据库、凭据和 Kimi 复用决定。原生 WebView 存储由操作系统另行管理，因此保留 `%APPDATA%\AACC` 不代表安装器保存了网页会话。
 
+Setup 还会在写入 AACC 文件前为当前用户确保 Microsoft Evergreen WebView2
+运行时可用；仅在运行时不存在时才需要网络下载，已安装且可用的运行时会被复用。
+如果 Kimi 登录的原生视图无法开始加载，AACC 会用 15 秒诊断和 Microsoft
+WebView2 修复页面链接替换空白界面。
+
 Windows 候选版尚未签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对配套 SHA-256，再选择“更多信息 → 仍要运行”。敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。
 
 开发者仍可使用 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和 `.\scripts\build_windows.ps1` 从源码生成 onedir 载荷。portable 包只用于 CI/调试，不是面向普通用户的主下载。

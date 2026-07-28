@@ -331,18 +331,19 @@ def test_windows_installer_requires_webview2_runtime_before_installing() -> None
     assert "WebView2RuntimeInstalled" in installer.split("EnsureWebView2Runtime", 1)[1]
     prepare_to_install = installer.split("function PrepareToInstall", 1)[1]
     assert "EnsureWebView2Runtime(ErrorMessage)" in prepare_to_install
-    assert "Result := ErrorMessage;" in prepare_to_install.split(
-        "EnsureWebView2Runtime(ErrorMessage)", 1
-    )[1]
+    assert (
+        "Result := ErrorMessage;"
+        in prepare_to_install.split("EnsureWebView2Runtime(ErrorMessage)", 1)[1]
+    )
     assert "Microsoft Edge WebView2 Runtime" in installer
     assert "WebView2 运行时" in installer
 
 
 def test_windows_installer_rejects_malformed_or_zero_webview2_runtime_versions() -> None:
     installer = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
-    version_validator = installer.split(
-        "function IsUsableWebView2RuntimeVersion", 1
-    )[1].split("function WebView2RuntimeInstalled", 1)[0]
+    version_validator = installer.split("function IsUsableWebView2RuntimeVersion", 1)[1].split(
+        "function WebView2RuntimeInstalled", 1
+    )[0]
     runtime_gate = installer.split("function WebView2RuntimeInstalled", 1)[1].split(
         "function EnsureWebView2Runtime", 1
     )[0]
@@ -353,6 +354,82 @@ def test_windows_installer_rejects_malformed_or_zero_webview2_runtime_versions()
     assert "StrToInt" not in version_validator
     assert "Trim(RuntimeVersion)" not in version_validator
     assert runtime_gate.count("IsUsableWebView2RuntimeVersion(RuntimeVersion)") == 2
+
+
+def test_windows_webview_smoke_exercises_a_visible_native_controller_after_setup() -> None:
+    smoke = ROOT / "scripts" / "smoke_windows_webview.py"
+    assert smoke.exists()
+    script = smoke.read_text(encoding="utf-8")
+
+    assert 'sys.platform != "win32"' in script
+    assert "unsupported-platform" in script
+    assert "SMOKE_TIMEOUT_MS = 30_000" in script
+    assert script.index("QtWebView.initialize()") < script.index("QApplication(")
+    assert "QTimer" in script
+    assert "QDialog" in script
+    assert "_dialog.show()" in script
+    assert "QWidget.createWindowContainer(" in script
+    assert "view.loadHtml(" in script
+    assert "LoadStatus.Succeeded" in script
+    assert "runJavaScript" in script
+    assert "unexpected-javascript-result" in script
+    assert "timeout" in script
+    assert "EXIT_FAILURE = 1" in script
+    assert "self._exit_code = EXIT_FAILURE" in script
+    assert "QtWebEngine" not in script
+
+
+def test_windows_2025_ci_runs_native_webview_smoke_after_installed_product_smoke() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    package_job = workflow.split("  windows-package-2025:", 1)[1].split(
+        "      - name: Package and strictly verify primary artifacts", 1
+    )[0]
+
+    installed_smoke = package_job.index("Smoke frozen and installed Windows product")
+    native_smoke = package_job.index("Smoke native Windows WebView")
+    assert installed_smoke < native_smoke
+    native_smoke_step = package_job[native_smoke:]
+    assert '$env:QT_QPA_PLATFORM = "windows"' in native_smoke_step
+    assert "uv run python scripts/smoke_windows_webview.py" in native_smoke_step
+
+
+def test_windows_webview_docs_explain_runtime_provisioning_and_manual_coverage() -> None:
+    def normalized(name: str) -> str:
+        return " ".join((ROOT / name).read_text(encoding="utf-8").split())
+
+    english_docs = (
+        "README.md",
+        "docs/user-guide.en.md",
+        "docs/release-notes-1.4.2.md",
+        "CHANGELOG.md",
+    )
+    for name in english_docs:
+        assert "Evergreen WebView2 Runtime" in normalized(name)
+
+    chinese_docs = (
+        "README.zh-CN.md",
+        "docs/user-guide.md",
+        "docs/release-notes-1.4.2.md",
+        "CHANGELOG.zh-CN.md",
+    )
+    for name in chinese_docs:
+        assert "Evergreen WebView2 运行时" in normalized(name)
+
+    english_readme = normalized("README.md")
+    assert "only if the Runtime is absent" in english_readme
+    assert "15-second diagnostic" in english_readme
+
+    chinese_readme = normalized("README.zh-CN.md")
+    assert "仅在运行时不存在时" in chinese_readme
+    assert "15 秒诊断" in chinese_readme
+
+    english_checklist = normalized("docs/windows-verification-checklist.en.md")
+    assert "without the WebView2 Runtime" in english_checklist
+    assert "already-installed WebView2 Runtime" in english_checklist
+
+    chinese_checklist = normalized("docs/windows-verification-checklist.zh-CN.md")
+    assert "未安装 WebView2 运行时" in chinese_checklist
+    assert "已安装 WebView2 运行时" in chinese_checklist
 
 
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:

@@ -123,6 +123,11 @@ jobs:
       - name: Smoke frozen and installed Windows product
         shell: powershell
         run: ./scripts/test_windows_package.ps1
+      - name: Smoke native Windows WebView
+        shell: powershell
+        run: |
+          $env:QT_QPA_PLATFORM = "windows"
+          uv run python scripts/smoke_windows_webview.py
       - name: Package and strictly verify primary artifacts
         shell: powershell
         run: |

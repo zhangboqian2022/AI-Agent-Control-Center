@@ -32,6 +32,12 @@ The primary Windows 1.4.2 candidate is `AACC-1.4.2-Setup.exe`; ordinary users do
 
 Running the same Setup upgrades the existing per-user copy after a bounded graceful shutdown. Uninstall removes the installed program, Start Menu entry, optional desktop shortcut, and uninstall registration. Upgrade and uninstall preserve AACC-owned configuration, task history, database, credentials, and the protected reuse decision under `%APPDATA%\AACC`. The operating system owns the native WebView store separately; this Setup lifecycle does not claim to preserve or remove that website session. Use AACC’s explicit Kimi logout to disable reuse and request bounded native site-data cleanup.
 
+Before installing AACC files, Setup ensures that Microsoft's Evergreen WebView2
+Runtime is available for the current user. Network access is needed only if the
+Runtime is absent; an already-installed usable Runtime is not reinstalled. If
+the native Kimi login view produces no loading event, the dialog replaces its
+blank surface with a 15-second diagnostic and Microsoft's WebView2 repair link.
+
 The 1.4.2 candidate is unsigned. Windows may show Unknown publisher or SmartScreen; verify the checksum before choosing **More info → Run anyway**. Sensitive configuration, credential, database, WAL, and SHM files receive an exact native protected DACL for only the current user, Local System, and Administrators. The packaged Codex read-only query uses a fixed-purpose broker beside `AACC.exe` so the app never shells out to `icacls.exe`, `whoami.exe`, or `taskkill.exe`.
 
 ## Terminal and iTerm2 binding
