@@ -313,6 +313,47 @@ def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp
     assert window.quota_bar.percent_labels() == ["1%", "70%", "31%"]
 
 
+def test_web_unauthorized_discards_web_snapshot_and_renders_code_fallback(qtbot, tmp_path):
+    from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
+
+    web_service = FakeWebQuotaService()
+    window, _, _ = make_window(qtbot, tmp_path, web_quota_service=web_service)
+    reset = datetime(2026, 8, 20, tzinfo=UTC)
+    fetched_at = datetime.now(UTC)
+
+    def item(percent: int) -> QuotaDetail:
+        return QuotaDetail(percent, 100, 100 - percent, reset, percent)
+
+    window._on_quota_updated(
+        KimiQuota(
+            five_hour=item(4),
+            weekly=item(73),
+            monthly=None,
+            membership_level=None,
+            booster=None,
+            status=QuotaStatus.PARTIAL,
+            fetched_at=fetched_at,
+        )
+    )
+    web_service.quota_updated.emit(
+        KimiQuota(
+            five_hour=item(1),
+            weekly=item(70),
+            monthly=item(31),
+            membership_level="ALLEGRO",
+            booster=None,
+            status=QuotaStatus.OK,
+            fetched_at=fetched_at,
+        )
+    )
+
+    web_service.login_state_changed.emit(False)
+
+    assert window._latest_kimi_web_quota is None
+    assert window.quota_bar is not None
+    assert window.quota_bar.percent_labels() == ["4%", "73%", "--"]
+
+
 def test_oauth_dialog_x_cancels_once(qtbot):
     from aacc.gui import KimiOAuthDialog
 
