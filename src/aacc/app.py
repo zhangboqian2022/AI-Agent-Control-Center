@@ -343,7 +343,11 @@ def _show_startup_shutdown_error(data_dir: Path, error: BaseException) -> int:
 
 def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
-    initialize_native_webview()
+    try:
+        initialize_native_webview(data_dir)
+    except FileProtectionError as error:
+        _create_qapplication()
+        return _show_startup_security_error(data_dir, error)
     qt_app = _create_qapplication()
     settings = QSettings()
     language_manager = LanguageManager(load_language(settings), settings)

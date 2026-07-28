@@ -127,7 +127,7 @@ def _patch_application_shell(
             events.append("guidance-show")
 
     monkeypatch.setattr(app_module, "configure_logging", lambda *_args: None)  # type: ignore[attr-defined]
-    monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "initialize_native_webview", lambda _data_dir: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "_create_qapplication", Application)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: trusted)  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
@@ -545,7 +545,7 @@ def test_security_failure_shows_sanitized_dialog_and_returns_nonzero(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     shown: list[tuple[str, str]] = []
-    monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "initialize_native_webview", lambda _data_dir: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "_create_qapplication", FakeApplication)  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module.QMessageBox,
