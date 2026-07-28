@@ -13,6 +13,7 @@ from aacc.discovery_service import (
     KimiDiscoveryService,
 )
 from aacc.file_security import FileProtectionError
+from aacc.i18n import EN_US, LanguageManager
 
 
 class FakeApplication:
@@ -112,6 +113,9 @@ def _patch_application_shell(
             self.config = runtime.config  # type: ignore[attr-defined]
             self.selected_task_id = None
             self.external_action = SimpleNamespace(emit=lambda *_args: None)
+            runtime.window_language_manager = _kwargs.get(  # type: ignore[attr-defined]
+                "language_manager"
+            )
 
         def winId(self) -> int:  # noqa: N802
             return 88
@@ -126,9 +130,49 @@ def _patch_application_shell(
     monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "_create_qapplication", Application)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: trusted)  # type: ignore[attr-defined]
-    monkeypatch.setattr(app_module, "build_runtime", lambda *_args, **_kwargs: runtime)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "build_runtime",
+        lambda *_args, **kwargs: (
+            setattr(runtime, "runtime_language_manager", kwargs.get("language_manager")) or runtime
+        ),
+    )
     monkeypatch.setattr(app_module, "MainWindow", Window)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "QTimer", Timer)  # type: ignore[attr-defined]
+
+
+def test_run_application_assembles_one_language_manager_for_runtime_and_window(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+    settings = object()
+    created: list[tuple[str, object]] = []
+    _patch_application_shell(monkeypatch, events, runtime)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "QSettings", lambda: settings)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "load_language",
+        lambda received: EN_US if received is settings else None,
+    )
+
+    class TrackingLanguageManager(LanguageManager):
+        def __init__(self, language, received_settings=None):
+            super().__init__(language)
+            created.append((language, received_settings))
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "LanguageManager",
+        TrackingLanguageManager,
+    )
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert created == [(EN_US, settings)]
+    assert runtime.runtime_language_manager is runtime.window_language_manager
 
 
 def test_windows_listener_is_installed_before_hotkeys_and_survives_hotkey_failure(
@@ -670,6 +714,39 @@ def test_build_runtime_creates_quota_service_when_enabled(tmp_path: Path) -> Non
     )
     try:
         assert runtime.quota_service is not None
+    finally:
+        runtime.close()
+
+
+def test_build_runtime_passes_language_manager_to_default_web_service(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    language_manager = LanguageManager(EN_US)
+    received: list[LanguageManager] = []
+
+    def create_web_service(
+        _config_dir: Path,
+        _config: object,
+        manager: LanguageManager | None,
+    ) -> object:
+        assert manager is not None
+        received.append(manager)
+        return SimpleNamespace(stop=lambda: None)
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "_default_kimi_web_quota_service_factory",
+        create_web_service,
+    )
+    runtime = build_runtime(
+        tmp_path / "config.yaml",
+        tmp_path / "aacc.db",
+        language_manager=language_manager,
+        quota_service_factory=lambda _dir: None,
+        codex_quota_service_factory=lambda: None,
+    )
+    try:
+        assert received == [language_manager]
     finally:
         runtime.close()
 

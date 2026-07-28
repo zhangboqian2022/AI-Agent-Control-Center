@@ -5,6 +5,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+import aacc.kimi_web_quota_service as web_quota_service
+from aacc.i18n import EN_US, LanguageManager
 from aacc.kimi_web_quota_service import WEB_QUOTA_INTERVAL_MS, KimiWebQuotaService
 
 
@@ -34,6 +36,9 @@ class FakeSession(QObject):
 
     def close(self) -> None:
         self.closed += 1
+
+    def retranslate_ui(self) -> None:
+        pass
 
 
 def test_web_quota_service_starts_one_five_minute_timer(qapp, tmp_path: Path):
@@ -155,3 +160,35 @@ def test_web_quota_service_propagates_false_logout_and_always_clears_quota(qapp,
 
     assert logout_succeeded is False
     assert service.last_quota is None
+
+
+def test_lazy_web_session_receives_same_language_manager(
+    qapp, tmp_path: Path, monkeypatch: object
+) -> None:
+    del qapp
+    language_manager = LanguageManager(EN_US)
+    created: list[tuple[Path, object, LanguageManager]] = []
+
+    def create_session(
+        config_dir: Path,
+        parent: object,
+        *,
+        language_manager: LanguageManager,
+    ) -> FakeSession:
+        created.append((config_dir, parent, language_manager))
+        return FakeSession()
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        web_quota_service,
+        "KimiWebSession",
+        create_session,
+    )
+    service = KimiWebQuotaService(
+        tmp_path,
+        language_manager=language_manager,
+    )
+
+    service.open_login()
+
+    assert created == [(tmp_path, service, language_manager)]
+    service.stop()

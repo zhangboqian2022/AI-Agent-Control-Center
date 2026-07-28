@@ -12,6 +12,7 @@ from shiboken6 import isValid
 
 import aacc.kimi_web_session as web_session
 from aacc.file_security import FileProtectionError
+from aacc.i18n import EN_US, ZH_CN, LanguageManager
 
 KIMI_MEMBERSHIP_URL = web_session.KIMI_MEMBERSHIP_URL
 KimiWebSession = web_session.KimiWebSession
@@ -110,10 +111,10 @@ class ExistingFakeDialog:
         pass
 
 
-def make_session(monkeypatch, tmp_path):
+def make_session(monkeypatch, tmp_path, *, language_manager=None):
     monkeypatch.setattr(web_session, "_webview_initialized", True)
     monkeypatch.setattr(web_session, "QWebView", FakeView)
-    return KimiWebSession(tmp_path)
+    return KimiWebSession(tmp_path, language_manager=language_manager)
 
 
 def test_membership_script_uses_cached_web_token_for_both_connect_services():
@@ -257,7 +258,7 @@ def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path
     session.view.script_result = "{"
     session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{generation}:ready:malformed")
     assert login_states[-1] == (False, False)
-    assert errors == ["network", "invalid membership response"]
+    assert errors == ["Kimi 会员额度刷新失败", "Kimi 会员额度刷新失败"]
 
     session.logout()
     assert session.login_state.may_reuse() is False
@@ -506,7 +507,7 @@ def test_bridge_error_logging_redacts_remote_secrets(caplog, monkeypatch, tmp_pa
     with caplog.at_level(logging.WARNING, logger="aacc.kimi_web_session"):
         session._handle_bridge({"kind": "error", "generation": generation, "message": message})
 
-    assert errors == [message]
+    assert errors == ["Kimi 会员额度刷新失败"]
     logs = caplog.text
     assert "remote-password" not in logs
     assert "remote-token" not in logs
@@ -905,7 +906,7 @@ def test_login_dialog_starts_startup_watchdog_and_restores_native_container(
     assert session._webview_startup_watchdog.isActive() is True
     assert watchdog_states == [True]
     assert "正在" in widgets["status"].text
-    assert "Starting" in widgets["status"].text
+    assert "Starting" not in widgets["status"].text
     assert widgets["container"].visible is True
     assert widgets["repair"].visible is False
 
@@ -915,6 +916,94 @@ def test_login_dialog_starts_startup_watchdog_and_restores_native_container(
     assert widgets["container"].visible is True
     assert widgets["status"].visible is False
     assert widgets["repair"].visible is False
+
+
+def test_open_kimi_login_dialog_retranslates_live(qapp, monkeypatch, tmp_path):
+    del qapp
+    language_manager = LanguageManager(ZH_CN)
+    session = make_session(
+        monkeypatch,
+        tmp_path,
+        language_manager=language_manager,
+    )
+    widgets = _install_login_dialog_fakes(monkeypatch)
+
+    session.open_login()
+    language_manager.set_language(EN_US)
+
+    assert session._login_dialog is not None
+    assert session._login_dialog.windowTitle() == "Kimi membership login"
+    assert widgets["explanation"].text.startswith("Sign in directly")
+    assert widgets["status"].text.startswith("Starting")
+    assert widgets["repair"].text == "Repair Microsoft Edge WebView2"
+
+    session._show_login_diagnostic()
+    language_manager.set_language(ZH_CN)
+
+    assert widgets["status"].text.startswith("无法启动 Kimi 登录页面")
+    assert widgets["repair"].text == "修复 Microsoft Edge WebView2"
+
+
+def test_repeated_language_switch_and_session_close_do_not_duplicate_callbacks(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    language_manager = LanguageManager(ZH_CN)
+    session = make_session(
+        monkeypatch,
+        tmp_path,
+        language_manager=language_manager,
+    )
+    widgets = _install_login_dialog_fakes(monkeypatch)
+
+    session.open_login()
+    dialog = widgets["dialog"]
+    initial_updates = len(dialog.titles)
+    language_manager.set_language(EN_US)
+    language_manager.set_language(ZH_CN)
+    session.close()
+    language_manager.set_language(EN_US)
+
+    assert len(dialog.titles) - initial_updates == 2
+    assert language_manager._subscribers == []
+
+
+def test_webview_failure_translation_never_contains_url_fragment_or_remote_body(
+    caplog, qapp, monkeypatch, tmp_path
+):
+    del qapp
+    language_manager = LanguageManager(EN_US)
+    session = make_session(
+        monkeypatch,
+        tmp_path,
+        language_manager=language_manager,
+    )
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    errors = []
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+    session.view._url = QUrl(
+        "https://www.kimi.com/login?code=remote-code#access_token=remote-token"
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="aacc.kimi_web_session"):
+        session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
+        displayed_failure = widgets["status"].text
+        session.open_login()
+        generation = session._active_refresh_generation
+        assert generation is not None
+        session._handle_bridge(
+            {
+                "kind": "error",
+                "generation": generation,
+                "message": "remote body password=remote-password",
+            }
+        )
+
+    combined = displayed_failure + "\n" + "\n".join(errors) + "\n" + caplog.text
+    assert displayed_failure.startswith("Kimi login could not start")
+    for secret in ("remote-code", "remote-token", "remote-password", "remote body"):
+        assert secret not in combined
 
 
 def test_login_dialog_close_retains_native_container_and_reuses_it_on_reopen(
@@ -1131,9 +1220,16 @@ def _install_login_dialog_fakes(monkeypatch):
     class FakeDialog:
         def __init__(self, _parent):
             self.finished = FakeSignal()
+            self.title = ""
+            self.titles = []
+            widgets["dialog"] = self
 
-        def setWindowTitle(self, _title):
-            pass
+        def setWindowTitle(self, title):
+            self.title = title
+            self.titles.append(title)
+
+        def windowTitle(self):
+            return self.title
 
         def resize(self, _width, _height):
             pass
@@ -1188,13 +1284,15 @@ def _install_login_dialog_fakes(monkeypatch):
 
     class FakeLayout:
         def __init__(self, _dialog):
-            pass
+            self._label_count = 0
 
         def addWidget(self, widget, *_args):
             if isinstance(widget, FakeButton):
                 widgets["repair"] = widget
             elif isinstance(widget, FakeLabel):
-                widgets["status"] = widget
+                key = "explanation" if self._label_count == 0 else "status"
+                widgets[key] = widget
+                self._label_count += 1
 
     monkeypatch.setattr(web_session, "QDialog", FakeDialog)
     monkeypatch.setattr(web_session, "QLabel", FakeLabel)
