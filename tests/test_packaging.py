@@ -412,6 +412,10 @@ def test_windows_2025_ci_contractually_runs_native_webview_from_installed_produc
     )
     assert "-TimeoutSeconds 40" in native_smoke_section
     assert "Assert-ProductProcessBaseline" in native_smoke_section
+    assert "AACC_WEBVIEW_SMOKE_RESULT_PATH" in native_smoke_section
+    assert "native-webview-result.txt" in native_smoke_section
+    assert "category=outer-harness-failure" in native_smoke_section
+    assert "category=success" in native_smoke_section
 
 
 def test_windows_webview_docs_explain_runtime_provisioning_and_manual_coverage() -> None:

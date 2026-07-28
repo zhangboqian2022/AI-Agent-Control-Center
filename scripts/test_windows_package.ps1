@@ -1835,13 +1835,39 @@ foreach ($Required in @(
 Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed"
 Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"
 $NativeWebViewBaseline = @(Get-ProductProcessBaseline -ProductRoot $InstallRoot)
+$NativeWebViewResultPath = Join-Path $SmokeRoot "installed\native-webview-result.txt"
+Remove-Item -LiteralPath $NativeWebViewResultPath -Force -ErrorAction SilentlyContinue
 $PreviousQtQpaPlatform = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
+$PreviousWebViewResultPath = [Environment]::GetEnvironmentVariable(
+    "AACC_WEBVIEW_SMOKE_RESULT_PATH",
+    "Process"
+)
 try {
     $env:QT_QPA_PLATFORM = "windows"
-    $ExitCode = Invoke-ExternalDeadline -FilePath $InstalledAacc `
-        -Arguments @("--smoke-native-webview") -TimeoutSeconds 40 `
-        -Category "installed native WebView smoke"
+    $env:AACC_WEBVIEW_SMOKE_RESULT_PATH = $NativeWebViewResultPath
+    try {
+        $ExitCode = Invoke-ExternalDeadline -FilePath $InstalledAacc `
+            -Arguments @("--smoke-native-webview") -TimeoutSeconds 40 `
+            -Category "installed native WebView smoke"
+    }
+    catch {
+        if (-not (Test-Path -LiteralPath $NativeWebViewResultPath -PathType Leaf)) {
+            [System.IO.File]::WriteAllText(
+                $NativeWebViewResultPath,
+                "AACC_WEBVIEW_SMOKE category=outer-harness-failure`n",
+                $StrictUtf8
+            )
+        }
+        throw
+    }
     Assert-True ($ExitCode -eq 0) "installed native WebView smoke returned non-zero"
+    $NativeWebViewResult = [System.IO.File]::ReadAllText(
+        $NativeWebViewResultPath,
+        $StrictUtf8
+    )
+    Assert-True (
+        $NativeWebViewResult -ceq "AACC_WEBVIEW_SMOKE category=success`n"
+    ) "installed native WebView smoke result evidence is invalid"
 }
 finally {
     if ($null -eq $PreviousQtQpaPlatform) {
@@ -1849,6 +1875,12 @@ finally {
     }
     else {
         $env:QT_QPA_PLATFORM = $PreviousQtQpaPlatform
+    }
+    if ($null -eq $PreviousWebViewResultPath) {
+        Remove-Item Env:AACC_WEBVIEW_SMOKE_RESULT_PATH -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AACC_WEBVIEW_SMOKE_RESULT_PATH = $PreviousWebViewResultPath
     }
     Assert-ProductProcessBaseline -ProductRoot $InstallRoot -Expected $NativeWebViewBaseline `
         -Category "installed native WebView smoke"
