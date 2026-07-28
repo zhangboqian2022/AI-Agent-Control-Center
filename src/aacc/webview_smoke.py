@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
@@ -12,9 +14,37 @@ SMOKE_TIMEOUT_MS = 30_000
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 EXPECTED_JAVASCRIPT_RESULT = "aacc-native-webview-ok"
+SMOKE_RESULT_PATH_ENV = "AACC_WEBVIEW_SMOKE_RESULT_PATH"
+SMOKE_RESULT_CATEGORIES = frozenset(
+    {
+        "success",
+        "timeout",
+        "load-failed",
+        "unexpected-javascript-result",
+        "evidence-write-failed",
+        "invalid-category",
+    }
+)
 INLINE_HTML = f"""<!doctype html>
 <html><head><meta charset=\"utf-8\"><title>AACC native WebView smoke</title></head>
 <body><script>window.aaccSmokeResult = {EXPECTED_JAVASCRIPT_RESULT!r};</script></body></html>"""
+
+
+def _record_result(category: str) -> bool:
+    result_path = os.environ.get(SMOKE_RESULT_PATH_ENV)
+    if not result_path:
+        return True
+    safe_category = category if category in SMOKE_RESULT_CATEGORIES else "invalid-category"
+    try:
+        path = Path(result_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"AACC_WEBVIEW_SMOKE category={safe_category}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return False
+    return True
 
 
 class NativeWebViewSmoke:
@@ -59,6 +89,9 @@ class NativeWebViewSmoke:
         if result != EXPECTED_JAVASCRIPT_RESULT:
             self._fail("unexpected-javascript-result")
             return
+        if not _record_result("success"):
+            self._fail("evidence-write-failed")
+            return
         self._exit_code = EXIT_SUCCESS
         self._finish()
 
@@ -66,6 +99,7 @@ class NativeWebViewSmoke:
         if self._finished:
             return
         print(f"AACC_WEBVIEW_SMOKE category={category}", file=sys.stderr)
+        _record_result(category)
         self._exit_code = EXIT_FAILURE
         self._finish()
 
