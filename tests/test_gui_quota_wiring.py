@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -352,6 +352,79 @@ def test_web_unauthorized_discards_web_snapshot_and_renders_code_fallback(qtbot,
     assert window._latest_kimi_web_quota is None
     assert window.quota_bar is not None
     assert window.quota_bar.percent_labels() == ["4%", "73%", "--"]
+
+
+@pytest.mark.parametrize("timestamp_kind", ["stale", "missing", "future"])
+def test_web_unauthorized_prompts_login_without_verifiably_fresh_code_fallback(
+    qtbot,
+    tmp_path,
+    timestamp_kind,
+):
+    from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
+
+    web_service = FakeWebQuotaService()
+    window, _, _ = make_window(qtbot, tmp_path, web_quota_service=web_service)
+    now = datetime.now(UTC)
+    fetched_at = {
+        "stale": now - timedelta(seconds=331),
+        "missing": None,
+        "future": now + timedelta(seconds=30),
+    }[timestamp_kind]
+    detail = QuotaDetail(4, 100, 96, now + timedelta(days=1), 4)
+    window._on_quota_updated(
+        KimiQuota(
+            five_hour=detail,
+            weekly=detail,
+            monthly=None,
+            membership_level=None,
+            booster=None,
+            status=QuotaStatus.PARTIAL,
+            fetched_at=fetched_at,
+        )
+    )
+    web_service.quota_updated.emit(
+        KimiQuota(
+            five_hour=detail,
+            weekly=detail,
+            monthly=detail,
+            membership_level="ALLEGRO",
+            booster=None,
+            status=QuotaStatus.OK,
+            fetched_at=now,
+        )
+    )
+
+    web_service.login_state_changed.emit(False)
+
+    assert window._latest_kimi_web_quota is None
+    assert window.quota_bar is not None
+    assert window.quota_bar.summary_label.text() == "Kimi 额度\n点击授权"
+
+
+def test_web_unauthorized_prompts_login_without_any_code_fallback(qtbot, tmp_path):
+    from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
+
+    web_service = FakeWebQuotaService()
+    window, _, _ = make_window(qtbot, tmp_path, web_quota_service=web_service)
+    now = datetime.now(UTC)
+    detail = QuotaDetail(4, 100, 96, now + timedelta(days=1), 4)
+    web_service.quota_updated.emit(
+        KimiQuota(
+            five_hour=detail,
+            weekly=detail,
+            monthly=detail,
+            membership_level="ALLEGRO",
+            booster=None,
+            status=QuotaStatus.OK,
+            fetched_at=now,
+        )
+    )
+
+    web_service.login_state_changed.emit(False)
+
+    assert window._latest_kimi_web_quota is None
+    assert window.quota_bar is not None
+    assert window.quota_bar.summary_label.text() == "Kimi 额度\n点击授权"
 
 
 def test_oauth_dialog_x_cancels_once(qtbot):
