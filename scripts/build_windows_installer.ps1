@@ -8,6 +8,10 @@ $InnoBootstrapName = "innosetup-6.7.1.exe"
 $InnoBootstrapUrl = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_1/innosetup-6.7.1.exe"
 $InnoBootstrapSha256 = "4d11e8050b6185e0d49bd9e8cc661a7a59f44959a621d31d11033124c4e8a7b0"
 $MinimumSetupBytes = 1048576
+$WebView2BootstrapName = "MicrosoftEdgeWebview2Setup.exe"
+$WebView2BootstrapUrl = "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/67ea10bf-049f-4ee6-ade4-ffb14d45b7d1/MicrosoftEdgeWebview2Setup.exe"
+$WebView2BootstrapSha256 = "0223fa1e8d5bd5e4344fb8734e60d088e79f262c0a24444d01f240bc996f04e5"
+$MinimumWebView2BootstrapBytes = 1048576
 
 function Resolve-ExistingLeaf {
     param(
@@ -174,6 +178,28 @@ function Assert-BootstrapTrusted {
     Assert-AuthenticodeValid -Path $Path -Category "Inno Setup bootstrap"
 }
 
+function Assert-WebView2BootstrapTrusted {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $Item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($Item.Name -cne $WebView2BootstrapName -or
+        $Item.PSIsContainer -or
+        (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw "WebView2 bootstrapper must be a regular file with the expected name"
+    }
+    if ($Item.Length -lt $MinimumWebView2BootstrapBytes) {
+        throw "WebView2 bootstrapper is unexpectedly small"
+    }
+    $Digest = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($Digest -cne $WebView2BootstrapSha256) {
+        throw "WebView2 bootstrapper checksum validation failed"
+    }
+    Assert-AuthenticodeValid -Path $Path -Category "WebView2 bootstrapper"
+}
+
 $Root = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
 Set-Location -LiteralPath $Root
 
@@ -260,6 +286,24 @@ if (
 ) {
     throw "Windows internal payload manifest encoding is invalid"
 }
+
+$WebView2BootstrapPath = Join-Path $ManifestBuildRoot $WebView2BootstrapName
+$WebView2DownloadPath = "$WebView2BootstrapPath.download"
+if (Test-Path -LiteralPath $WebView2BootstrapPath) {
+    Assert-WebView2BootstrapTrusted -Path $WebView2BootstrapPath
+}
+else {
+    if (Test-Path -LiteralPath $WebView2DownloadPath) {
+        Remove-Item -LiteralPath $WebView2DownloadPath -Force
+    }
+    Invoke-WebRequest `
+        -UseBasicParsing `
+        -Uri $WebView2BootstrapUrl `
+        -OutFile $WebView2DownloadPath
+    Assert-WebView2BootstrapTrusted -Path $WebView2DownloadPath
+    Move-Item -LiteralPath $WebView2DownloadPath -Destination $WebView2BootstrapPath
+}
+Assert-WebView2BootstrapTrusted -Path $WebView2BootstrapPath
 
 $VersionOutput = @(& uv version --short)
 if ($LASTEXITCODE -ne 0) {

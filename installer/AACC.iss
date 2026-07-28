@@ -33,6 +33,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式 / Create a desktop s
 
 [Files]
 Source: "..\build\installer\internal-manifest-v1.txt"; DestName: "aacc-preflight-manifest-v1.txt"; Flags: dontcopy noencryption
+Source: "..\build\installer\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy noencryption
 Source: "..\dist\AACC\AACC.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\AACC\aacc-spawn.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\AACC\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -299,6 +300,89 @@ begin
     'AACC 的现有程序文件正在使用或不可安全替换。请完全退出 AACC，然后重试。' + #13#10 +
     'Existing AACC program files are in use or cannot be replaced safely. ' +
     'Exit AACC completely and retry.';
+end;
+
+function WebView2RuntimeFailureMessage: String;
+begin
+  Result :=
+    '无法安装 Microsoft Edge WebView2 运行时；AACC 未被安装。请检查网络连接后重试。' + #13#10 +
+    'Microsoft Edge WebView2 Runtime could not be installed; AACC was not installed. ' +
+    'Check your network connection and retry.';
+end;
+
+function WebView2RuntimeInstalled: Boolean;
+var
+  RuntimeVersion: String;
+begin
+  Result := False;
+  RuntimeVersion := '';
+  if RegQueryStringValue(
+    HKLM32,
+    'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+    'pv',
+    RuntimeVersion
+  ) and
+     (Trim(RuntimeVersion) <> '') and
+     (Trim(RuntimeVersion) <> '0.0.0.0') then
+  begin
+    Result := True;
+    Exit;
+  end;
+  RuntimeVersion := '';
+  if RegQueryStringValue(
+    HKCU32,
+    'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+    'pv',
+    RuntimeVersion
+  ) and
+     (Trim(RuntimeVersion) <> '') and
+     (Trim(RuntimeVersion) <> '0.0.0.0') then
+    Result := True;
+end;
+
+function EnsureWebView2Runtime(var ErrorMessage: String): Boolean;
+var
+  BootstrapperPath: String;
+  ResultCode: Integer;
+begin
+  Result := False;
+  ErrorMessage := WebView2RuntimeFailureMessage;
+  if WebView2RuntimeInstalled then
+  begin
+    Result := True;
+    Exit;
+  end;
+  try
+    ExtractTemporaryFile('MicrosoftEdgeWebview2Setup.exe');
+  except
+    Log('AACC_WEBVIEW2_SETUP result=bootstrapper-unavailable');
+    Exit;
+  end;
+  BootstrapperPath := ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe');
+  if not Exec(
+    BootstrapperPath,
+    '/silent /install',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then
+  begin
+    Log('AACC_WEBVIEW2_SETUP result=launch-failed');
+    Exit;
+  end;
+  if ResultCode <> 0 then
+  begin
+    Log(Format('AACC_WEBVIEW2_SETUP result=exit-code-%d', [ResultCode]));
+    Exit;
+  end;
+  if not WebView2RuntimeInstalled then
+  begin
+    Log('AACC_WEBVIEW2_SETUP result=runtime-not-detected');
+    Exit;
+  end;
+  Log('AACC_WEBVIEW2_SETUP result=installed');
+  Result := True;
 end;
 
 function ValidateExistingManagedDirectory(const Path: String): Boolean;
@@ -814,6 +898,11 @@ begin
     Exit;
   end;
   if not ValidatePackagedTargetsForInstall(ErrorMessage) then
+  begin
+    Result := ErrorMessage;
+    Exit;
+  end;
+  if not EnsureWebView2Runtime(ErrorMessage) then
   begin
     Result := ErrorMessage;
     Exit;

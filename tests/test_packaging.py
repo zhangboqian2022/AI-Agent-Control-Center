@@ -275,6 +275,44 @@ def test_windows_build_chains_setup_unless_explicitly_skipped() -> None:
     assert '$env:AACC_SKIP_INSTALLER -ne "1"' in script
 
 
+def test_windows_installer_stages_a_verified_webview2_bootstrapper() -> None:
+    script = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
+
+    assert (
+        "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/"
+        "67ea10bf-049f-4ee6-ade4-ffb14d45b7d1/MicrosoftEdgeWebview2Setup.exe"
+    ) in script
+    assert "0223fa1e8d5bd5e4344fb8734e60d088e79f262c0a24444d01f240bc996f04e5" in script
+    assert "MicrosoftEdgeWebview2Setup.exe" in script
+    assert "Get-AuthenticodeSignature" in script
+    assert ".download" in script
+    assert "build\\installer" in script
+
+
+def test_windows_installer_requires_webview2_runtime_before_installing() -> None:
+    installer = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
+
+    assert (
+        'Source: "..\\build\\installer\\MicrosoftEdgeWebview2Setup.exe"; '
+        "Flags: dontcopy noencryption"
+    ) in installer
+    assert "function WebView2RuntimeInstalled: Boolean;" in installer
+    assert "function EnsureWebView2Runtime(var ErrorMessage: String): Boolean;" in installer
+    assert installer.count("{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}") == 2
+    assert "HKLM32" in installer
+    assert "HKCU32" in installer
+    assert "pv" in installer
+    assert "'/silent /install'" in installer
+    assert "WebView2RuntimeInstalled" in installer.split("EnsureWebView2Runtime", 1)[1]
+    prepare_to_install = installer.split("function PrepareToInstall", 1)[1]
+    assert "EnsureWebView2Runtime(ErrorMessage)" in prepare_to_install
+    assert "Result := ErrorMessage;" in prepare_to_install.split(
+        "EnsureWebView2Runtime(ErrorMessage)", 1
+    )[1]
+    assert "Microsoft Edge WebView2 Runtime" in installer
+    assert "WebView2 运行时" in installer
+
+
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "fetch-depth: 0" in workflow
