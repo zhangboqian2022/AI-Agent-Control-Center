@@ -115,6 +115,31 @@ GREEN: 14 passed
 Affected GUI / Kimi Web / app assembly: 154 passed
 ```
 
+## Final re-review: External controller success text
+
+The last Important re-review finding identified that the unknown-action
+controller fallback still called `.upper()`, even though external/controller
+text must remain opaque. A regression passed `Build id AbC/path` through an
+unknown controller completion and failed RED with:
+
+```text
+expected: Build id AbC/path
+actual:   BUILD ID ABC/PATH
+1 failed
+```
+
+The minimal production fix removes only that fallback case conversion.
+Trusted internal `focus`, `voice`, and `key:*` mappings remain semantic and
+retranslatable. Fresh verification:
+
+```text
+focused external/trusted automation success paths:
+4 passed, 84 deselected
+
+complete tests/test_gui.py:
+88 passed
+```
+
 ## Final verification
 
 ```text
