@@ -327,7 +327,18 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
     )
     assert workflow.count("$eventModules.Count -ne 1") == 2
     assert workflow.count("$eventModules[0].Length -le 0") == 2
-    assert 'Compress-Archive -Path "dist\\AACC"' in workflow
+    assert (
+        '$portableBuildPath = Join-Path "build\\candidate-validation" '
+        '"AACC-$version-windows-x64-windows-2025-vs2026.zip"' in workflow
+    )
+    assert (
+        'Compress-Archive -LiteralPath "dist\\AACC" '
+        "-DestinationPath $portableBuildPath -Force" in workflow
+    )
+    assert "Copy-Item -LiteralPath $portableBuildPath -Destination $portablePath" in workflow
+    assert (
+        'Compress-Archive -LiteralPath "dist\\AACC" -DestinationPath $portablePath' not in workflow
+    )
     assert "AACC-*-windows-x64-windows-2025-vs2026.zip" in workflow
     assert "Package and strictly verify primary artifacts" in workflow
     assert "build/verified-output" in workflow

@@ -130,7 +130,9 @@ jobs:
           $artifactRoot = "build\candidate-validation\artifact 验证 &() %! [x]"
           New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
           $portablePath = Join-Path $artifactRoot "AACC-$version-windows-x64-windows-2025-vs2026.zip"
-          Compress-Archive -Path "dist\AACC" -DestinationPath $portablePath -Force
+          $portableBuildPath = Join-Path "build\candidate-validation" "AACC-$version-windows-x64-windows-2025-vs2026.zip"
+          Compress-Archive -LiteralPath "dist\AACC" -DestinationPath $portableBuildPath -Force
+          Copy-Item -LiteralPath $portableBuildPath -Destination $portablePath
           Copy-Item -LiteralPath "dist\installer\AACC-$version-Setup.exe" -Destination $artifactRoot
           Copy-Item -LiteralPath "dist\installer\AACC-$version-Setup.exe.sha256" -Destination $artifactRoot
           $setup = @(Get-ChildItem -LiteralPath $artifactRoot -Filter "AACC-*-Setup.exe" -File)
