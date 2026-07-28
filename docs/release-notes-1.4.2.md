@@ -61,10 +61,13 @@
 
 ### 自动化证据边界
 
-候选工作流在 GitHub 托管的 Windows Server 2022 与 Windows Server 2025
-环境构建原生 broker、PyInstaller onedir 与 Setup，并设计为执行冻结包首次启动、
-安装、重装、写入前锁定目标拒绝、卸载、ACL 与进程清理冒烟。这些属于托管服务器
-自动证据；最终候选提交的完整运行结果仍需在合并前记录。
+候选提交 `0b2730f` 的
+[GitHub Actions 运行 30319350661](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30319350661)
+已在托管的 Windows Server 2022 与 Windows Server 2025 环境通过：原生
+broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、重装、写入前
+锁定目标拒绝、卸载、ACL 与进程清理产品冒烟，以及 Setup、SHA-256 和便携 ZIP
+的严格内容校验与资产上传。macOS 质量作业、Windows 双版本测试、ruff、格式、
+mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务器自动证据。
 
 即使上述托管工作流全部通过，它也不能证明消费级 Windows 10 或 Windows 11、
 标准用户安装、另一账户拒读、SmartScreen 交互、真实 Kimi/Codex、托盘、聚焦、
@@ -138,12 +141,15 @@
 
 ### Automated evidence boundary
 
-The candidate workflow builds the broker, PyInstaller onedir payload, and
-Setup on hosted Windows Server 2022 and Windows Server 2025, with product-smoke
-coverage designed for frozen first launch, installation, reinstall,
-pre-mutation locked-target refusal, uninstall, ACLs, and process cleanup. The
-complete result for the final candidate commit still must be recorded before
-merge.
+Candidate commit `0b2730f` passed
+[GitHub Actions run 30319350661](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30319350661)
+on hosted Windows Server 2022 and Windows Server 2025: native broker,
+PyInstaller onedir, and Setup builds; frozen first launch; installation;
+reinstall; pre-mutation locked-target refusal; uninstall; ACL and process
+cleanup product smokes; and strict Setup, SHA-256, portable ZIP content
+verification and artifact upload. The same run also passed the macOS quality
+job, both Windows test legs, Ruff, formatting, mypy, and dependency audit.
+This remains hosted-server automated evidence only.
 
 Hosted Windows Server evidence is not the real Windows 10/11 consumer test. It
 does not replace standard-user installation, separate-account access denial,
