@@ -2579,7 +2579,7 @@ class MainWindow(QWidget):
                     key=action.split(":", 1)[1],
                 )
             else:
-                self._set_external_subtitle(external_result.upper())
+                self._set_external_subtitle(external_result)
         except (AutomationError, KeyError, ValueError) as error:
             self._show_automation_error(task_id, error)
 

@@ -641,6 +641,22 @@ def test_key_automation_success_retranslates_without_colliding_with_text_key(
     manager.close()
 
 
+def test_unknown_controller_success_result_preserves_original_text(
+    tmp_path: Path,
+    qtbot: object,
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    completed: Future[str] = Future()
+    completed.set_result("Build id AbC/path")
+
+    window._automation_completed("controller:custom", "task-1", completed)
+
+    assert window.subtitle.text() == "Build id AbC/path"
+    window.language_manager.set_language(EN_US)
+    assert window.subtitle.text() == "Build id AbC/path"
+    manager.close()
+
+
 @pytest.mark.parametrize(
     ("start", "target", "start_text", "target_text"),
     [
