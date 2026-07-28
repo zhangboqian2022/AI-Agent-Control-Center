@@ -5,7 +5,10 @@ import json
 import logging
 
 from PySide6.QtCore import QUrl
+from PySide6.QtGui import QWindow
 from PySide6.QtWebView import QWebViewLoadingInfo
+from PySide6.QtWidgets import QDialog, QWidget
+from shiboken6 import isValid
 
 import aacc.kimi_web_session as web_session
 from aacc.file_security import FileProtectionError
@@ -136,6 +139,21 @@ def test_web_session_uses_native_system_webview_without_import_time_initializati
 
     assert "QWebView()" in source
     assert "QWebEngine" not in source
+
+
+def test_qt_window_container_survives_close_when_dialog_is_retained(qapp):
+    window = QWindow()
+    dialog = QDialog()
+    container = QWidget.createWindowContainer(window, dialog)
+
+    assert container.parentWidget() is dialog
+
+    dialog.close()
+    qapp.processEvents()
+
+    assert isValid(dialog)
+    assert isValid(container)
+    assert isValid(window)
 
 
 def test_native_webview_initialization_is_once_and_must_precede_app(monkeypatch):
@@ -856,7 +874,7 @@ def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_pat
     )
     assert dialog.accepted is True
     session._login_dialog_closed()
-    assert session._login_dialog is None
+    assert session._login_dialog is dialog
 
 
 def test_login_dialog_starts_startup_watchdog_and_restores_native_container(
@@ -892,6 +910,112 @@ def test_login_dialog_starts_startup_watchdog_and_restores_native_container(
     assert widgets["container"].visible is True
     assert widgets["status"].visible is False
     assert widgets["repair"].visible is False
+
+
+def test_login_dialog_close_retains_native_container_and_reuses_it_on_reopen(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    _install_login_dialog_fakes(monkeypatch)
+
+    session.open_login()
+    dialog = session._login_dialog
+    container = session._login_container
+
+    assert dialog is not None
+    assert container is not None
+
+    session._login_dialog_closed()
+
+    assert session._login_dialog is dialog
+    assert session._login_container is container
+
+    session.open_login()
+
+    assert session._login_dialog is dialog
+    assert session._login_container is container
+
+
+def test_login_dialog_close_invalidates_attempt_and_ignores_late_webview_events(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    _install_login_dialog_fakes(monkeypatch)
+    quotas = []
+    session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
+
+    session.open_login()
+    generation = session._active_refresh_generation
+
+    assert generation is not None
+
+    session._login_dialog_closed()
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    session._handle_bridge(
+        {
+            "kind": "quota",
+            "generation": generation,
+            "stats": {"late": True},
+            "subscription": {},
+        }
+    )
+
+    assert session._active_refresh_generation is None
+    assert session._refreshing is False
+    assert session.view.scripts == []
+    assert session.login_state.may_reuse() is False
+    assert quotas == []
+
+
+def test_login_success_marks_retained_dialog_closed_before_background_refresh(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    _install_login_dialog_fakes(monkeypatch)
+
+    session.open_login()
+    generation = session._active_refresh_generation
+
+    assert generation is not None
+
+    session._handle_bridge(
+        {"kind": "quota", "generation": generation, "stats": {}, "subscription": {}}
+    )
+
+    assert session._login_dialog_open is False
+
+    session.refresh()
+
+    assert session._active_refresh_generation is not None
+
+
+def test_stale_login_startup_timeout_cannot_affect_a_reopened_attempt(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    errors = []
+    session.error_occurred.connect(errors.append)
+
+    session.open_login()
+    first_attempt = session._active_login_attempt
+    session._login_dialog_closed()
+    session.open_login()
+    second_generation = session._active_refresh_generation
+
+    assert first_attempt is not None
+    assert second_generation is not None
+
+    session._webview_startup_watchdog_timeout(first_attempt)
+
+    assert session._active_refresh_generation == second_generation
+    assert session._webview_startup_watchdog.isActive() is True
+    assert widgets["container"].visible is True
+    assert errors == []
 
 
 def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(
@@ -933,11 +1057,12 @@ def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(
 
     session._login_dialog_closed()
     assert session._webview_startup_watchdog.isActive() is False
-    assert session._login_dialog is None
+    dialog = session._login_dialog
+    assert dialog is not None
 
     session.open_login()
     assert session._webview_startup_watchdog.isActive() is True
-    assert session._login_dialog is not None
+    assert session._login_dialog is dialog
 
 
 def test_login_dialog_loading_failure_shows_sanitized_webview_diagnostic(
