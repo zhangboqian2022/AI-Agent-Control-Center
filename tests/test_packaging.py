@@ -357,41 +357,61 @@ def test_windows_installer_rejects_malformed_or_zero_webview2_runtime_versions()
 
 
 def test_windows_webview_smoke_exercises_a_visible_native_controller_after_setup() -> None:
+    native_module = ROOT / "src" / "aacc" / "webview_smoke.py"
     smoke = ROOT / "scripts" / "smoke_windows_webview.py"
+    assert native_module.exists()
     assert smoke.exists()
+    module = native_module.read_text(encoding="utf-8")
     script = smoke.read_text(encoding="utf-8")
 
     assert 'sys.platform != "win32"' in script
     assert "unsupported-platform" in script
-    assert "SMOKE_TIMEOUT_MS = 30_000" in script
-    assert script.index("QtWebView.initialize()") < script.index("QApplication(")
-    assert "QTimer" in script
-    assert "QDialog" in script
-    assert "_dialog.show()" in script
-    assert "QWidget.createWindowContainer(" in script
-    assert "view.loadHtml(" in script
-    assert "LoadStatus.Succeeded" in script
-    assert "runJavaScript" in script
-    assert ".page()" not in script
-    assert "unexpected-javascript-result" in script
-    assert "timeout" in script
-    assert "EXIT_FAILURE = 1" in script
-    assert "self._exit_code = EXIT_FAILURE" in script
-    assert "QtWebEngine" not in script
+    assert "from aacc.webview_smoke import run_native_webview_smoke" in script
+    assert "raise SystemExit(run_native_webview_smoke())" in script
+    assert "class NativeWebViewSmoke" not in script
+    assert "QWebView" not in script
+    assert "SMOKE_TIMEOUT_MS = 30_000" in module
+    assert module.index("QtWebView.initialize()") < module.index("QApplication(")
+    assert "QTimer" in module
+    assert "QDialog" in module
+    assert "_dialog.show()" in module
+    assert "QWidget.createWindowContainer(" in module
+    assert "view.loadHtml(" in module
+    assert "LoadStatus.Succeeded" in module
+    assert "runJavaScript" in module
+    assert ".page()" not in module
+    assert "unexpected-javascript-result" in module
+    assert "timeout" in module
+    assert "EXIT_FAILURE = 1" in module
+    assert "self._exit_code = EXIT_FAILURE" in module
+    assert "if self._finished:\n            return\n        if result !=" in module
+    assert "QtWebEngine" not in module
 
 
-def test_windows_2025_ci_runs_native_webview_smoke_after_installed_product_smoke() -> None:
+def test_windows_2025_ci_contractually_runs_native_webview_from_installed_product() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    package_job = workflow.split("  windows-package-2025:", 1)[1].split(
-        "      - name: Package and strictly verify primary artifacts", 1
-    )[0]
+    package_job = workflow.split("  windows-package-2025:", 1)[1]
+    assert "Smoke frozen, installed, and native WebView Windows product" in package_job
+    assert "uv run python scripts/smoke_windows_webview.py" not in package_job
 
-    installed_smoke = package_job.index("Smoke frozen and installed Windows product")
-    native_smoke = package_job.index("Smoke native Windows WebView")
-    assert installed_smoke < native_smoke
-    native_smoke_step = package_job[native_smoke:]
-    assert '$env:QT_QPA_PLATFORM = "windows"' in native_smoke_step
-    assert "uv run python scripts/smoke_windows_webview.py" in native_smoke_step
+    package_smoke = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+    fresh_install = package_smoke.index(
+        'Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"'
+    )
+    native_smoke = package_smoke.index("installed native WebView smoke")
+    installed_launch = package_smoke.index(
+        '$Installed = Invoke-InstalledLaunch -Category "installed"'
+    )
+    assert fresh_install < native_smoke < installed_launch
+    native_smoke_section = package_smoke[fresh_install:installed_launch]
+    assert '$env:QT_QPA_PLATFORM = "windows"' in native_smoke_section
+    assert re.search(
+        r"Invoke-ExternalDeadline\s+-FilePath \$InstalledAacc\s+`?\s*"
+        r"-Arguments @\(\"--smoke-native-webview\"\)",
+        native_smoke_section,
+    )
+    assert "-TimeoutSeconds 40" in native_smoke_section
+    assert "Assert-ProductProcessBaseline" in native_smoke_section
 
 
 def test_windows_webview_docs_explain_runtime_provisioning_and_manual_coverage() -> None:
@@ -520,7 +540,7 @@ def test_ci_runs_real_windows_product_smoke_before_primary_artifact_publish() ->
     assert "windows-smoke-windows-2022" in workflow
     assert "windows-smoke-windows-2025-vs2026" in workflow
     assert "Smoke frozen Windows product" in workflow
-    assert "Smoke frozen and installed Windows product" in workflow
+    assert "Smoke frozen, installed, and native WebView Windows product" in workflow
     assert "windows-frozen-2022:" in workflow
     assert "windows-package-2025:" in workflow
     final_job = workflow.split("windows-package-2025:", 1)[1]
