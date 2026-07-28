@@ -548,6 +548,9 @@ class CodexQuotaBar(QFrame):
         self._last_error = ""
         self._has_known_quota = False
         self._last_quota_tooltip = ""
+        self._render_unknown()
+
+    def _render_unknown(self) -> None:
         self.dot.setStyleSheet("color: #8997aa;")
         self.summary_label.setText(
             "Codex 额度\n数据不可用"
@@ -562,12 +565,15 @@ class CodexQuotaBar(QFrame):
         )
 
     def show_quota(self, quota: CodexQuotaSnapshot) -> None:
-        if quota.status is CodexQuotaStatus.UNKNOWN or quota.weekly is None:
-            self.show_unknown()
-            return
-        self._display_state = "quota"
         self._last_codex_quota = quota
         self._last_error = ""
+        if quota.status is CodexQuotaStatus.UNKNOWN or quota.weekly is None:
+            self._display_state = "unknown"
+            self._has_known_quota = False
+            self._last_quota_tooltip = ""
+            self._render_unknown()
+            return
+        self._display_state = "quota"
         self._render_quota(quota)
 
     def _render_quota(self, quota: CodexQuotaSnapshot) -> None:
@@ -642,7 +648,7 @@ class CodexQuotaBar(QFrame):
         elif self._display_state == "error":
             self._render_error()
         else:
-            self.show_unknown()
+            self._render_unknown()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1633,7 +1639,6 @@ class MainWindow(QWidget):
             self.tray_compact_action.setText(self.language_manager.text("compact.toggle"))
         if self.tray_quit_action is not None:
             self.tray_quit_action.setText(self.language_manager.text("tray.quit"))
-        self._schedule_adaptive_resize()
 
     def _render_task_summary(self) -> None:
         running_count, terminal_count = (len(group) for group in self._layout_group_ids)

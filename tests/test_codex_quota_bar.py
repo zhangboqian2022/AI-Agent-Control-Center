@@ -77,6 +77,29 @@ def test_codex_unknown_state_retranslates(qapp):
     assert "No valid Codex weekly quota found" in bar.toolTip()
 
 
+def test_codex_unknown_snapshot_retranslates_without_clearing_raw_state(qapp):
+    language_manager = LanguageManager(ZH_CN)
+    bar = CodexQuotaBar(language_manager)
+    unknown = CodexQuotaSnapshot(
+        weekly=None,
+        observed_at=None,
+        status=CodexQuotaStatus.UNKNOWN,
+    )
+
+    bar.show_quota(unknown)
+
+    assert bar._last_codex_quota is unknown
+    show_unknown_calls: list[bool] = []
+    bar.show_unknown = lambda: show_unknown_calls.append(True)  # type: ignore[method-assign]
+
+    language_manager.set_language(EN_US)
+    bar.retranslate_ui()
+
+    assert show_unknown_calls == []
+    assert bar._last_codex_quota is unknown
+    assert bar.summary_label.text() == "Codex quota\nQuota unavailable"
+
+
 def test_codex_bar_unknown_does_not_display_zero_percent(qapp):
     bar = CodexQuotaBar(LanguageManager(ZH_CN))
     unknown = CodexQuotaSnapshot(

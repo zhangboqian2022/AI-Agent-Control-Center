@@ -95,6 +95,30 @@ def test_header_language_button_switches_live_and_persists(tmp_path: Path, qtbot
     manager.close()
 
 
+def test_language_switch_preserves_geometry_after_queued_events(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window.show()
+    window.resize(420, 700)
+    qtbot.wait(10)  # type: ignore[attr-defined]
+    geometry_before = window.geometry()
+    resize_calls: list[bool] = []
+
+    def resize_content() -> None:
+        resize_calls.append(True)
+        window.resize(geometry_before.width(), geometry_before.height() - 1)
+
+    window._resize_to_card_content = resize_content  # type: ignore[method-assign]
+
+    window.language_button.click()
+    qtbot.wait(10)  # type: ignore[attr-defined]
+
+    assert window.geometry() == geometry_before
+    assert resize_calls == []
+    manager.close()
+
+
 def test_header_replaces_compact_button_but_settings_keeps_compact(
     tmp_path: Path, qtbot: object
 ) -> None:
