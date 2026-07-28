@@ -17,38 +17,225 @@ from PySide6.QtWidgets import (
 from aacc.automation import AutomationError, MacAutomation
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
+from aacc.codex_quota import CodexQuotaSnapshot, CodexQuotaStatus, CodexQuotaWindow
 from aacc.config import create_default_config, default_config, rotate_api_token
 from aacc.discovery_service import DiscoveryHealth
 from aacc.gui import (
     STATUS_COLORS,
+    CodexQuotaBar,
     CodexTaskSelectionDialog,
     KimiDesktopTaskSelectionDialog,
     KimiTaskSelectionDialog,
     MainWindow,
+    QuotaBar,
+    SettingsDialog,
     TaskCard,
     _elapsed,
+    status_name,
 )
+from aacc.i18n import EN_US, ZH_CN, LanguageManager
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
+from aacc.kimi_quota import KimiQuota, QuotaDetail
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
 
 
-def build_window(tmp_path: Path, qtbot: object) -> tuple[MainWindow, TaskManager]:
+def build_window(
+    tmp_path: Path,
+    qtbot: object,
+    *,
+    settings: QSettings | None = None,
+    language_manager: LanguageManager | None = None,
+) -> tuple[MainWindow, TaskManager]:
     config = default_config()
     store = StateStore(tmp_path / "gui.db")
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    settings = settings or QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    language_manager = language_manager or LanguageManager(ZH_CN, settings)
     window = MainWindow(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
         settings=settings,
+        language_manager=language_manager,
     )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
     return window, manager
+
+
+def test_header_language_button_switches_live_and_persists(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+    language_manager = LanguageManager(ZH_CN, settings)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        settings=settings,
+        language_manager=language_manager,
+    )
+    assert window.language_button.text() == "EN"
+    assert window.language_button.toolTip() == "Switch to English"
+    assert window.running_group_label.text() == "运行中"
+
+    window.language_button.click()
+
+    assert language_manager.language == EN_US
+    assert settings.value("ui_language") == EN_US
+    assert window.language_button.text() == "中"
+    assert window.language_button.toolTip() == "切换到中文"
+    assert window.running_group_label.text() == "Running"
+    assert window.retained_group_label.text() == "Completed · Retained until removed"
+    assert window.empty_tasks_label.text().startswith("No Codex / Kimi Code")
+    assert window.task_summary_label.text() == "Running: 0 · Completed: 0 · 0 tasks"
+    assert window.about_button.toolTip() == "About"
+    assert window.settings_button.toolTip() == "Settings"
+    assert window.hide_button.toolTip() == "Hide"
+    manager.close()
+
+
+def test_header_replaces_compact_button_but_settings_keeps_compact(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+
+    header_buttons = {button.objectName(): button for button in window.findChildren(QPushButton)}
+    assert header_buttons["languageButton"] is window.language_button
+    assert all(button.text() != "↕" for button in header_buttons.values())
+    assert "#languageButton" in window.styleSheet()
+    dialog = SettingsDialog(window)
+    assert "切换紧凑 / 展开模式" in {button.text() for button in dialog.findChildren(QPushButton)}
+    manager.close()
+
+
+def test_existing_task_and_quota_widgets_retranslate_without_refreshing_services(
+    tmp_path: Path, qtbot: object
+) -> None:
+    language_manager = LanguageManager(ZH_CN)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    task = TaskConfig(
+        id="codex:live-language",
+        slot=1,
+        name="Live language",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    state = TaskState.new(
+        task.id,
+        "waiting_approval",
+        source="codex_local",
+    )
+    manager.register(task, state)
+    window.set_codex_selected_ids({"live-language"})
+    card = window.cards[task.id]
+    card_state_before = card.state
+    window.quota_bar = QuotaBar(language_manager)
+    quota = KimiQuota(
+        weekly=QuotaDetail(
+            used=42,
+            limit=100,
+            remaining=58,
+            reset_at=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+            percentage=42,
+        ),
+        five_hour=None,
+        monthly=None,
+        membership_level=None,
+        booster=None,
+    )
+    window.quota_bar.show_quota(quota)
+    window.codex_quota_bar = CodexQuotaBar(language_manager)
+    snapshot = CodexQuotaSnapshot(
+        weekly=CodexQuotaWindow(
+            used_percent=9,
+            window_minutes=10080,
+            resets_at=datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
+        ),
+        observed_at=datetime(2026, 7, 28, 12, 0, tzinfo=UTC),
+        status=CodexQuotaStatus.OK,
+    )
+    window.codex_quota_bar.show_quota(snapshot)
+    refresh_calls: list[str] = []
+    window.refresh = lambda: refresh_calls.append("window")  # type: ignore[method-assign]
+
+    class TrackingService:
+        def refresh_now(self) -> None:
+            refresh_calls.append("service")
+
+    window.quota_service = TrackingService()  # type: ignore[assignment]
+    window.codex_quota_service = TrackingService()  # type: ignore[assignment]
+    compact_before = window.compact_mode
+    geometry_before = window.geometry()
+    login_before = window._kimi_web_authorized
+
+    language_manager.set_language(EN_US)
+
+    assert card.state is card_state_before
+    assert card.status_label.text() == "Waiting for approval"
+    assert "Click to switch tasks" in card.toolTip()
+    assert card.remove_button is not None
+    assert card.remove_button.accessibleName() == "Remove from panel"
+    context_labels = {action.text() for action in card.create_context_menu().actions()}
+    assert {"Switch to task", "Manual status", "Copy", "Rename", "Remove"} <= context_labels
+    assert window.quota_bar._last_quota is quota
+    assert window.codex_quota_bar._last_codex_quota is snapshot
+    assert window.quota_bar.reset_labels()[1].startswith("Resets ")
+    assert window.codex_quota_bar.reset_labels()[0].startswith("Resets ")
+    assert refresh_calls == []
+    assert window.compact_mode is compact_before
+    assert window.geometry() == geometry_before
+    assert window._kimi_web_authorized is login_before
+    manager.close()
+
+
+def test_language_subscription_is_single_and_removed_on_close(
+    tmp_path: Path, qtbot: object
+) -> None:
+    language_manager = LanguageManager(ZH_CN)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    assert len(language_manager._subscribers) == 1
+
+    language_manager.set_language(EN_US)
+    language_manager.set_language(ZH_CN)
+
+    assert len(language_manager._subscribers) == 1
+    window.close()
+    assert language_manager._subscribers == []
+    manager.close()
+
+
+def test_tray_actions_retranslate_and_keep_compact_toggle(tmp_path: Path, qtbot: object) -> None:
+    language_manager = LanguageManager(ZH_CN)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    window._create_tray()
+    assert window.tray_show_action is not None
+    assert window.tray_compact_action is not None
+    assert window.tray_quit_action is not None
+    assert window.tray_show_action.text() == "显示/隐藏 AACC"
+    compact_before = window.compact_mode
+
+    window.tray_compact_action.trigger()
+    language_manager.set_language(EN_US)
+
+    assert window.compact_mode is not compact_before
+    assert window.tray_show_action.text() == "Show/Hide AACC"
+    assert window.tray_compact_action.text() == "Compact mode"
+    assert window.tray_quit_action.text() == "Quit AACC"
+    window._quitting = True
+    window.close()
+    manager.close()
 
 
 def test_app_reactivation_shows_hidden_window(tmp_path: Path, qtbot: object) -> None:
@@ -111,6 +298,52 @@ def test_about_button_shows_current_dmg_version(
 
 def test_all_statuses_have_a_color() -> None:
     assert set(STATUS_COLORS) == set(TaskStatus)
+
+
+def test_status_names_and_terminal_elapsed_label_retranslate_live(qapp: object) -> None:
+    language_manager = LanguageManager(ZH_CN)
+    task = TaskConfig(
+        id="codex:localized-card",
+        slot=1,
+        name="Localized",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    state = TaskState.new(task.id, "waiting_approval", source="codex_local")
+    state = TaskState(
+        task_id=state.task_id,
+        status=TaskStatus.WAITING_APPROVAL,
+        message="",
+        updated_at=state.updated_at,
+        started_at=state.started_at,
+        finished_at=state.finished_at,
+        source=state.source,
+        confidence=state.confidence,
+        metadata=state.metadata,
+    )
+    card = TaskCard(task, state, language_manager=language_manager)
+
+    assert status_name(TaskStatus.WAITING_APPROVAL, language_manager) == "等待批准"
+    assert card.status_label.text() == "等待批准"
+    assert card.message_label.text() == "暂无消息"
+
+    language_manager.set_language(EN_US)
+    card.retranslate_ui()
+
+    assert status_name(TaskStatus.WAITING_APPROVAL, language_manager) == ("Waiting for approval")
+    assert card.status_label.text() == "Waiting for approval"
+    assert card.message_label.text() == "No message"
+    assert card.updated_label.text().startswith("Last activity ")
+    started_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
+    card.set_state(
+        TaskState(
+            task_id=task.id,
+            status=TaskStatus.COMPLETED,
+            started_at=started_at,
+            updated_at=started_at + timedelta(minutes=1),
+            finished_at=started_at + timedelta(minutes=1),
+        )
+    )
+    assert card.timer_label.text() == "Total 00:01:00"
 
 
 def test_status_light_is_five_times_larger_for_fast_visual_scanning(
@@ -227,7 +460,7 @@ def test_completed_card_labels_frozen_total_duration(qtbot: object) -> None:
         updated_at=started_at + timedelta(hours=1, minutes=26, seconds=8),
         finished_at=started_at + timedelta(hours=1, minutes=26, seconds=8),
     )
-    card = TaskCard(task, state)
+    card = TaskCard(task, state, language_manager=LanguageManager(ZH_CN))
     qtbot.addWidget(card)  # type: ignore[attr-defined]
 
     assert card.timer_label.text() == "总用时 01:26:08"
@@ -441,7 +674,12 @@ def test_selector_marks_auto_running_task_checked_and_can_restore_automatic_dete
     store = StateStore(tmp_path / "gui.db")
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    window = MainWindow(manager, AutomationExecutor(MacAutomation(config)), enable_tray=False)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+    )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
     session = CodexSession(
         conversation_id="auto-now",
@@ -472,6 +710,7 @@ def test_auto_running_task_is_visible_without_manual_selection_and_can_be_muted(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         codex_auto_active_ids=lambda: set(auto_ids),
         set_codex_monitoring_preferences=lambda manual, retained, muted: preferences.append(
             (set(manual), set(retained), set(muted))
@@ -509,6 +748,7 @@ def test_completed_codex_task_remains_visible_until_removed(tmp_path: Path, qtbo
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         set_codex_monitoring_preferences=lambda manual, retained, muted: preferences.append(
             (set(manual), set(retained), set(muted))
         ),
@@ -585,7 +825,12 @@ def test_automation_action_does_not_block_qt_and_reports_completion(
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
     executor = DeferredExecutor()
-    window = MainWindow(manager, executor, enable_tray=False)  # type: ignore[arg-type]
+    window = MainWindow(  # type: ignore[arg-type]
+        manager,
+        executor,
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+    )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
     marker: list[bool] = []
     QTimer.singleShot(0, lambda: marker.append(True))
@@ -608,7 +853,12 @@ def test_automation_failure_marks_warning_on_qt_thread(tmp_path: Path, qtbot: ob
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
     executor = DeferredExecutor()
-    window = MainWindow(manager, executor, enable_tray=False)  # type: ignore[arg-type]
+    window = MainWindow(  # type: ignore[arg-type]
+        manager,
+        executor,
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+    )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
 
     window._perform_action("focus", "task-1")
@@ -641,6 +891,7 @@ def test_rotate_credentials_shows_token_and_copies_only_on_request(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         rotate_api_token_callback=lambda: rotate_api_token(config_path, config),
     )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
@@ -735,6 +986,7 @@ def test_missing_accessibility_guidance_can_open_system_settings(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         accessibility_trusted=False,
         open_accessibility_settings_callback=lambda: opened.append(True),
         settings=settings,
@@ -915,6 +1167,7 @@ def test_remove_kimi_task_mutes_and_persists_monitoring_preferences(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         set_kimi_monitoring_preferences=lambda manual, retained, muted: preferences.append(
             (set(manual), set(retained), set(muted))
         ),
@@ -953,6 +1206,7 @@ def test_refresh_syncs_kimi_retained_ids_from_discovery(tmp_path: Path, qtbot: o
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         kimi_retained_ids=lambda: set(retained_ids),
         settings=settings,
     )
@@ -985,6 +1239,7 @@ def test_refresh_unmutes_auto_active_codex_task(tmp_path: Path, qtbot: object) -
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         codex_auto_active_ids=lambda: {"auto-now"},
         codex_muted_ids=lambda: set(muted_ids),
         settings=settings,
@@ -1021,6 +1276,7 @@ def test_refresh_unmutes_auto_active_kimi_task(tmp_path: Path, qtbot: object) ->
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         kimi_auto_active_ids=lambda: {"auto-now"},
         kimi_muted_ids=lambda: set(muted_ids),
         settings=settings,
@@ -1057,6 +1313,7 @@ def test_rename_codex_task_updates_card_and_persists(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         codex_auto_active_ids=lambda: {"auto-now"},
         settings=settings,
     )
@@ -1089,6 +1346,7 @@ def test_rename_codex_task_updates_card_and_persists(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         codex_auto_active_ids=lambda: {"auto-now"},
         settings=reloaded_settings,
     )
@@ -1110,6 +1368,7 @@ def test_rename_task_with_empty_name_restores_default(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         kimi_auto_active_ids=lambda: {"auto-now"},
         settings=settings,
     )
@@ -1146,7 +1405,12 @@ def test_kimi_selector_marks_auto_running_task_checked_and_can_restore(
     store = StateStore(tmp_path / "gui.db")
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
-    window = MainWindow(manager, AutomationExecutor(MacAutomation(config)), enable_tray=False)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+    )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
     session = KimiSession(
         session_id="auto-now",
@@ -1180,6 +1444,7 @@ def test_kimi_auto_running_task_is_visible_without_manual_selection_and_can_be_m
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         kimi_auto_active_ids=lambda: set(auto_ids),
         set_kimi_monitoring_preferences=lambda manual, retained, muted: preferences.append(
             (set(manual), set(retained), set(muted))
@@ -1219,6 +1484,7 @@ def test_visible_agent_types_gain_kimi_code_for_stored_settings(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         settings=settings,
     )
     qtbot.addWidget(window)  # type: ignore[attr-defined]
@@ -1265,6 +1531,7 @@ def build_kimi_desktop_window(
         manager,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         settings=settings,
         kimi_desktop_sessions=lambda: [],
         kimi_desktop_auto_active_ids=lambda: set(),
@@ -1305,6 +1572,7 @@ def test_kimi_desktop_preferences_reload_from_settings(tmp_path: Path, qtbot: ob
         manager2,
         AutomationExecutor(MacAutomation(config)),
         enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
         settings=reloaded_settings,
     )
     qtbot.addWidget(reloaded)  # type: ignore[attr-defined]
