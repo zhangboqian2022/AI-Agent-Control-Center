@@ -103,6 +103,11 @@ class KimiWebQuotaService(QObject):
     def _on_error(self, message: str) -> None:
         self.error_occurred.emit(redact(message)[:160])
 
+    def _on_login_state_changed(self, authorized: bool) -> None:
+        if not authorized:
+            self.last_quota = None
+        self.login_state_changed.emit(authorized)
+
     def _ensure_session(self) -> _WebSessionLike:
         if self._session is None:
             self._session = KimiWebSession(self._config_dir, self)
@@ -110,6 +115,6 @@ class KimiWebQuotaService(QObject):
         return self._session
 
     def _connect_session(self, session: _WebSessionLike) -> None:
-        session.login_state_changed.connect(self.login_state_changed.emit)
+        session.login_state_changed.connect(self._on_login_state_changed)
         session.quota_received.connect(self._on_quota_received)
         session.error_occurred.connect(self._on_error)

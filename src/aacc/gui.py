@@ -1621,13 +1621,15 @@ class MainWindow(QWidget):
 
     def _on_kimi_web_login_state(self, authorized: bool) -> None:
         self._kimi_web_authorized = authorized
-        if (
-            not authorized
-            and self.quota_bar is not None
-            and self._latest_kimi_code_quota is None
-            and self._latest_kimi_web_quota is None
-        ):
+        if authorized:
+            return
+        self._latest_kimi_web_quota = None
+        if self.quota_bar is None:
+            return
+        if self._latest_kimi_code_quota is None:
             self.quota_bar.show_unauthorized()
+            return
+        self._render_kimi_quota()
 
     def _on_quota_auth_state(self, state: str) -> None:
         if self.quota_bar is None:

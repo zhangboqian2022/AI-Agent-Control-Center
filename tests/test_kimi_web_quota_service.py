@@ -100,6 +100,19 @@ def test_web_quota_service_parses_snapshot_and_preserves_it_on_error(qapp, tmp_p
     assert errors == ["temporary"]
 
 
+def test_web_quota_service_clears_snapshot_on_definitive_unauthorized(qapp, tmp_path: Path):
+    session = FakeSession()
+    service = KimiWebQuotaService(tmp_path, session=session)
+    service.last_quota = object()  # type: ignore[assignment]
+    login_states: list[bool] = []
+    service.login_state_changed.connect(login_states.append)
+
+    session.login_state_changed.emit(False)
+
+    assert service.last_quota is None
+    assert login_states == [False]
+
+
 def test_fallback_error_is_sanitized_and_does_not_skip_web_refresh(qapp, tmp_path: Path):
     session = FakeSession()
     service = KimiWebQuotaService(tmp_path, session=session)

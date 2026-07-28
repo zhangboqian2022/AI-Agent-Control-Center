@@ -7,7 +7,7 @@
 - [额度] Codex 只显示一行更清晰的 `WEEK`；Kimi 按 `5H`、`WEEK`、`MONTH` 显示，每个可用窗口均包含完整本地重置日期时间。缓存的 Kimi 会员会话每五分钟刷新一次，不消耗模型 Token。
 - [Windows] 新增当前用户、无需提权的 `AACC-1.4.2-Setup.exe`，默认安装到 `%LocalAppData%\Programs\AACC`，支持优雅原位升级/卸载，并保留 `%APPDATA%\AACC`。
 - [安全] 用原生精确受保护 DACL 取代 `whoami.exe`/`icacls.exe` 文件保护；打包后的 Codex 只读 app-server 通过固定用途静态 broker 启动，并移除 `taskkill.exe`。
-- [交付] 新增 Windows Server 2022/2025 冻结包、安装、重装、回滚与卸载冒烟门禁；1.4.2 macOS DMG 仍是候选产物。
+- [交付] 新增 Windows Server 2022/2025 冻结包、安装、重装、写入前锁目标拒绝与卸载冒烟门禁；1.4.2 macOS DMG 仍是候选产物。
 - [发版门禁] `v1.4.2` 与正式资产仍被 Windows 10/11 真机清单及另一无特权账户拒读测试阻塞。
 
 ## 1.4.1 — 2026-07-24
