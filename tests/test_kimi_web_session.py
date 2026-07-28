@@ -809,11 +809,18 @@ def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_pat
             self.closed = True
 
     class FakeLabel:
-        def __init__(self, _text):
-            pass
+        def __init__(self, text):
+            self.text = text
+            self.visible = True
 
         def setWordWrap(self, _enabled):
             pass
+
+        def setText(self, text):
+            self.text = text
+
+        def setVisible(self, visible):
+            self.visible = visible
 
     class FakeLayout:
         def __init__(self, _dialog):
@@ -825,7 +832,11 @@ def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_pat
     class FakeWidget:
         @staticmethod
         def createWindowContainer(view, dialog):
-            return (view, dialog)
+            class FakeContainer:
+                def setVisible(self, _visible):
+                    pass
+
+            return FakeContainer()
 
     monkeypatch.setattr(web_session, "QDialog", FakeDialog)
     monkeypatch.setattr(web_session, "QLabel", FakeLabel)
@@ -846,3 +857,191 @@ def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_pat
     assert dialog.accepted is True
     session._login_dialog_closed()
     assert session._login_dialog is None
+
+
+def test_login_dialog_starts_startup_watchdog_and_restores_native_container(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    watchdog_states = []
+    original_set_url = session.view.setUrl
+
+    def set_url(url):
+        watchdog_states.append(session._webview_startup_watchdog.isActive())
+        original_set_url(url)
+
+    monkeypatch.setattr(session.view, "setUrl", set_url)
+
+    session.open_login()
+
+    assert web_session.WEBVIEW_STARTUP_TIMEOUT_MS == 15_000
+    assert session._webview_startup_watchdog.isSingleShot() is True
+    assert session._webview_startup_watchdog.interval() == web_session.WEBVIEW_STARTUP_TIMEOUT_MS
+    assert session._webview_startup_watchdog.isActive() is True
+    assert watchdog_states == [True]
+    assert "正在" in widgets["status"].text
+    assert "Starting" in widgets["status"].text
+    assert widgets["container"].visible is True
+    assert widgets["repair"].visible is False
+
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Started))
+
+    assert session._webview_startup_watchdog.isActive() is False
+    assert widgets["container"].visible is True
+    assert widgets["status"].visible is False
+    assert widgets["repair"].visible is False
+
+
+def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    opened_urls = []
+
+    class FakeDesktopServices:
+        @staticmethod
+        def openUrl(url):
+            opened_urls.append(url.toString())
+            return True
+
+    monkeypatch.setattr(web_session, "QDesktopServices", FakeDesktopServices)
+    errors = []
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+
+    session._webview_startup_watchdog_timeout()
+
+    assert session._webview_startup_watchdog.isActive() is False
+    assert session._active_refresh_generation is None
+    assert widgets["container"].visible is False
+    assert widgets["status"].visible is True
+    assert "WebView2" in widgets["status"].text
+    assert "网络" in widgets["status"].text
+    assert widgets["repair"].visible is True
+    assert errors == ["Kimi 官网加载失败"]
+    assert KIMI_MEMBERSHIP_URL not in errors[0]
+
+    widgets["repair"].clicked.emit()
+
+    assert opened_urls == [web_session.WEBVIEW2_HELP_URL]
+    assert web_session.WEBVIEW2_HELP_URL.startswith("https://")
+    assert "microsoft.com" in web_session.WEBVIEW2_HELP_URL
+
+    session._login_dialog_closed()
+    assert session._webview_startup_watchdog.isActive() is False
+    assert session._login_dialog is None
+
+    session.open_login()
+    assert session._webview_startup_watchdog.isActive() is True
+    assert session._login_dialog is not None
+
+
+def test_login_dialog_loading_failure_shows_sanitized_webview_diagnostic(
+    caplog, qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    errors = []
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+    session.view._url = QUrl(
+        "https://www.kimi.com/login?code=remote-code#access_token=remote-token"
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="aacc.kimi_web_session"):
+        session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
+
+    assert session._webview_startup_watchdog.isActive() is False
+    assert widgets["container"].visible is False
+    assert widgets["status"].visible is True
+    assert "WebView2" in widgets["status"].text
+    assert "网络" in widgets["status"].text
+    assert widgets["repair"].visible is True
+    assert errors == ["Kimi 官网加载失败"]
+    assert KIMI_MEMBERSHIP_URL not in errors[0]
+    assert "remote-code" not in caplog.text
+    assert "remote-token" not in caplog.text
+
+
+def _install_login_dialog_fakes(monkeypatch):
+    widgets = {}
+
+    class FakeDialog:
+        def __init__(self, _parent):
+            self.finished = FakeSignal()
+
+        def setWindowTitle(self, _title):
+            pass
+
+        def resize(self, _width, _height):
+            pass
+
+        def show(self):
+            pass
+
+        def raise_(self):
+            pass
+
+        def activateWindow(self):
+            pass
+
+        def accept(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeLabel:
+        def __init__(self, text):
+            self.text = text
+            self.visible = True
+
+        def setWordWrap(self, _enabled):
+            pass
+
+        def setText(self, text):
+            self.text = text
+
+        def setVisible(self, visible):
+            self.visible = visible
+
+    class FakeButton(FakeLabel):
+        def __init__(self, text):
+            super().__init__(text)
+            self.clicked = FakeSignal()
+
+    class FakeContainer:
+        def __init__(self):
+            self.visible = True
+
+        def setVisible(self, visible):
+            self.visible = visible
+
+    class FakeWidget:
+        @staticmethod
+        def createWindowContainer(_view, _dialog):
+            container = FakeContainer()
+            widgets["container"] = container
+            return container
+
+    class FakeLayout:
+        def __init__(self, _dialog):
+            pass
+
+        def addWidget(self, widget, *_args):
+            if isinstance(widget, FakeButton):
+                widgets["repair"] = widget
+            elif isinstance(widget, FakeLabel):
+                widgets["status"] = widget
+
+    monkeypatch.setattr(web_session, "QDialog", FakeDialog)
+    monkeypatch.setattr(web_session, "QLabel", FakeLabel)
+    monkeypatch.setattr(web_session, "QPushButton", FakeButton)
+    monkeypatch.setattr(web_session, "QVBoxLayout", FakeLayout)
+    monkeypatch.setattr(web_session, "QWidget", FakeWidget)
+    return widgets

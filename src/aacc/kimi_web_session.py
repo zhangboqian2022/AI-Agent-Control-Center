@@ -7,9 +7,9 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
-from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from aacc.file_security import protect_directory
 from aacc.kimi_web_login_state import KimiWebLoginStateStore
@@ -19,7 +19,18 @@ KIMI_ORIGIN_HOST = "www.kimi.com"
 BRIDGE_PREFIX = "AACC_KIMI_QUOTA:"
 BRIDGE_PAYLOAD_KEY = "__AACC_KIMI_QUOTA_PAYLOAD__"
 LOGOUT_CLEANUP_TIMEOUT_MS = 10_000
+WEBVIEW_STARTUP_TIMEOUT_MS = 15_000
+WEBVIEW2_HELP_URL = "https://developer.microsoft.com/en-us/microsoft-edge/webview2/"
 LOGIN_STATE_SAVE_ERROR = "Kimi 网页登录状态保存失败"
+LOGIN_LOAD_ERROR = "Kimi 官网加载失败"
+LOGIN_STARTING_MESSAGE = (
+    "正在启动 Kimi 登录页面，请稍候… / Starting the Kimi login page. Please wait…"
+)
+LOGIN_DIAGNOSTIC_MESSAGE = (
+    "无法启动 Kimi 登录页面。请检查网络或修复 Microsoft Edge WebView2 Runtime，然后重试。"
+    " / Kimi login could not start. Check your network or repair Microsoft Edge "
+    "WebView2 Runtime, then try again."
+)
 _webview_initialized = False
 _logger = logging.getLogger("aacc.kimi_web_session")
 
@@ -133,6 +144,9 @@ class KimiWebSession(QObject):
         self._refresh_watchdog = QTimer(self)
         self._refresh_watchdog.setSingleShot(True)
         self._refresh_watchdog.timeout.connect(self._refresh_watchdog_timeout)
+        self._webview_startup_watchdog = QTimer(self)
+        self._webview_startup_watchdog.setSingleShot(True)
+        self._webview_startup_watchdog.timeout.connect(self._webview_startup_watchdog_timeout)
         self._logout_after_load = False
         self._logout_cleanup_generation: int | None = None
         self._logout_cleanup_watchdog = QTimer(self)
@@ -140,6 +154,9 @@ class KimiWebSession(QObject):
         self._logout_cleanup_watchdog.timeout.connect(self._logout_cleanup_watchdog_timeout)
         self._ignore_expired_logout_loads = False
         self._login_dialog: QDialog | None = None
+        self._login_container: QWidget | None = None
+        self._login_status_label: QLabel | None = None
+        self._login_repair_button: QPushButton | None = None
         self._reuse_blocked = False
         self._closed = False
 
@@ -159,13 +176,26 @@ class KimiWebSession(QObject):
             layout.addWidget(explanation)
             container = QWidget.createWindowContainer(self.view, dialog)
             layout.addWidget(container, 1)
+            status_label = QLabel(LOGIN_STARTING_MESSAGE)
+            status_label.setWordWrap(True)
+            layout.addWidget(status_label)
+            repair_button = QPushButton(
+                "修复 Microsoft Edge WebView2 / Repair Microsoft Edge WebView2"
+            )
+            repair_button.clicked.connect(self._open_webview2_help)
+            layout.addWidget(repair_button)
             dialog.finished.connect(self._login_dialog_closed)
             self._login_dialog = dialog
+            self._login_container = container
+            self._login_status_label = status_label
+            self._login_repair_button = repair_button
         self._login_dialog.show()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
+        self._show_login_waiting()
         self._begin_refresh()
         self._refresh_after_load = True
+        self._webview_startup_watchdog.start(WEBVIEW_STARTUP_TIMEOUT_MS)
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def refresh(self) -> None:
@@ -208,6 +238,7 @@ class KimiWebSession(QObject):
             return
         self._closed = True
         self._invalidate_refresh()
+        self._webview_startup_watchdog.stop()
         self._cancel_logout_cleanup()
         if self._login_dialog is not None:
             self._login_dialog.close()
@@ -289,6 +320,19 @@ class KimiWebSession(QObject):
         if generation is not None:
             self._refresh_watchdog_fired(generation)
 
+    def _webview_startup_watchdog_timeout(self) -> None:
+        if self._closed:
+            return
+        self._webview_startup_watchdog.stop()
+        generation = self._active_refresh_generation
+        if generation is not None:
+            self._complete_refresh(generation)
+        else:
+            self._refreshing = False
+            self._refresh_after_load = False
+        self._show_login_diagnostic()
+        self.error_occurred.emit(LOGIN_LOAD_ERROR)
+
     def _refresh_watchdog_fired(self, generation: int) -> None:
         if self._closed or generation != self._active_refresh_generation:
             return
@@ -315,6 +359,7 @@ class KimiWebSession(QObject):
             return
         status = info.status()
         if status is QWebViewLoadingInfo.LoadStatus.Failed:
+            self._webview_startup_watchdog.stop()
             logout_generation = self._logout_cleanup_generation
             if logout_generation is not None:
                 self._finish_logout_cleanup(logout_generation)
@@ -325,8 +370,11 @@ class KimiWebSession(QObject):
                 self._refreshing = False
                 self._refresh_after_load = False
                 self._refresh_watchdog.stop()
-            self.error_occurred.emit("Kimi 官网加载失败")
+            self._show_login_diagnostic()
+            self.error_occurred.emit(LOGIN_LOAD_ERROR)
             return
+        self._webview_startup_watchdog.stop()
+        self._show_login_container()
         if status is not QWebViewLoadingInfo.LoadStatus.Succeeded:
             return
         if not self._is_kimi_origin():
@@ -420,5 +468,38 @@ class KimiWebSession(QObject):
             message if isinstance(message, str) and message else "Kimi 会员额度刷新失败"
         )
 
+    def _show_login_waiting(self) -> None:
+        if self._login_container is not None:
+            self._login_container.setVisible(True)
+        if self._login_status_label is not None:
+            self._login_status_label.setText(LOGIN_STARTING_MESSAGE)
+            self._login_status_label.setVisible(True)
+        if self._login_repair_button is not None:
+            self._login_repair_button.setVisible(False)
+
+    def _show_login_container(self) -> None:
+        if self._login_container is not None:
+            self._login_container.setVisible(True)
+        if self._login_status_label is not None:
+            self._login_status_label.setVisible(False)
+        if self._login_repair_button is not None:
+            self._login_repair_button.setVisible(False)
+
+    def _show_login_diagnostic(self) -> None:
+        if self._login_container is not None:
+            self._login_container.setVisible(False)
+        if self._login_status_label is not None:
+            self._login_status_label.setText(LOGIN_DIAGNOSTIC_MESSAGE)
+            self._login_status_label.setVisible(True)
+        if self._login_repair_button is not None:
+            self._login_repair_button.setVisible(True)
+
+    def _open_webview2_help(self) -> None:
+        QDesktopServices.openUrl(QUrl(WEBVIEW2_HELP_URL))
+
     def _login_dialog_closed(self) -> None:
+        self._webview_startup_watchdog.stop()
         self._login_dialog = None
+        self._login_container = None
+        self._login_status_label = None
+        self._login_repair_button = None
