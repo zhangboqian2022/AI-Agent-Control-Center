@@ -55,7 +55,7 @@ class NativeWebViewSmoke:
         if status is QWebViewLoadingInfo.LoadStatus.Failed:
             self._fail("load-failed")
         elif status is QWebViewLoadingInfo.LoadStatus.Succeeded:
-            self._view.page().runJavaScript("window.aaccSmokeResult", self._javascript_finished)
+            self._view.runJavaScript("window.aaccSmokeResult", self._javascript_finished)
 
     def _javascript_finished(self, result: object) -> None:
         if result != EXPECTED_JAVASCRIPT_RESULT:

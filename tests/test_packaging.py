@@ -372,6 +372,7 @@ def test_windows_webview_smoke_exercises_a_visible_native_controller_after_setup
     assert "view.loadHtml(" in script
     assert "LoadStatus.Succeeded" in script
     assert "runJavaScript" in script
+    assert ".page()" not in script
     assert "unexpected-javascript-result" in script
     assert "timeout" in script
     assert "EXIT_FAILURE = 1" in script
