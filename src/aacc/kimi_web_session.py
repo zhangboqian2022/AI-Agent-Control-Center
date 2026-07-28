@@ -392,6 +392,13 @@ class KimiWebSession(QObject):
     def _on_loading_changed(self, info: QWebViewLoadingInfo) -> None:
         if self._closed or self._ignore_expired_logout_loads:
             return
+        if (
+            not self._login_dialog_open
+            and not self._refreshing
+            and self._active_refresh_generation is None
+            and self._logout_cleanup_generation is None
+        ):
+            return
         status = info.status()
         if status is QWebViewLoadingInfo.LoadStatus.Failed:
             self._clear_webview_startup_watchdog()

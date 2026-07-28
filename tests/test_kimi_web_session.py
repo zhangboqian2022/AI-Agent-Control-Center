@@ -942,9 +942,11 @@ def test_login_dialog_close_invalidates_attempt_and_ignores_late_webview_events(
 ):
     del qapp
     session = make_session(monkeypatch, tmp_path)
-    _install_login_dialog_fakes(monkeypatch)
+    widgets = _install_login_dialog_fakes(monkeypatch)
     quotas = []
+    errors = []
     session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
+    session.error_occurred.connect(errors.append)
 
     session.open_login()
     generation = session._active_refresh_generation
@@ -953,6 +955,7 @@ def test_login_dialog_close_invalidates_attempt_and_ignores_late_webview_events(
 
     session._login_dialog_closed()
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
     session._handle_bridge(
         {
             "kind": "quota",
@@ -967,6 +970,8 @@ def test_login_dialog_close_invalidates_attempt_and_ignores_late_webview_events(
     assert session.view.scripts == []
     assert session.login_state.may_reuse() is False
     assert quotas == []
+    assert errors == []
+    assert widgets["repair"].visible is False
 
 
 def test_login_success_marks_retained_dialog_closed_before_background_refresh(
