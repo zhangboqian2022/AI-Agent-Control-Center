@@ -38,6 +38,10 @@
   程序、快捷方式与卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC` 中由
   AACC 管理的设置、历史、数据库、凭据与复用决定。原生 WebView 存储由操作
   系统另行管理，因此不声称 Setup 会保留或移除网页会话。
+- 在写入 AACC 文件前，Setup 会为当前用户确保 Microsoft Evergreen WebView2
+  运行时可用；仅在运行时不存在时才需要网络，已安装且可用的运行时会被复用。若
+  Kimi 原生登录视图没有加载事件，对话框会用固定的 15 秒 WebView2/网络修复诊断
+  和 Microsoft 修复链接替换空白界面。
 - 优雅退出使用当前会话内、按目标 PID 命名的 Windows Event；Event 的 Owner
   固定为当前用户，DACL 仅允许当前用户、Local System 与 Administrators。
   控制端仍会核对精确窗口标题、PID 与完整 EXE 路径，并等待同一个进程句柄
@@ -110,6 +114,11 @@ mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务
   reuse decision under `%APPDATA%\AACC`. The operating system owns the native
   WebView store separately, so this is not a claim that Setup preserves or
   removes the website session.
+- Before AACC files are changed, Setup ensures Microsoft's Evergreen WebView2
+  Runtime is available for the current user. Network is required only if the
+  Runtime is absent; a usable installed Runtime is reused. If Kimi's native
+  login view has no loading event, its dialog replaces the blank surface with a
+  fixed 15-second WebView2/network repair diagnostic and Microsoft repair link.
 - Graceful shutdown uses a per-target-PID Windows Event in the current session.
   Its owner is the current user and its protected DACL allows only that user,
   Local System, and Administrators. The controller still verifies the exact

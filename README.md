@@ -73,6 +73,12 @@ The primary Windows download for 1.4.2 is `AACC-1.4.2-Setup.exe`, accompanied by
 
 This per-user Setup installs for the current user without administrator elevation at `%LocalAppData%\Programs\AACC`. It always adds a Start Menu shortcut, offers an unchecked desktop shortcut, and adds no login item. Run the same Setup to upgrade in place; uninstall removes the program and shortcuts. Both upgrade and uninstall preserve AACC-owned data under `%APPDATA%\AACC`, including settings, history, database, credentials, and the protected Kimi reuse decision. The operating system owns the separate native WebView store, so preserving `%APPDATA%\AACC` is not a claim that Setup preserves the website session.
 
+Setup also provisions Microsoft's Evergreen WebView2 Runtime for the current
+user before installing AACC files. It needs network access only if the Runtime
+is absent; an already-installed usable Runtime is reused. If the Kimi login's
+native view cannot begin loading, AACC replaces the blank surface with a
+15-second diagnostic and a link to Microsoft's WebView2 repair page.
+
 The Windows candidate is unsigned, so Windows may show an Unknown publisher or SmartScreen warning. Verify the matching SHA-256 before choosing **More info → Run anyway**. Sensitive configuration, database, and credential files use a native protected DACL limited to the current user, Local System, and Administrators. Packaged Codex quota queries run through a fixed-purpose broker beside `AACC.exe`; the broker accepts only the read-only Codex app-server command and contains its process tree.
 
 Developers can still build the onedir payload from source with Python 3.12+, [uv](https://docs.astral.sh/uv/), and `.\scripts\build_windows.ps1`. The portable bundle is a CI/debugging artifact, not the primary user download.

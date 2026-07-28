@@ -27,6 +27,20 @@ Commit and candidate SHA-256:
   opens Setup.
 - [ ] **Per-user install**: Setup does not request administrator elevation and
   installs under `%LocalAppData%\Programs\AACC`.
+- [ ] **WebView2 provisioning — Runtime absent**: on a real Windows 10 or 11
+  standard-user machine without the WebView2 Runtime, run Setup while network
+  is available. It installs Microsoft's Evergreen WebView2 Runtime for the
+  current user before AACC, and the first Kimi login creates a usable native
+  view rather than a blank dialog.
+- [ ] **WebView2 provisioning — Runtime already present**: on a separate real
+  Windows 10 or 11 standard-user machine with an already-installed WebView2
+  Runtime, run Setup with network monitoring or disconnected after download.
+  Setup recognizes the Runtime and does not require a network installation;
+  the first Kimi login still creates a usable native view.
+- [ ] **WebView2 diagnostic**: if a native Kimi login view cannot produce a
+  loading event, it replaces the blank surface with the fixed 15-second
+  WebView2/network repair diagnostic and Microsoft repair-page action. Record
+  the observed category without account data or page URLs.
 - [ ] **Shortcuts and startup**: the Start Menu shortcut exists; the desktop
   shortcut follows the selected option; no startup/login item was added.
 - [ ] **First launch and tray**: the installed AACC panel opens, remains

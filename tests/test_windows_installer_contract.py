@@ -43,7 +43,11 @@ def test_inno_setup_packages_only_the_reviewed_onedir_roots() -> None:
     assert 'Source: "..\\dist\\AACC\\_internal\\*"; DestDir: "{app}\\_internal"' in files
     assert 'Source: "..\\build\\installer\\internal-manifest-v1.txt"' in files
     assert 'Source: "shutdown-v1.capability"' in files
-    assert len(re.findall(r"(?m)^Source:", files)) == 6
+    assert (
+        'Source: "..\\build\\installer\\MicrosoftEdgeWebview2Setup.exe"; '
+        "Flags: dontcopy noencryption"
+    ) in files
+    assert len(re.findall(r"(?m)^Source:", files)) == 7
     internal = files.index('Source: "..\\dist\\AACC\\_internal\\*"')
     aacc = files.index('Source: "..\\dist\\AACC\\AACC.exe"')
     broker = files.index('Source: "..\\dist\\AACC\\aacc-spawn.exe"')
@@ -56,6 +60,12 @@ def test_inno_setup_packages_only_the_reviewed_onedir_roots() -> None:
 def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     text = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     code = _section(text, "Code")
+    shutdown_control = code.split("function RunManagedShutdownControl", 1)[1].split(
+        "function ManifestPath", 1
+    )[0]
+    shutdown_existing = code.split("function ShutdownExistingAACC", 1)[1].split(
+        "function ValidateInternalRootForInstall", 1
+    )[0]
     lowered = text.lower()
 
     assert "--shutdown-for-update" in code
@@ -78,9 +88,11 @@ def test_inno_setup_uses_only_the_graceful_aacc_shutdown_command() -> None:
     assert "newly created control invocation" in code
     assert "never a handle to the existing main AACC process" in code
     assert "OpenProcess(" not in code
-    assert "ewWaitUntilTerminated" not in code
-    assert "Exec(" not in code
-    assert "ShellExec(" not in code
+    assert "ewWaitUntilTerminated" not in shutdown_control
+    assert "Exec(" not in shutdown_control
+    assert "ShellExec(" not in shutdown_control
+    assert "Exec(" not in shutdown_existing
+    assert "ShellExec(" not in shutdown_existing
     assert "ResultCode <> 0" in code
     assert "FileExists(AACCPath)" in code
     assert "taskkill" not in lowered

@@ -1008,9 +1008,7 @@ def test_login_success_marks_retained_dialog_closed_before_background_refresh(
     assert session._active_refresh_generation is not None
 
 
-def test_stale_login_startup_timeout_cannot_affect_a_reopened_attempt(
-    qapp, monkeypatch, tmp_path
-):
+def test_stale_login_startup_timeout_cannot_affect_a_reopened_attempt(qapp, monkeypatch, tmp_path):
     del qapp
     session = make_session(monkeypatch, tmp_path)
     widgets = _install_login_dialog_fakes(monkeypatch)
@@ -1034,9 +1032,7 @@ def test_stale_login_startup_timeout_cannot_affect_a_reopened_attempt(
     assert errors == []
 
 
-def test_logout_navigation_completion_ignores_late_loading_events(
-    qapp, monkeypatch, tmp_path
-):
+def test_logout_navigation_completion_ignores_late_loading_events(qapp, monkeypatch, tmp_path):
     del qapp
     session = make_session(monkeypatch, tmp_path)
     _install_login_dialog_fakes(monkeypatch)
@@ -1056,9 +1052,7 @@ def test_logout_navigation_completion_ignores_late_loading_events(
     assert errors == []
 
 
-def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(
-    qapp, monkeypatch, tmp_path
-):
+def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(qapp, monkeypatch, tmp_path):
     del qapp
     session = make_session(monkeypatch, tmp_path)
     widgets = _install_login_dialog_fakes(monkeypatch)

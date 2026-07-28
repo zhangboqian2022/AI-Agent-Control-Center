@@ -28,6 +28,11 @@ Windows 1.4.2 主候选产物是 `AACC-1.4.2-Setup.exe`，普通用户无需安�
 
 再次运行同一个 Setup 会在有界的优雅退出后原位升级。卸载会移除程序、开始菜单项、可选桌面快捷方式和卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC` 下由 AACC 管理的配置、任务历史、数据库、凭据与受保护的复用决定。原生 WebView 存储由操作系统另行管理；这里不声称 Setup 会保留或移除网页会话。需要禁用复用并请求有界清理原生站点数据时，请在 AACC 中明确退出 Kimi 登录。
 
+在写入 AACC 文件前，Setup 会为当前用户确保 Microsoft Evergreen WebView2
+运行时可用；仅在运行时不存在时才需要网络下载，已安装且可用的运行时不会被重复
+安装。若 Kimi 登录的原生视图没有产生加载事件，对话框会用 15 秒诊断和 Microsoft
+WebView2 修复链接替换空白界面。
+
 1.4.2 候选版尚未签名，Windows 可能显示“未知发布者”或 SmartScreen；请先验证校验值，再选择“更多信息 → 仍要运行”。敏感配置、凭据、数据库、WAL 与 SHM 文件使用原生精确受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 只读查询通过 `AACC.exe` 旁的固定用途 broker 执行，因此应用不再调用 `icacls.exe`、`whoami.exe` 或 `taskkill.exe`。
 
 ## 绑定 Terminal 与 iTerm2
