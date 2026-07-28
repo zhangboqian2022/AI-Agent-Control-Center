@@ -83,30 +83,31 @@ def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
             assert term in text
 
 
-def test_docs_describe_live_language_toggle_and_preserved_compact_mode() -> None:
-    english = "\n".join(
-        _read(name)
-        for name in (
-            "README.md",
-            "docs/user-guide.en.md",
-            "CHANGELOG.md",
-        )
+def test_each_bilingual_product_document_keeps_the_live_language_contract() -> None:
+    english_terms = (
+        "Chinese/English",
+        "immediately",
+        "Compact mode remains in Settings and the tray menu",
+        "does not refresh quotas or change monitored tasks or login state",
+        "candidate",
     )
-    chinese = "\n".join(
-        _read(name)
-        for name in (
-            "README.zh-CN.md",
-            "docs/user-guide.md",
-            "CHANGELOG.zh-CN.md",
-        )
+    chinese_terms = (
+        "中英文",
+        "即时切换",
+        "紧凑模式保留在设置和托盘菜单",
+        "不会刷新额度，也不会改变监控任务或登录状态",
+        "候选",
     )
 
-    assert "live Chinese/English" in english
-    assert "compact mode remains in Settings and the tray menu" in english
-    assert "does not refresh quotas or change monitored tasks or login state" in english
-    assert "中英文即时切换" in chinese
-    assert "紧凑模式保留在设置和托盘菜单" in chinese
-    assert "不会刷新额度，也不会改变监控任务或登录状态" in chinese
+    for name in ("README.md", "docs/user-guide.en.md", "CHANGELOG.md"):
+        text = _read(name)
+        for term in english_terms:
+            assert term.casefold() in text.casefold(), f"{name} must describe {term!r}"
+
+    for name in ("README.zh-CN.md", "docs/user-guide.md", "CHANGELOG.zh-CN.md"):
+        text = _read(name)
+        for term in chinese_terms:
+            assert term.casefold() in text.casefold(), f"{name} must describe {term!r}"
 
 
 def test_screenshot_uses_explicit_synthetic_chinese_locale() -> None:
@@ -133,7 +134,12 @@ def test_bilingual_manual_gates_cover_repeated_live_switching() -> None:
         re.DOTALL,
     )
     assert re.search(
-        r"- \[ \].*macOS.*(?:中英文|Chinese/English).*(?:Kimi 登录|Kimi login)",
+        r"- \[ \].*macOS.*Chinese/English.*Kimi login",
+        notes,
+        re.DOTALL | re.IGNORECASE,
+    )
+    assert re.search(
+        r"- \[ \].*macOS.*中英文.*Kimi 登录",
         notes,
         re.DOTALL,
     )
