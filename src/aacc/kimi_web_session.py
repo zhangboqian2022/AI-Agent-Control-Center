@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from aacc.file_security import protect_directory
 from aacc.i18n import ZH_CN, LanguageManager
+from aacc.kimi_web_error import KimiWebErrorCategory
 from aacc.kimi_web_login_state import KimiWebLoginStateStore
 
 KIMI_MEMBERSHIP_URL = "https://www.kimi.com/membership/subscription"
@@ -283,7 +284,7 @@ class KimiWebSession(QObject):
             self.login_state.set_may_reuse(value)
         except Exception:  # noqa: BLE001 - Qt callbacks must fail closed
             _logger.error("Kimi web reuse gate update failed")
-            self.error_occurred.emit(self.language_manager.text("kimi.web_state_save_failed"))
+            self.error_occurred.emit(KimiWebErrorCategory.STATE_SAVE_FAILED.value)
             return False
         return True
 
@@ -368,13 +369,13 @@ class KimiWebSession(QObject):
             self._refreshing = False
             self._refresh_after_load = False
         self._show_login_diagnostic()
-        self.error_occurred.emit(self.language_manager.text("kimi.web_load_failed"))
+        self.error_occurred.emit(KimiWebErrorCategory.LOAD_FAILED.value)
 
     def _refresh_watchdog_fired(self, generation: int) -> None:
         if self._closed or generation != self._active_refresh_generation:
             return
         self._complete_refresh(generation)
-        self.error_occurred.emit(self.language_manager.text("kimi.web_refresh_timeout"))
+        self.error_occurred.emit(KimiWebErrorCategory.REFRESH_TIMEOUT.value)
 
     def _complete_refresh(self, generation: int) -> bool:
         if self._closed or generation != self._active_refresh_generation:
@@ -412,7 +413,7 @@ class KimiWebSession(QObject):
                 self._refresh_after_load = False
                 self._refresh_watchdog.stop()
             self._show_login_diagnostic()
-            self.error_occurred.emit(self.language_manager.text("kimi.web_load_failed"))
+            self.error_occurred.emit(KimiWebErrorCategory.LOAD_FAILED.value)
             return
         self._clear_webview_startup_watchdog()
         self._show_login_container()
@@ -505,7 +506,7 @@ class KimiWebSession(QObject):
             self.login_state_changed.emit(False)
             return
         _logger.warning("Kimi web quota refresh failed")
-        self.error_occurred.emit(self.language_manager.text("kimi.web_refresh_failed"))
+        self.error_occurred.emit(KimiWebErrorCategory.REFRESH_FAILED.value)
 
     def _show_login_waiting(self) -> None:
         self._login_status_key = "kimi.web_starting"

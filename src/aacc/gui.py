@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -75,6 +76,11 @@ from aacc.kimi_quota import (
     QuotaStatus,
     format_balance,
     format_reset_countdown,
+)
+from aacc.kimi_web_error import (
+    KimiWebErrorCategory,
+    kimi_web_error_text,
+    normalize_kimi_web_error_category,
 )
 from aacc.kimi_web_quota import merge_kimi_quota
 from aacc.kimi_web_quota_service import KimiWebQuotaService
@@ -272,7 +278,7 @@ class QuotaBar(QFrame):
         self._last_quota_tooltip = ""
         self._last_quota: KimiQuota | None = None
         self._display_state = "unauthorized"
-        self._last_error = ""
+        self._last_error: KimiWebErrorCategory | None = None
         self.setObjectName("quotaBar")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QGridLayout(self)
@@ -337,7 +343,7 @@ class QuotaBar(QFrame):
     def show_unauthorized(self) -> None:
         self._display_state = "unauthorized"
         self._last_quota = None
-        self._last_error = ""
+        self._last_error = None
         self._has_known_quota = False
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #e06c75;")
@@ -357,7 +363,7 @@ class QuotaBar(QFrame):
 
     def show_pending(self) -> None:
         self._display_state = "pending"
-        self._last_error = ""
+        self._last_error = None
         self.dot.setStyleSheet("color: #e5c07b;")
         self.summary_label.setText(
             f"{self.language_manager.text('quota.kimi')}\n"
@@ -368,7 +374,7 @@ class QuotaBar(QFrame):
     def show_quota(self, quota: KimiQuota) -> None:
         self._display_state = "quota"
         self._last_quota = quota
-        self._last_error = ""
+        self._last_error = None
         self._render_quota(quota)
 
     def _render_quota(self, quota: KimiQuota) -> None:
@@ -417,9 +423,9 @@ class QuotaBar(QFrame):
         self._last_quota_tooltip = "\n".join(tooltip_lines)
         self.setToolTip(self._last_quota_tooltip)
 
-    def show_error(self, message: str) -> None:
+    def show_error(self, category: object) -> None:
         self._display_state = "error"
-        self._last_error = message
+        self._last_error = normalize_kimi_web_error_category(category)
         self._render_error()
 
     def _render_error(self) -> None:
@@ -444,7 +450,8 @@ class QuotaBar(QFrame):
             "额度刷新失败" if self.language_manager.language == ZH_CN else "Quota refresh failed"
         )
         retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
-        self.setToolTip(f"{previous}{error_prefix}: {self._last_error}\n{retry}")
+        error = kimi_web_error_text(self._last_error, self.language_manager)
+        self.setToolTip(f"{previous}{error_prefix}: {error}\n{retry}")
 
     def _show_detail(self, row: _QuotaMetricRow, detail: QuotaDetail | None) -> None:
         if detail is None:
@@ -1677,7 +1684,9 @@ class MainWindow(QWidget):
                 f"显示：{len(self._card_order_ids)}"
             )
         else:
-            shown = self.language_manager.text("summary.tasks", count=len(self._card_order_ids))
+            shown_count = len(self._card_order_ids)
+            summary_key = "summary.tasks.one" if shown_count == 1 else "summary.tasks.other"
+            shown = self.language_manager.text(summary_key, count=shown_count)
             self.task_summary_label.setText(
                 f"{self.language_manager.text('group.running')}: {running_count} · "
                 f"{self.language_manager.text('group.completed')}: {terminal_count} · "
@@ -2036,7 +2045,7 @@ class MainWindow(QWidget):
         if self.quota_bar is not None:
             self.quota_bar.show_unauthorized()
         if logout_failed:
-            self._on_quota_error(self.language_manager.text("kimi.logout_partial"))
+            self._on_quota_error(KimiWebErrorCategory.LOGOUT_PARTIAL.value)
 
     def set_compact(self, compact: bool) -> None:
         self.compact_mode = compact
@@ -2248,7 +2257,12 @@ class MainWindow(QWidget):
         answer = QMessageBox.question(
             self,
             self.language_manager.text("clear_completed.title"),
-            self.language_manager.text("clear_completed.prompt", count=len(task_ids)),
+            self.language_manager.text(
+                "clear_completed.prompt.one"
+                if len(task_ids) == 1
+                else "clear_completed.prompt.other",
+                count=len(task_ids),
+            ),
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
             QMessageBox.StandardButton.Cancel,
         )
@@ -2486,10 +2500,11 @@ class MainWindow(QWidget):
 
     def show_about(self) -> None:
         version = public_version()
+        body_key = "about.body.windows" if sys.platform == "win32" else "about.body.macos"
         QMessageBox.about(
             self,
             self.language_manager.text("about.title"),
-            self.language_manager.text("about.body", version=version),
+            self.language_manager.text(body_key, version=version),
         )
 
     def toggle_visible(self) -> None:

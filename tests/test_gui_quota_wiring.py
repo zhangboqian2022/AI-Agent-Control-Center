@@ -7,6 +7,7 @@ import httpx
 import pytest
 from PySide6.QtCore import QObject, Signal
 
+from aacc.i18n import EN_US, ZH_CN, LanguageManager
 from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.quota_service import STATE_AUTHORIZED, STATE_UNAUTHORIZED, QuotaService
 
@@ -62,6 +63,7 @@ def make_window(
     with_service=True,
     codex_quota_service=None,
     web_quota_service=None,
+    language_manager=None,
 ):
     from aacc.automation import MacAutomation
     from aacc.automation_executor import AutomationExecutor
@@ -93,10 +95,38 @@ def make_window(
         quota_service=service,
         kimi_web_quota_service=web_quota_service,
         codex_quota_service=codex_quota_service,
+        language_manager=language_manager,
         open_url=opened.append,
     )
     qtbot.addWidget(window)
     return window, service, opened
+
+
+def test_web_error_category_retranslates_full_prompt_both_directions(qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    language_manager = LanguageManager(ZH_CN)
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        web_quota_service=web,
+        language_manager=language_manager,
+    )
+    assert window.quota_bar is not None
+
+    web.error_occurred.emit("load_failed")
+    assert "Kimi 官网加载失败" in window.quota_bar.toolTip()
+
+    language_manager.set_language(EN_US)
+    assert "The Kimi website failed to load" in window.quota_bar.toolTip()
+    assert "官网加载失败" not in window.quota_bar.toolTip()
+
+    web.error_occurred.emit("refresh_timeout")
+    assert "Kimi membership quota refresh timed out" in window.quota_bar.toolTip()
+
+    language_manager.set_language(ZH_CN)
+    assert "Kimi 会员额度刷新超时" in window.quota_bar.toolTip()
+    assert "membership quota refresh timed out" not in window.quota_bar.toolTip()
 
 
 def test_quota_bar_absent_without_service(qtbot, tmp_path):
@@ -254,7 +284,7 @@ def test_persist_failure_signal_chain_keeps_final_logout_warning(qtbot, tmp_path
 
     assert code_logouts == [True]
     assert web.last_quota is None
-    assert propagated_errors == ["password=[REDACTED]"]
+    assert propagated_errors == ["refresh_failed"]
     assert window.quota_bar is not None
     tooltip = window.quota_bar.toolTip()
     assert "Kimi 退出登录未完全完成" in tooltip

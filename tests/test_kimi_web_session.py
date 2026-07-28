@@ -258,7 +258,7 @@ def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path
     session.view.script_result = "{"
     session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{generation}:ready:malformed")
     assert login_states[-1] == (False, False)
-    assert errors == ["Kimi 会员额度刷新失败", "Kimi 会员额度刷新失败"]
+    assert errors == ["refresh_failed", "refresh_failed"]
 
     session.logout()
     assert session.login_state.may_reuse() is False
@@ -507,7 +507,7 @@ def test_bridge_error_logging_redacts_remote_secrets(caplog, monkeypatch, tmp_pa
     with caplog.at_level(logging.WARNING, logger="aacc.kimi_web_session"):
         session._handle_bridge({"kind": "error", "generation": generation, "message": message})
 
-    assert errors == ["Kimi 会员额度刷新失败"]
+    assert errors == ["refresh_failed"]
     logs = caplog.text
     assert "remote-password" not in logs
     assert "remote-token" not in logs
@@ -595,7 +595,7 @@ def test_quota_success_fails_closed_when_reuse_gate_write_fails(
     assert session._reuse_blocked is True
     assert login_states == []
     assert quotas == []
-    assert errors == ["Kimi 网页登录状态保存失败"]
+    assert errors == ["state_save_failed"]
     assert "account-state.json" not in caplog.text
     assert "gate-secret" not in caplog.text
 
@@ -626,7 +626,7 @@ def test_unauthorized_fails_closed_when_reuse_gate_write_fails(caplog, qapp, mon
     assert session._reuse_blocked is True
     assert session._active_refresh_generation is None
     assert login_states == [False]
-    assert errors == ["Kimi 网页登录状态保存失败"]
+    assert errors == ["state_save_failed"]
     assert len(session.view.scripts) == script_count
     assert "state.json" not in caplog.text
     assert "gate-secret" not in caplog.text
@@ -669,7 +669,7 @@ def test_logout_gate_write_failure_still_invalidates_and_cleans_up(
     assert session._active_refresh_generation is None
     assert login_states == [False]
     assert quotas == []
-    assert errors == ["Kimi 网页登录状态保存失败"]
+    assert errors == ["state_save_failed"]
     assert "localStorage.clear" in session.view.scripts[-1]
     assert session.view.cookies_deleted is True
     assert "logout-state.json" not in caplog.text
@@ -690,7 +690,7 @@ def test_refresh_watchdog_releases_request_and_allows_new_generation(qapp, monke
     session._refresh_watchdog_fired(first_generation)
 
     assert session._refreshing is False
-    assert errors == ["Kimi 会员额度刷新超时"]
+    assert errors == ["refresh_timeout"]
 
     session.refresh()
 
@@ -800,7 +800,7 @@ def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_pat
     session._refresh_after_load = True
     session._background_navigation_pending = True
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
-    assert errors == ["Kimi 官网加载失败"]
+    assert errors == ["load_failed"]
     assert session._refreshing is False
     assert session._refresh_after_load is False
 
@@ -1167,7 +1167,7 @@ def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(qapp, mon
     assert "WebView2" in widgets["status"].text
     assert "网络" in widgets["status"].text
     assert widgets["repair"].visible is True
-    assert errors == ["Kimi 官网加载失败"]
+    assert errors == ["load_failed"]
     assert KIMI_MEMBERSHIP_URL not in errors[0]
 
     widgets["repair"].clicked.emit()
@@ -1208,7 +1208,7 @@ def test_login_dialog_loading_failure_shows_sanitized_webview_diagnostic(
     assert "WebView2" in widgets["status"].text
     assert "网络" in widgets["status"].text
     assert widgets["repair"].visible is True
-    assert errors == ["Kimi 官网加载失败"]
+    assert errors == ["load_failed"]
     assert KIMI_MEMBERSHIP_URL not in errors[0]
     assert "remote-code" not in caplog.text
     assert "remote-token" not in caplog.text
