@@ -1626,10 +1626,11 @@ class MainWindow(QWidget):
         self._latest_kimi_web_quota = None
         if self.quota_bar is None:
             return
-        if self._latest_kimi_code_quota is None:
+        fallback = merge_kimi_quota(None, self._latest_kimi_code_quota)
+        if fallback.status is QuotaStatus.UNKNOWN:
             self.quota_bar.show_unauthorized()
             return
-        self._render_kimi_quota()
+        self.quota_bar.show_quota(fallback)
 
     def _on_quota_auth_state(self, state: str) -> None:
         if self.quota_bar is None:
