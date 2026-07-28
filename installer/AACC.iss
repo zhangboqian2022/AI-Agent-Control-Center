@@ -341,7 +341,8 @@ begin
     ComponentCount := ComponentCount + 1;
     for DigitIndex := 1 to Length(Component) do
     begin
-      if not (Component[DigitIndex] in ['0'..'9']) then
+      if (Component[DigitIndex] < '0') or
+         (Component[DigitIndex] > '9') then
         Exit;
       if Component[DigitIndex] <> '0' then
         HasNonZeroDigit := True;

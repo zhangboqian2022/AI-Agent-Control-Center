@@ -348,8 +348,10 @@ def test_windows_installer_rejects_malformed_or_zero_webview2_runtime_versions()
         "function EnsureWebView2Runtime", 1
     )[0]
 
+    assert "in ['0'..'9']" not in version_validator
+    assert "(Component[DigitIndex] < '0') or" in version_validator
+    assert "(Component[DigitIndex] > '9')" in version_validator
     assert "ComponentCount <> 4" in version_validator
-    assert "Component[DigitIndex] in ['0'..'9']" in version_validator
     assert "HasNonZeroDigit" in version_validator
     assert "StrToInt" not in version_validator
     assert "Trim(RuntimeVersion)" not in version_validator
