@@ -1,3 +1,4 @@
+import sys
 from concurrent.futures import Future
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -358,7 +359,8 @@ def test_confirmations_accessibility_and_about_use_current_language(
     window.show_about()
     assert shown_boxes[-1][0] == "About AACC"
     assert "\nVersion " in shown_boxes[-1][1]
-    assert "\nmacOS DMG AACC-" in shown_boxes[-1][1]
+    expected_artifact = "\nWindows Setup AACC-" if sys.platform == "win32" else "\nmacOS DMG AACC-"
+    assert expected_artifact in shown_boxes[-1][1]
     manager.close()
 
 
