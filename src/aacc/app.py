@@ -43,6 +43,7 @@ from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
 from aacc.shutdown_windows import WindowsShutdownListener, request_shutdown_for_update
 from aacc.task_manager import TaskManager
+from aacc.webview_smoke import run_native_webview_smoke
 from aacc.windows_broker import build_broker_command, packaged_broker_path
 
 _logger = logging.getLogger("aacc.app")
@@ -535,6 +536,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
 def main() -> int:
     if sys.platform == "win32" and sys.argv[1:] == ["--shutdown-for-update"]:
         return request_shutdown_for_update()
+    if sys.platform == "win32" and sys.argv[1:] == ["--smoke-native-webview"]:
+        return run_native_webview_smoke()
     config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
     database_path = resolve_database_path()
     data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR

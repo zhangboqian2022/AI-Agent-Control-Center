@@ -1834,6 +1834,25 @@ foreach ($Required in @(
 }
 Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed"
 Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"
+$NativeWebViewBaseline = @(Get-ProductProcessBaseline -ProductRoot $InstallRoot)
+$PreviousQtQpaPlatform = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
+try {
+    $env:QT_QPA_PLATFORM = "windows"
+    $ExitCode = Invoke-ExternalDeadline -FilePath $InstalledAacc `
+        -Arguments @("--smoke-native-webview") -TimeoutSeconds 40 `
+        -Category "installed native WebView smoke"
+    Assert-True ($ExitCode -eq 0) "installed native WebView smoke returned non-zero"
+}
+finally {
+    if ($null -eq $PreviousQtQpaPlatform) {
+        Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:QT_QPA_PLATFORM = $PreviousQtQpaPlatform
+    }
+    Assert-ProductProcessBaseline -ProductRoot $InstallRoot -Expected $NativeWebViewBaseline `
+        -Category "installed native WebView smoke"
+}
 Assert-True (-not (Test-Path -LiteralPath $DesktopShortcut)) `
     "silent install unexpectedly created a desktop shortcut"
 Assert-True (Test-Path -LiteralPath $UninstallRegistryPath) `

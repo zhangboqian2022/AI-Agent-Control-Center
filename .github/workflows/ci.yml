@@ -120,14 +120,9 @@ jobs:
           $eventModules = @(Get-ChildItem -LiteralPath "dist\AACC" -Recurse -File -Filter "win32event*.pyd")
           if ($eventModules.Count -ne 1) { throw "Expected exactly one win32event extension module" }
           if ($eventModules[0].Length -le 0) { throw "win32event extension module is empty" }
-      - name: Smoke frozen and installed Windows product
+      - name: Smoke frozen, installed, and native WebView Windows product
         shell: powershell
         run: ./scripts/test_windows_package.ps1
-      - name: Smoke native Windows WebView
-        shell: powershell
-        run: |
-          $env:QT_QPA_PLATFORM = "windows"
-          uv run python scripts/smoke_windows_webview.py
       - name: Package and strictly verify primary artifacts
         shell: powershell
         run: |

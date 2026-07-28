@@ -447,6 +447,56 @@ def test_windows_shutdown_control_command_requires_exact_arguments(
         app_module.main()
 
 
+def test_windows_native_webview_smoke_runs_before_paths_or_guard(
+    monkeypatch: object,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.sys,
+        "argv",
+        ["AACC.exe", "--smoke-native-webview"],
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "run_native_webview_smoke",
+        lambda: calls.append("smoke") or 7,
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "resolve_database_path",
+        lambda: (_ for _ in ()).throw(AssertionError("paths must not resolve")),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "InstanceGuard",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("guard must not start")),
+    )
+
+    assert app_module.main() == 7
+    assert calls == ["smoke"]
+
+
+def test_windows_native_webview_smoke_requires_exact_arguments(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.sys,
+        "argv",
+        ["AACC.exe", "--smoke-native-webview", "extra"],
+    )
+    monkeypatch.setenv("AACC_CONFIG_PATH", str(tmp_path / "config.yaml"))  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "InstanceGuard",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("normal startup reached")),
+    )
+
+    with pytest.raises(RuntimeError, match="normal startup reached"):
+        app_module.main()
+
+
 def test_security_failure_shows_sanitized_dialog_and_returns_nonzero(
     tmp_path: Path, monkeypatch: object
 ) -> None:
