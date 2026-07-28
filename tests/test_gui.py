@@ -205,10 +205,11 @@ def test_confirmations_accessibility_and_about_use_current_language(
     )
     manager.register(task, TaskState.new(task.id, "completed", source="codex_local"))
     window.set_codex_monitoring_preferences(set(), {"english-confirmation"}, set())
+    assert window.task_summary_label.text().endswith("1 task")
     window.clear_retained_tasks()
     assert captured_questions[-1] == (
         "Clear completed tasks",
-        "Remove 1 completed tasks from the panel?",
+        "Remove 1 completed task from the panel?",
     )
 
     monkeypatch.setattr(  # type: ignore[attr-defined]
@@ -230,7 +231,7 @@ def test_confirmations_accessibility_and_about_use_current_language(
     window.show_about()
     assert shown_about[-1][0] == "About AACC"
     assert "\nVersion " in shown_about[-1][1]
-    assert "\nInstaller AACC-" in shown_about[-1][1]
+    assert "\nmacOS DMG AACC-" in shown_about[-1][1]
     manager.close()
 
 
@@ -525,12 +526,33 @@ def test_window_starts_with_no_codex_cards_until_tasks_are_selected(
     manager.close()
 
 
-def test_about_button_shows_current_dmg_version(
-    tmp_path: Path, qtbot: object, monkeypatch: object
+@pytest.mark.parametrize(
+    ("platform", "language", "expected_artifact", "unexpected_protocol"),
+    [
+        ("darwin", ZH_CN, "macOS DMG AACC-{version}.dmg", "Windows Setup"),
+        ("darwin", EN_US, "macOS DMG AACC-{version}.dmg", "Windows Setup"),
+        ("win32", ZH_CN, "Windows Setup AACC-{version}-Setup.exe", "macOS DMG"),
+        ("win32", EN_US, "Windows Setup AACC-{version}-Setup.exe", "macOS DMG"),
+    ],
+)
+def test_about_button_shows_platform_specific_artifact(
+    tmp_path: Path,
+    qtbot: object,
+    monkeypatch: object,
+    platform: str,
+    language: str,
+    expected_artifact: str,
+    unexpected_protocol: str,
 ) -> None:
+    import aacc.gui as gui
     from aacc import public_version
 
-    window, manager = build_window(tmp_path, qtbot)
+    monkeypatch.setattr(gui.sys, "platform", platform)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=LanguageManager(language),  # type: ignore[arg-type]
+    )
     shown: dict[str, str] = {}
     monkeypatch.setattr(  # type: ignore[attr-defined]
         "aacc.gui.QMessageBox.about",
@@ -539,9 +561,9 @@ def test_about_button_shows_current_dmg_version(
 
     window.about_button.click()
 
-    assert "关于" in shown["title"]
     assert public_version() in shown["text"]
-    assert f"AACC-{public_version()}.dmg" in shown["text"]
+    assert expected_artifact.format(version=public_version()) in shown["text"]
+    assert unexpected_protocol not in shown["text"]
     manager.close()
 
 

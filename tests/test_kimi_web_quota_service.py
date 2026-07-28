@@ -97,12 +97,12 @@ def test_web_quota_service_parses_snapshot_and_preserves_it_on_error(qapp, tmp_p
         },
         {},
     )
-    session.error_occurred.emit("temporary")
+    session.error_occurred.emit("refresh_timeout")
 
     assert len(updates) == 1
     assert updates[0].monthly.percentage == 31
     assert service.last_quota is updates[0]
-    assert errors == ["temporary"]
+    assert errors == ["refresh_timeout"]
 
 
 def test_web_quota_service_clears_snapshot_on_definitive_unauthorized(qapp, tmp_path: Path):
@@ -132,8 +132,23 @@ def test_fallback_error_is_sanitized_and_does_not_skip_web_refresh(qapp, tmp_pat
     service.refresh_now()
 
     assert session.refreshes == 1
-    assert errors == ["Kimi Code 备用额度刷新失败"]
+    assert errors == ["code_fallback_refresh_failed"]
     assert "private-fallback-secret" not in errors[0]
+
+
+def test_web_quota_service_maps_unknown_external_error_to_fixed_safe_category(
+    qapp, tmp_path: Path
+) -> None:
+    session = FakeSession()
+    service = KimiWebQuotaService(tmp_path, session=session)
+    errors: list[str] = []
+    service.error_occurred.connect(errors.append)
+
+    session.error_occurred.emit(
+        "https://www.kimi.com/?code=secret#access_token=remote-token remote body"
+    )
+
+    assert errors == ["refresh_failed"]
 
 
 def test_web_quota_service_delegates_login_logout_and_close(qapp, tmp_path: Path):

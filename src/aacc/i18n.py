@@ -37,7 +37,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "header.about": "关于",
         "header.settings": "设置",
         "header.hide": "隐藏",
-        "summary.tasks": "{count} 个任务",
+        "summary.tasks.one": "{count} 个任务",
+        "summary.tasks.other": "{count} 个任务",
         "group.running": "运行中",
         "group.completed": "已完成",
         "group.clear_all": "清除全部",
@@ -97,7 +98,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "rename.title": "重命名任务",
         "rename.prompt": "任务名称（留空恢复默认）：",
         "clear_completed.title": "清除已完成任务",
-        "clear_completed.prompt": "确定从面板移除 {count} 个已完成任务吗？",
+        "clear_completed.prompt.one": "确定从面板移除 {count} 个已完成任务吗？",
+        "clear_completed.prompt.other": "确定从面板移除 {count} 个已完成任务吗？",
         "credentials.reset_title": "重置凭证",
         "credentials.reset_prompt": "旧凭证会立即失效，是否继续？",
         "credentials.reset_done_title": "凭证已重置",
@@ -111,7 +113,10 @@ CATALOGS: dict[Language, dict[str, str]] = {
         ),
         "accessibility.do_not_remind": "不再提示",
         "about.title": "关于 AACC",
-        "about.body": "AI Agent Control Center\n版本 {version}\n安装包 AACC-{version}.dmg",
+        "about.body.macos": "AI Agent Control Center\n版本 {version}\nmacOS DMG AACC-{version}.dmg",
+        "about.body.windows": (
+            "AI Agent Control Center\n版本 {version}\nWindows Setup AACC-{version}-Setup.exe"
+        ),
         "kimi.device_title": "Kimi 授权",
         "kimi.device_opened": "浏览器已打开 Kimi 授权页面，请确认以下验证码：",
         "kimi.device_finished": "授权完成后此窗口会自动关闭",
@@ -165,7 +170,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "header.about": "About",
         "header.settings": "Settings",
         "header.hide": "Hide",
-        "summary.tasks": "{count} tasks",
+        "summary.tasks.one": "{count} task",
+        "summary.tasks.other": "{count} tasks",
         "group.running": "Running",
         "group.completed": "Completed",
         "group.clear_all": "Clear all",
@@ -228,7 +234,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "rename.title": "Rename task",
         "rename.prompt": "Task name (leave blank to restore the default):",
         "clear_completed.title": "Clear completed tasks",
-        "clear_completed.prompt": "Remove {count} completed tasks from the panel?",
+        "clear_completed.prompt.one": "Remove {count} completed task from the panel?",
+        "clear_completed.prompt.other": "Remove {count} completed tasks from the panel?",
         "credentials.reset_title": "Reset credentials",
         "credentials.reset_prompt": (
             "The old credentials will become invalid immediately. Continue?"
@@ -250,7 +257,12 @@ CATALOGS: dict[Language, dict[str, str]] = {
         ),
         "accessibility.do_not_remind": "Do not remind me again",
         "about.title": "About AACC",
-        "about.body": "AI Agent Control Center\nVersion {version}\nInstaller AACC-{version}.dmg",
+        "about.body.macos": (
+            "AI Agent Control Center\nVersion {version}\nmacOS DMG AACC-{version}.dmg"
+        ),
+        "about.body.windows": (
+            "AI Agent Control Center\nVersion {version}\nWindows Setup AACC-{version}-Setup.exe"
+        ),
         "kimi.device_title": "Kimi authorization",
         "kimi.device_opened": (
             "The Kimi authorization page is open in your browser. Confirm this code:"

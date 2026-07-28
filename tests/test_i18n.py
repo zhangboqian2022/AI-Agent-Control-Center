@@ -43,7 +43,8 @@ def test_catalog_contains_all_shared_keys() -> None:
         "header.about",
         "header.settings",
         "header.hide",
-        "summary.tasks",
+        "summary.tasks.one",
+        "summary.tasks.other",
         "group.running",
         "group.completed",
         "group.clear_all",
@@ -78,6 +79,10 @@ def test_catalog_contains_all_shared_keys() -> None:
         "common.cancel",
         "common.done",
         "common.apply",
+        "clear_completed.prompt.one",
+        "clear_completed.prompt.other",
+        "about.body.macos",
+        "about.body.windows",
     }
 
     assert required_keys <= catalog_keys(ZH_CN)

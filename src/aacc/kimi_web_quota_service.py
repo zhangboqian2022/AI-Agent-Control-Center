@@ -12,9 +12,12 @@ from PySide6.QtWidgets import QWidget
 
 from aacc.i18n import ZH_CN, LanguageManager
 from aacc.kimi_quota import KimiQuota
+from aacc.kimi_web_error import (
+    KimiWebErrorCategory,
+    normalize_kimi_web_error_category,
+)
 from aacc.kimi_web_quota import parse_membership_quota
 from aacc.kimi_web_session import KimiWebSession
-from aacc.security import redact
 
 WEB_QUOTA_INTERVAL_MS = 300_000
 
@@ -82,7 +85,7 @@ class KimiWebQuotaService(QObject):
             try:
                 self._fallback_refresh()
             except Exception:  # noqa: BLE001 - one failed source must not skip the other
-                self._on_error(self.language_manager.text("kimi.code_fallback_refresh_failed"))
+                self._on_error(KimiWebErrorCategory.CODE_FALLBACK_REFRESH_FAILED)
         self._ensure_session().refresh()
 
     def set_fallback_refresh(self, callback: Callable[[], None]) -> None:
@@ -105,8 +108,9 @@ class KimiWebQuotaService(QObject):
         self.last_quota = quota
         self.quota_updated.emit(quota)
 
-    def _on_error(self, message: str) -> None:
-        self.error_occurred.emit(redact(message)[:160])
+    def _on_error(self, category: object) -> None:
+        normalized = normalize_kimi_web_error_category(category)
+        self.error_occurred.emit(normalized.value)
 
     def _on_login_state_changed(self, authorized: bool) -> None:
         if not authorized:

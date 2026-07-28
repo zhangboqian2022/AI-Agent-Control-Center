@@ -81,3 +81,41 @@ Qt standard `Yes`/`Cancel`/`Close` buttons continue to use the platform Qt
 translation, while every AACC-owned confirmation title, prompt, checkbox, and
 custom action uses the selected AACC language. This preserves native dialog
 behavior and the existing confirmation API.
+
+## Review Findings Fix
+
+- Replaced translated Kimi web error payloads with the allowlisted
+  `KimiWebErrorCategory` values across `KimiWebSession`,
+  `KimiWebQuotaService`, `MainWindow`, and `QuotaBar`. Unknown or untrusted
+  inputs collapse to `refresh_failed`; remote bodies, URLs, query strings,
+  fragments, and tokens are neither retained nor logged.
+- `QuotaBar._last_error` now retains only a stable category and translates it
+  from the current `LanguageManager` on every render/retranslation. Both
+  Chinese-failure-to-English and English-failure-to-Chinese full tooltip
+  transitions are covered.
+- English one-item task summary and clear-completed confirmation now select
+  explicit singular catalog keys. Other counts select plural keys.
+- About selects `macOS DMG AACC-<version>.dmg` on Darwin and
+  `Windows Setup AACC-<version>-Setup.exe` on Windows, in both languages.
+  The platform and packaging protocol names remain literal.
+- WebView lifecycle, retained native container, watchdog generations, logout
+  cleanup, and refresh cadence were not changed.
+
+### Review TDD Evidence
+
+- RED: the new error-category/retranslation, safe fallback, singular-count,
+  platform-About, and updated signal-contract target produced
+  `10 failed, 1 passed`.
+- RED: catalog key coverage independently failed with the six missing
+  singular/plural and platform-About keys.
+- GREEN: the complete related target
+  (`test_i18n.py`, `test_quota_bar.py`, `test_gui.py`,
+  `test_gui_quota_wiring.py`, `test_kimi_web_session.py`,
+  `test_kimi_web_quota_service.py`, and `test_app.py`) produced
+  `201 passed`.
+- Final full suite: `850 passed, 7 skipped`.
+- Final quality gates: `113 files already formatted`; Ruff
+  `All checks passed!`; mypy `Success: no issues found in 49 source files`;
+  `git diff --check` clean.
+
+Commit: `fix: keep Kimi errors language neutral`

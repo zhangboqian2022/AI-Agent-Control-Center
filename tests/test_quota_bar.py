@@ -112,18 +112,28 @@ def test_kimi_quota_retranslates_from_retained_snapshot_without_clicking(qapp):
     assert clicks == []
 
 
-def test_kimi_quota_error_retranslates_without_losing_snapshot(qapp):
+def test_kimi_quota_error_retranslates_category_both_directions_without_losing_snapshot(qapp):
     language_manager = LanguageManager(ZH_CN)
     bar = QuotaBar(language_manager)
     bar.show_quota(make_quota())
-    bar.show_error("network unavailable")
+    bar.show_error("refresh_failed")
+
+    assert "Kimi 会员额度刷新失败" in bar.toolTip()
 
     language_manager.set_language(EN_US)
     bar.retranslate_ui()
 
     assert bar.summary_label.text() == "Kimi quota\nQuota data is stale"
     assert bar.percent_labels() == ["10%", "42%", "36%"]
-    assert "Quota refresh failed: network unavailable" in bar.toolTip()
+    assert "Kimi membership quota refresh failed" in bar.toolTip()
+    assert "会员额度刷新失败" not in bar.toolTip()
+
+    bar.show_error("refresh_timeout")
+    language_manager.set_language(ZH_CN)
+    bar.retranslate_ui()
+
+    assert "Kimi 会员额度刷新超时" in bar.toolTip()
+    assert "membership quota refresh timed out" not in bar.toolTip()
 
 
 def test_kimi_authorization_unknown_and_partial_states_retranslate(qapp):
@@ -217,11 +227,11 @@ def test_refresh_error_preserves_values_and_marks_them_stale(qapp):
     bar = QuotaBar(LanguageManager(ZH_CN))
     bar.show_quota(make_quota())
 
-    bar.show_error("network unavailable")
+    bar.show_error("refresh_failed")
 
     assert "数据过期" in bar.summary_label.text()
     assert bar.percent_labels() == ["10%", "42%", "36%"]
-    assert "network unavailable" in bar.toolTip()
+    assert "Kimi 会员额度刷新失败" in bar.toolTip()
 
 
 def test_kimi_quota_bar_shows_absolute_reset_times(qapp):
