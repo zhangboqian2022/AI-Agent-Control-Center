@@ -162,6 +162,7 @@ class KimiWebSession(QObject):
         self._login_attempt = 0
         self._active_login_attempt: int | None = None
         self._login_dialog_open = False
+        self._background_navigation_pending = False
         self._reuse_blocked = False
         self._closed = False
 
@@ -198,6 +199,7 @@ class KimiWebSession(QObject):
         attempt = self._login_attempt
         self._active_login_attempt = attempt
         self._login_dialog_open = True
+        self._background_navigation_pending = False
         self._login_dialog.show()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
@@ -221,6 +223,7 @@ class KimiWebSession(QObject):
             self._run_fetch(generation)
             return
         self._refresh_after_load = True
+        self._background_navigation_pending = True
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def logout(self) -> bool:
@@ -238,6 +241,7 @@ class KimiWebSession(QObject):
         if self._is_kimi_origin():
             self._run_logout_cleanup()
         else:
+            self._background_navigation_pending = True
             self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
         self.login_state_changed.emit(False)
         return persisted
@@ -247,6 +251,7 @@ class KimiWebSession(QObject):
             return
         self._closed = True
         self._invalidate_refresh()
+        self._background_navigation_pending = False
         self._clear_webview_startup_watchdog()
         self._cancel_logout_cleanup()
         if self._login_dialog is not None:
@@ -383,6 +388,8 @@ class KimiWebSession(QObject):
         if generation == self._refresh_watchdog_generation:
             self._refresh_watchdog_generation = None
             self._refresh_watchdog.stop()
+        if not self._login_dialog_open:
+            self._background_navigation_pending = False
         return True
 
     def _is_kimi_origin(self) -> bool:
@@ -392,12 +399,7 @@ class KimiWebSession(QObject):
     def _on_loading_changed(self, info: QWebViewLoadingInfo) -> None:
         if self._closed or self._ignore_expired_logout_loads:
             return
-        if (
-            not self._login_dialog_open
-            and not self._refreshing
-            and self._active_refresh_generation is None
-            and self._logout_cleanup_generation is None
-        ):
+        if not self._login_dialog_open and not self._background_navigation_pending:
             return
         status = info.status()
         if status is QWebViewLoadingInfo.LoadStatus.Failed:
@@ -521,6 +523,8 @@ class KimiWebSession(QObject):
             self._login_repair_button.setVisible(False)
 
     def _show_login_container(self) -> None:
+        if not self._login_dialog_open:
+            return
         if self._login_container is not None:
             self._login_container.setVisible(True)
         if self._login_status_label is not None:
@@ -529,6 +533,8 @@ class KimiWebSession(QObject):
             self._login_repair_button.setVisible(False)
 
     def _show_login_diagnostic(self) -> None:
+        if not self._login_dialog_open:
+            return
         if self._login_container is not None:
             self._login_container.setVisible(False)
         if self._login_status_label is not None:
@@ -543,6 +549,8 @@ class KimiWebSession(QObject):
     def _login_dialog_closed(self) -> None:
         self._login_dialog_open = False
         self._active_login_attempt = None
+        self._background_navigation_pending = False
+        self.view.stop()
         self._clear_webview_startup_watchdog()
         if not self._closed:
             self._invalidate_refresh()
