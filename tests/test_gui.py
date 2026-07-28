@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QInputDialog,
+    QLabel,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -25,6 +26,7 @@ from aacc.gui import (
     CodexQuotaBar,
     CodexTaskSelectionDialog,
     KimiDesktopTaskSelectionDialog,
+    KimiOAuthDialog,
     KimiTaskSelectionDialog,
     MainWindow,
     QuotaBar,
@@ -130,6 +132,229 @@ def test_header_replaces_compact_button_but_settings_keeps_compact(
     assert "#languageButton" in window.styleSheet()
     dialog = SettingsDialog(window)
     assert "切换紧凑 / 展开模式" in {button.text() for button in dialog.findChildren(QPushButton)}
+    manager.close()
+
+
+def test_settings_and_selector_use_current_language(tmp_path: Path, qtbot: object) -> None:
+    language_manager = LanguageManager(EN_US)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+
+    settings = SettingsDialog(window)
+    selector = CodexTaskSelectionDialog([], set(), set(), window)
+    settings_buttons = {button.text() for button in settings.findChildren(QPushButton)}
+
+    assert settings.windowTitle() == "AACC Settings"
+    assert selector.windowTitle() == "Select Codex tasks to monitor"
+    assert "Compact / expanded mode" in settings_buttons
+    assert "Start monitoring" in {button.text() for button in selector.findChildren(QPushButton)}
+    manager.close()
+
+
+def test_kimi_device_authorization_uses_current_language(qapp: object) -> None:
+    dialog = KimiOAuthDialog(language_manager=LanguageManager(EN_US))
+
+    assert dialog.windowTitle() == "Kimi authorization"
+    assert any(
+        label.text().startswith("The Kimi authorization page")
+        for label in dialog.findChildren(QLabel)
+    )
+    assert "Cancel authorization" in {button.text() for button in dialog.findChildren(QPushButton)}
+
+
+def test_confirmations_accessibility_and_about_use_current_language(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    language_manager = LanguageManager(EN_US)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    captured_questions: list[tuple[str, str]] = []
+    shown_boxes: list[QMessageBox] = []
+    shown_box_titles: list[str] = []
+    shown_about: list[tuple[str, str]] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox,
+        "setWindowTitle",
+        lambda _box, title: shown_box_titles.append(title),
+    )
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox,
+        "question",
+        lambda _parent, title, prompt, *_args: (
+            captured_questions.append((title, prompt)) or QMessageBox.StandardButton.Cancel
+        ),
+    )
+    window.rotate_credentials()
+    assert captured_questions[-1] == (
+        "Reset credentials",
+        "The old credentials will become invalid immediately. Continue?",
+    )
+
+    task = TaskConfig(
+        id="codex:english-confirmation",
+        slot=1,
+        name="English confirmation",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "completed", source="codex_local"))
+    window.set_codex_monitoring_preferences(set(), {"english-confirmation"}, set())
+    window.clear_retained_tasks()
+    assert captured_questions[-1] == (
+        "Clear completed tasks",
+        "Remove 1 completed tasks from the panel?",
+    )
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox,
+        "exec",
+        lambda box: shown_boxes.append(box) or QMessageBox.StandardButton.Cancel,
+    )
+    window.accessibility_trusted = False
+    window.show_accessibility_guidance()
+    assert shown_box_titles[-1] == "Accessibility permission required"
+    assert shown_boxes[-1].text().startswith("AACC needs Accessibility permission")
+    assert shown_boxes[-1].checkBox() is not None
+    assert shown_boxes[-1].checkBox().text() == "Do not remind me again"
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "aacc.gui.QMessageBox.about",
+        lambda _parent, title, text: shown_about.append((title, text)),
+    )
+    window.show_about()
+    assert shown_about[-1][0] == "About AACC"
+    assert "\nVersion " in shown_about[-1][1]
+    assert "\nInstaller AACC-" in shown_about[-1][1]
+    manager.close()
+
+
+def test_credential_result_and_rename_prompt_use_current_language(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    language_manager = LanguageManager(EN_US)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    shown_boxes: list[QMessageBox] = []
+    shown_box_titles: list[str] = []
+    rename_prompts: list[tuple[str, str]] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox,
+        "setWindowTitle",
+        lambda _box, title: shown_box_titles.append(title),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox, "exec", lambda box: shown_boxes.append(box) or 0
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog,
+        "getText",
+        lambda _parent, title, prompt, **_kwargs: (
+            rename_prompts.append((title, prompt)) or ("", False)
+        ),
+    )
+
+    window.rotate_credentials()
+    result_box = shown_boxes[-1]
+    assert shown_box_titles[-1] == "Credentials reset"
+    assert result_box.text().startswith("The old credentials are invalid.")
+    assert "Copy" in {button.text() for button in result_box.buttons()}
+
+    task = TaskConfig(
+        id="codex:english-rename",
+        slot=1,
+        name="English rename",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    window.rename_task(task.id)
+    assert rename_prompts == [("Rename task", "Task name (leave blank to restore the default):")]
+    manager.close()
+
+
+def test_manual_selection_and_copy_feedback_use_current_language(
+    tmp_path: Path, qtbot: object
+) -> None:
+    language_manager = LanguageManager(EN_US)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+
+    window._perform_action("select", "task-1")
+    assert window.subtitle.text().startswith("SELECTED ")
+
+    window._perform_action("copy", "task-1")
+    assert window.subtitle.text() == "TASK INFORMATION COPIED"
+
+    window._perform_action("status:running", "task-1")
+    assert window.subtitle.text() == "MARKED AS RUNNING"
+    assert manager.get("task-1").message == "Manually updated"
+    manager.close()
+
+
+def test_queued_automation_and_empty_kimi_key_use_current_language(
+    tmp_path: Path, qtbot: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    executor = DeferredExecutor()
+    language_manager = LanguageManager(ZH_CN)
+    window = MainWindow(  # type: ignore[arg-type]
+        manager,
+        executor,
+        enable_tray=False,
+        language_manager=language_manager,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    window._perform_action("focus", "task-1")
+    assert window.subtitle.text() == "自动操作已排队"
+
+    class EmptyKeyService:
+        def set_api_key(self, _key: str) -> None:
+            raise ValueError("API Key 不能为空")
+
+    window.quota_service = EmptyKeyService()  # type: ignore[assignment]
+    language_manager.set_language(EN_US)
+    window.save_kimi_api_key("")
+    assert window.subtitle.text() == "API Key is required"
+    manager.close()
+
+
+def test_oauth_failure_feedback_does_not_translate_remote_details(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=LanguageManager(EN_US),
+    )
+
+    window._on_oauth_finished(
+        False,
+        "https://remote.invalid/?code=remote-code#access_token=remote-token",
+    )
+
+    assert window.subtitle.text() == "KIMI authorization failed"
+    assert "remote-code" not in window.subtitle.text()
+    assert "remote-token" not in window.subtitle.text()
     manager.close()
 
 

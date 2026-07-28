@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
+from aacc.i18n import ZH_CN, LanguageManager
 from aacc.kimi_quota import KimiQuota
 from aacc.kimi_web_quota import parse_membership_quota
 from aacc.kimi_web_session import KimiWebSession
@@ -31,6 +32,8 @@ class _WebSessionLike(Protocol):
 
     def close(self) -> None: ...
 
+    def retranslate_ui(self) -> None: ...
+
 
 class KimiWebQuotaService(QObject):
     quota_updated = Signal(object)
@@ -42,12 +45,14 @@ class KimiWebQuotaService(QObject):
         config_dir: Path,
         *,
         session: _WebSessionLike | None = None,
+        language_manager: LanguageManager | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._config_dir = config_dir
         self._session: _WebSessionLike | None = session
+        self.language_manager = language_manager or LanguageManager(ZH_CN)
         self._now = now
         self.last_quota: KimiQuota | None = None
         self.timer = QTimer(self)
@@ -77,7 +82,7 @@ class KimiWebQuotaService(QObject):
             try:
                 self._fallback_refresh()
             except Exception:  # noqa: BLE001 - one failed source must not skip the other
-                self._on_error("Kimi Code 备用额度刷新失败")
+                self._on_error(self.language_manager.text("kimi.code_fallback_refresh_failed"))
         self._ensure_session().refresh()
 
     def set_fallback_refresh(self, callback: Callable[[], None]) -> None:
@@ -110,7 +115,11 @@ class KimiWebQuotaService(QObject):
 
     def _ensure_session(self) -> _WebSessionLike:
         if self._session is None:
-            self._session = KimiWebSession(self._config_dir, self)
+            self._session = KimiWebSession(
+                self._config_dir,
+                self,
+                language_manager=self.language_manager,
+            )
             self._connect_session(self._session)
         return self._session
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import aacc
@@ -34,6 +34,7 @@ from aacc.discovery_service import (
 from aacc.file_security import FileProtectionError
 from aacc.gui import MainWindow
 from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys, HotkeyDriver
+from aacc.i18n import LanguageManager, load_language
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
 from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.kimi_web_session import initialize_native_webview
@@ -104,11 +105,16 @@ def _default_quota_service_factory(config_dir: Path, config: AppConfig) -> Quota
 
 
 def _default_kimi_web_quota_service_factory(
-    config_dir: Path, config: AppConfig
+    config_dir: Path,
+    config: AppConfig,
+    language_manager: LanguageManager | None = None,
 ) -> KimiWebQuotaService | None:
     if not config.app.kimi_quota_enabled:
         return None
-    return KimiWebQuotaService(config_dir)
+    return KimiWebQuotaService(
+        config_dir,
+        language_manager=language_manager,
+    )
 
 
 def _default_codex_quota_service_factory(
@@ -192,6 +198,7 @@ def build_runtime(
     quota_service_factory: Callable[[Path], QuotaService | None] | None = None,
     kimi_web_quota_service_factory: (Callable[[Path], KimiWebQuotaService | None] | None) = None,
     codex_quota_service_factory: Callable[[], CodexQuotaService | None] | None = None,
+    language_manager: LanguageManager | None = None,
 ) -> Runtime:
     config = load_config(config_path)
     store = StateStore(database_path)
@@ -205,7 +212,11 @@ def build_runtime(
         lambda: _default_codex_quota_service_factory(config)
     )
     kimi_web_quota_factory = kimi_web_quota_service_factory or (
-        lambda config_dir: _default_kimi_web_quota_service_factory(config_dir, config)
+        lambda config_dir: _default_kimi_web_quota_service_factory(
+            config_dir,
+            config,
+            language_manager,
+        )
     )
     quota_service = factory(config_path.parent)
     kimi_web_quota_service = kimi_web_quota_factory(config_path.parent)
@@ -334,12 +345,15 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
     configure_logging(data_dir / "logs")
     initialize_native_webview()
     qt_app = _create_qapplication()
+    settings = QSettings()
+    language_manager = LanguageManager(load_language(settings), settings)
     trusted = is_accessibility_trusted()
     try:
         runtime = build_runtime(
             config_path,
             database_path,
             accessibility_trusted=is_accessibility_trusted,
+            language_manager=language_manager,
         )
     except FileProtectionError as error:
         return _show_startup_security_error(data_dir, error)
@@ -374,6 +388,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         discovery_log_path=str(data_dir / "logs" / "app.log"),
         accessibility_trusted=trusted,
         open_accessibility_settings_callback=open_accessibility_settings,
+        settings=settings,
+        language_manager=language_manager,
     )
     shutdown_listener: WindowsShutdownListener | None = None
     if sys.platform == "win32":

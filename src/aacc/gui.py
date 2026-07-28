@@ -659,24 +659,35 @@ class CodexQuotaBar(QFrame):
 class KimiOAuthDialog(QDialog):
     cancelled = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        language_manager: LanguageManager | None = None,
+    ) -> None:
         super().__init__(parent)
+        parent_language = getattr(parent, "language_manager", None)
+        self.language_manager = (
+            language_manager
+            or (parent_language if isinstance(parent_language, LanguageManager) else None)
+            or LanguageManager(ZH_CN)
+        )
         self._cancel_emitted = False
         self._finishing = False
-        self.setWindowTitle("Kimi 授权")
+        self.setWindowTitle(self.language_manager.text("kimi.device_title"))
         self.setMinimumWidth(320)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("浏览器已打开 Kimi 授权页面，请确认以下验证码："))
+        layout.addWidget(QLabel(self.language_manager.text("kimi.device_opened")))
         self.code_label = QLabel("")
         self.code_label.setObjectName("oauthCode")
         self.code_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.code_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.code_label)
-        hint = QLabel("授权完成后此窗口会自动关闭")
+        hint = QLabel(self.language_manager.text("kimi.device_finished"))
         hint.setObjectName("quotaText")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
-        cancel = QPushButton("取消授权")
+        cancel = QPushButton(self.language_manager.text("kimi.device_cancel"))
         cancel.clicked.connect(self._on_cancel)
         layout.addWidget(cancel)
 
@@ -980,78 +991,88 @@ class TaskCard(QFrame):
 class SettingsDialog(QDialog):
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
-        self.setWindowTitle("AACC 设置")
+        language = window.language_manager
+        self.setWindowTitle(language.text("settings.title"))
         self.setMinimumWidth(390)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("面板透明度"))
+        layout.addWidget(QLabel(language.text("settings.opacity")))
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(35, 100)
         slider.setValue(round(window.windowOpacity() * 100))
         slider.valueChanged.connect(lambda value: window.setWindowOpacity(value / 100))
         layout.addWidget(slider)
-        layout.addWidget(QLabel(f"配置文件\n{DEFAULT_CONFIG_PATH}"))
+        layout.addWidget(QLabel(language.text("settings.config_file", path=DEFAULT_CONFIG_PATH)))
         layout.addWidget(QLabel(window.accessibility_status_text()))
         if not window.accessibility_trusted:
-            accessibility = QPushButton("打开辅助功能设置")
+            accessibility = QPushButton(language.text("settings.accessibility"))
             accessibility.clicked.connect(window.open_accessibility_settings)
             layout.addWidget(accessibility)
-        compact = QPushButton("切换紧凑 / 展开模式")
+        compact = QPushButton(language.text("settings.compact"))
         compact.clicked.connect(lambda: window.set_compact(not window.compact_mode))
         layout.addWidget(compact)
-        top = QPushButton("切换始终置顶")
+        top = QPushButton(language.text("settings.topmost"))
         top.clicked.connect(window.toggle_always_on_top)
         layout.addWidget(top)
-        dock = QPushButton("停靠到桌面右上角")
+        dock = QPushButton(language.text("settings.dock"))
         dock.clicked.connect(window.dock_top_right)
         layout.addWidget(dock)
         codex_tasks = QPushButton(
-            "选择监控的 Codex 任务"
-            f"（{len(window.codex_selected_ids)} 已选 · "
-            f"{len(window.codex_auto_active_ids())} 自动运行）"
+            language.text("settings.select_codex")
+            + language.text(
+                "settings.selected_counts",
+                selected=len(window.codex_selected_ids),
+                automatic=len(window.codex_auto_active_ids()),
+            )
         )
         codex_tasks.clicked.connect(window.open_codex_task_selector)
         layout.addWidget(codex_tasks)
         kimi_tasks = QPushButton(
-            "选择监控的 Kimi Code 任务"
-            f"（{len(window.kimi_selected_ids)} 已选 · "
-            f"{len(window.kimi_auto_active_ids())} 自动运行）"
+            language.text("settings.select_kimi_code")
+            + language.text(
+                "settings.selected_counts",
+                selected=len(window.kimi_selected_ids),
+                automatic=len(window.kimi_auto_active_ids()),
+            )
         )
         kimi_tasks.clicked.connect(window.open_kimi_task_selector)
         layout.addWidget(kimi_tasks)
         kimi_desktop_tasks = QPushButton(
-            "选择监控的 Kimi Desktop 任务"
-            f"（{len(window.kimi_desktop_selected_ids)} 已选 · "
-            f"{len(window.kimi_desktop_auto_active_ids())} 自动运行）"
+            language.text("settings.select_kimi_desktop")
+            + language.text(
+                "settings.selected_counts",
+                selected=len(window.kimi_desktop_selected_ids),
+                automatic=len(window.kimi_desktop_auto_active_ids()),
+            )
         )
         kimi_desktop_tasks.clicked.connect(window.open_kimi_desktop_task_selector)
         layout.addWidget(kimi_desktop_tasks)
-        rotate_credentials = QPushButton("重置 API 凭证")
+        rotate_credentials = QPushButton(language.text("settings.rotate_api"))
         rotate_credentials.clicked.connect(window.rotate_credentials)
         layout.addWidget(rotate_credentials)
         if window.quota_service is not None:
-            layout.addWidget(QLabel("Kimi Code 备用授权（可用 API Key 替代 OAuth）"))
+            layout.addWidget(QLabel(language.text("settings.kimi_fallback")))
             api_key = QLineEdit()
             api_key.setPlaceholderText("sk-kimi-…")
             api_key.setEchoMode(QLineEdit.EchoMode.Password)
             layout.addWidget(api_key)
-            save_key = QPushButton("保存 Kimi API Key")
+            save_key = QPushButton(language.text("settings.save_kimi_key"))
             save_key.clicked.connect(lambda: window.save_kimi_api_key(api_key.text()))
             layout.addWidget(save_key)
         if window.kimi_web_quota_service is not None:
-            web_login = QPushButton("登录 Kimi 会员（同步 5H / WEEK / MONTH）")
+            web_login = QPushButton(language.text("settings.kimi_web_login"))
             web_login.clicked.connect(window.open_kimi_web_login)
             layout.addWidget(web_login)
         if window.quota_service is not None or window.kimi_web_quota_service is not None:
-            kimi_logout = QPushButton("退出 Kimi 登录")
+            kimi_logout = QPushButton(language.text("settings.kimi_logout"))
             kimi_logout.clicked.connect(window.kimi_logout)
             layout.addWidget(kimi_logout)
-        layout.addWidget(QLabel("显示哪些程序"))
+        layout.addWidget(QLabel(language.text("settings.visible_agents")))
         labels = {
             "codex_cli": "Codex",
             "claude_code": "Claude Code",
             "kimi_code": "Kimi Code",
             "kimi_desktop": "Kimi Desktop",
-            "generic_cli": "Z Code / 通用 CLI",
+            "generic_cli": language.text("settings.generic_cli"),
         }
         for agent_type, label in labels.items():
             checkbox = QCheckBox(label)
@@ -1060,7 +1081,7 @@ class SettingsDialog(QDialog):
                 lambda checked, value=agent_type: window.set_agent_visible(value, checked)
             )
             layout.addWidget(checkbox)
-        close = QPushButton("完成")
+        close = QPushButton(language.text("common.done"))
         close.clicked.connect(self.accept)
         layout.addWidget(close)
 
@@ -1073,19 +1094,27 @@ class TaskSelectionDialog(QDialog):
         auto_active_ids: set[str],
         parent: QWidget,
         *,
-        window_title: str,
+        window_title_key: str,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(window_title)
+        parent_language = getattr(parent, "language_manager", None)
+        self.language_manager = (
+            parent_language
+            if isinstance(parent_language, LanguageManager)
+            else LanguageManager(ZH_CN)
+        )
+        self.setWindowTitle(self.language_manager.text(window_title_key))
         self.setMinimumSize(540, 460)
         self._auto_active_ids = set(auto_active_ids)
         self._restore_auto = False
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("运行中的任务会自动勾选；取消勾选可停止自动监控该任务。"))
+        layout.addWidget(QLabel(self.language_manager.text("selector.running_hint")))
         self.tasks = QListWidget()
         for session_id, title, updated_at in sessions:
             automatic = session_id in self._auto_active_ids
-            automatic_label = "\n自动监控 · 运行中" if automatic else ""
+            automatic_label = (
+                self.language_manager.text("selector.auto_running") if automatic else ""
+            )
             item = QListWidgetItem(
                 f"{title}\n{updated_at.astimezone().strftime('%Y-%m-%d %H:%M')}{automatic_label}"
             )
@@ -1096,20 +1125,20 @@ class TaskSelectionDialog(QDialog):
             )
             self.tasks.addItem(item)
         layout.addWidget(self.tasks)
-        select_all = QPushButton("全选")
+        select_all = QPushButton(self.language_manager.text("selector.select_all"))
         select_all.clicked.connect(lambda: self._set_all(Qt.CheckState.Checked))
-        clear_all = QPushButton("全部取消")
+        clear_all = QPushButton(self.language_manager.text("selector.clear_all"))
         clear_all.clicked.connect(lambda: self._set_all(Qt.CheckState.Unchecked))
-        restore_auto = QPushButton("恢复自动识别")
+        restore_auto = QPushButton(self.language_manager.text("selector.restore_auto"))
         restore_auto.clicked.connect(self.restore_automatic_detection)
         buttons = QHBoxLayout()
         buttons.addWidget(select_all)
         buttons.addWidget(clear_all)
         buttons.addWidget(restore_auto)
         buttons.addStretch()
-        cancel = QPushButton("取消")
+        cancel = QPushButton(self.language_manager.text("common.cancel"))
         cancel.clicked.connect(self.reject)
-        apply = QPushButton("开始监控")
+        apply = QPushButton(self.language_manager.text("selector.start_monitoring"))
         apply.clicked.connect(self.accept)
         buttons.addWidget(cancel)
         buttons.addWidget(apply)
@@ -1150,7 +1179,7 @@ class CodexTaskSelectionDialog(TaskSelectionDialog):
             selected_ids,
             auto_active_ids,
             parent,
-            window_title="选择监控的 Codex 任务",
+            window_title_key="settings.select_codex",
         )
 
 
@@ -1167,7 +1196,7 @@ class KimiTaskSelectionDialog(TaskSelectionDialog):
             selected_ids,
             auto_active_ids,
             parent,
-            window_title="选择监控的 Kimi Code 任务",
+            window_title_key="settings.select_kimi_code",
         )
 
 
@@ -1184,7 +1213,7 @@ class KimiDesktopTaskSelectionDialog(TaskSelectionDialog):
             selected_ids,
             auto_active_ids,
             parent,
-            window_title="选择监控的 Kimi Desktop 任务",
+            window_title_key="settings.select_kimi_desktop",
         )
 
 
@@ -1971,15 +2000,15 @@ class MainWindow(QWidget):
             self._oauth_dialog.deleteLater()
             self._oauth_dialog = None
         if not success and message:
-            self.subtitle.setText(f"KIMI 授权失败：{message[:60]}")
+            self.subtitle.setText(self.language_manager.text("kimi.oauth_failed"))
 
     def save_kimi_api_key(self, key: str) -> None:
         if self.quota_service is None:
             return
         try:
             self.quota_service.set_api_key(key)
-        except ValueError as error:
-            self.subtitle.setText(str(error))
+        except ValueError:
+            self.subtitle.setText(self.language_manager.text("settings.kimi_key_required"))
 
     def open_kimi_web_login(self) -> None:
         if self.kimi_web_quota_service is not None:
@@ -2007,7 +2036,7 @@ class MainWindow(QWidget):
         if self.quota_bar is not None:
             self.quota_bar.show_unauthorized()
         if logout_failed:
-            self._on_quota_error("Kimi 退出登录未完全完成")
+            self._on_quota_error(self.language_manager.text("kimi.logout_partial"))
 
     def set_compact(self, compact: bool) -> None:
         self.compact_mode = compact
@@ -2139,7 +2168,7 @@ class MainWindow(QWidget):
             self.remove_kimi_desktop_task(task_id)
         else:
             _logger.error("Unknown brand dispatch: %s", task_id)
-            self.subtitle.setText("操作未生效")
+            self.subtitle.setText(self.language_manager.text("feedback.operation_failed"))
 
     def remove_kimi_desktop_task(self, task_id: str) -> None:
         if not task_id.startswith("kimi_desktop:"):
@@ -2178,7 +2207,10 @@ class MainWindow(QWidget):
             return
         current_name = self.custom_task_names.get(task_id, task.name)
         name, accepted = QInputDialog.getText(
-            self, "重命名任务", "任务名称（留空恢复默认）：", text=current_name
+            self,
+            self.language_manager.text("rename.title"),
+            self.language_manager.text("rename.prompt"),
+            text=current_name,
         )
         if not accepted:
             return
@@ -2215,8 +2247,8 @@ class MainWindow(QWidget):
             return
         answer = QMessageBox.question(
             self,
-            "清除已完成任务",
-            f"确定从面板移除 {len(task_ids)} 个已完成任务吗？",
+            self.language_manager.text("clear_completed.title"),
+            self.language_manager.text("clear_completed.prompt", count=len(task_ids)),
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
             QMessageBox.StandardButton.Cancel,
         )
@@ -2302,7 +2334,7 @@ class MainWindow(QWidget):
             task = self.manager.task_config(task_id)
             self.selected_task_id = task_id
             if action == "select":
-                result = f"已选择 {task.name}"
+                result = self.language_manager.text("feedback.task_selected", name=task.name)
             elif action == "focus":
                 self._submit_automation(action, task_id, "focus", task)
                 return
@@ -2315,13 +2347,17 @@ class MainWindow(QWidget):
             elif action.startswith("status:"):
                 status = action.split(":", 1)[1]
                 self.manager.update(
-                    TaskState.new(task_id, status, message="手动更新", source="manual")
+                    TaskState.new(
+                        task_id,
+                        status,
+                        message=self.language_manager.text("feedback.manual_update"),
+                        source="manual",
+                    )
                 )
                 marked_status = status_name(TaskStatus.parse(status), self.language_manager)
-                result = (
-                    f"已标记为 {marked_status}"
-                    if self.language_manager.language == ZH_CN
-                    else f"Marked as {marked_status}"
+                result = self.language_manager.text(
+                    "feedback.status_marked",
+                    status=marked_status,
                 )
             elif action == "rename":
                 self.rename_task(task_id)
@@ -2331,7 +2367,7 @@ class MainWindow(QWidget):
                 QGuiApplication.clipboard().setText(
                     f"{task.name}\n{state.status.value}\n{state.message}\n{state.updated_at.isoformat()}"
                 )
-                result = "任务信息已复制"
+                result = self.language_manager.text("feedback.task_copied")
             else:
                 return
             self.subtitle.setText(result.upper())
@@ -2347,7 +2383,7 @@ class MainWindow(QWidget):
             self.automation_finished.emit(action, task_id, completed)
 
         future.add_done_callback(notify)
-        self.subtitle.setText("AUTOMATION QUEUED")
+        self.subtitle.setText(self.language_manager.text("feedback.automation_queued").upper())
 
     def _automation_completed(self, _action: str, task_id: str, value: object) -> None:
         if not isinstance(value, Future):
@@ -2372,8 +2408,8 @@ class MainWindow(QWidget):
     def rotate_credentials(self) -> None:
         answer = QMessageBox.question(
             self,
-            "重置凭证",
-            "旧凭证会立即失效，是否继续？",
+            self.language_manager.text("credentials.reset_title"),
+            self.language_manager.text("credentials.reset_prompt"),
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
             QMessageBox.StandardButton.Cancel,
         )
@@ -2382,12 +2418,15 @@ class MainWindow(QWidget):
         token = self._rotate_api_token()
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("凭证已重置")
-        box.setText("旧凭证已失效。新凭证如下（不会自动写入剪贴板）：")
+        box.setWindowTitle(self.language_manager.text("credentials.reset_done_title"))
+        box.setText(self.language_manager.text("credentials.reset_done_text"))
         box.setInformativeText(token)
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         box.setStandardButtons(QMessageBox.StandardButton.Close)
-        copy_button = box.addButton("复制", QMessageBox.ButtonRole.ActionRole)
+        copy_button = box.addButton(
+            self.language_manager.text("credentials.copy"),
+            QMessageBox.ButtonRole.ActionRole,
+        )
         box.exec()
         if box.clickedButton() is copy_button:
             QGuiApplication.clipboard().setText(token)
@@ -2417,8 +2456,8 @@ class MainWindow(QWidget):
 
     def accessibility_status_text(self) -> str:
         if self.accessibility_trusted:
-            return "辅助功能权限：已开启"
-        return "辅助功能权限：未开启；全局热键与键盘输入不可用"
+            return self.language_manager.text("accessibility.enabled")
+        return self.language_manager.text("accessibility.disabled")
 
     def open_accessibility_settings(self) -> None:
         self._open_accessibility_settings()
@@ -2430,11 +2469,11 @@ class MainWindow(QWidget):
             return
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("需要辅助功能权限")
-        box.setText("AACC 需要辅助功能权限才能使用全局热键和键盘输入。是否打开系统设置？")
+        box.setWindowTitle(self.language_manager.text("accessibility.title"))
+        box.setText(self.language_manager.text("accessibility.prompt"))
         box.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes)
         box.setDefaultButton(QMessageBox.StandardButton.Yes)
-        box.setCheckBox(QCheckBox("不再提示", box))
+        box.setCheckBox(QCheckBox(self.language_manager.text("accessibility.do_not_remind"), box))
         answer = box.exec()
         checkbox = box.checkBox()
         if checkbox is not None and checkbox.isChecked():
@@ -2449,8 +2488,8 @@ class MainWindow(QWidget):
         version = public_version()
         QMessageBox.about(
             self,
-            "关于 AACC",
-            f"AI Agent Control Center\n版本 {version}\n安装包 AACC-{version}.dmg",
+            self.language_manager.text("about.title"),
+            self.language_manager.text("about.body", version=version),
         )
 
     def toggle_visible(self) -> None:
