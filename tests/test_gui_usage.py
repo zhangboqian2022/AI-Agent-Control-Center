@@ -27,7 +27,7 @@ USAGE = {
 def test_kimi_card_shows_usage_row(qtbot):
     card = make_card(qtbot, "kimi_code", {"usage": USAGE})
     assert not card.usage_label.isHidden()
-    assert card.usage_label.text() == "↑12.3k ↓1.2k 缓存68% · 42 tok/s"
+    assert card.usage_label.text() == "↑12.3k ↓1.2k 缓存 68% · 42 tok/s"
 
 
 def test_card_hides_usage_row_without_metadata(qtbot):

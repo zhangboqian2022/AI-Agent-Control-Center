@@ -9,9 +9,24 @@ from typing import Literal
 from PySide6.QtCore import QLocale, QSettings
 
 Language = Literal["zh_CN", "en_US"]
+LanguageSubscriberComponent = Literal[
+    "main_window",
+    "kimi_oauth_dialog",
+    "kimi_web_session",
+    "test",
+]
 ZH_CN: Language = "zh_CN"
 EN_US: Language = "en_US"
 SUPPORTED_LANGUAGES = frozenset({ZH_CN, EN_US})
+LANGUAGE_SUBSCRIBER_COMPONENTS = frozenset(
+    {
+        "main_window",
+        "kimi_oauth_dialog",
+        "kimi_web_session",
+        "test",
+    }
+)
+SAFE_ENGLISH_TEXT_FALLBACK = "Interface text unavailable"
 _logger = logging.getLogger("aacc.i18n")
 
 CATALOGS: dict[Language, dict[str, str]] = {
@@ -135,6 +150,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "kimi.web_refresh_timeout": "Kimi 会员额度刷新超时",
         "kimi.web_refresh_failed": "Kimi 会员额度刷新失败",
         "kimi.web_state_save_failed": "Kimi 网页登录状态保存失败",
+        "kimi.code_refresh_failed": "Kimi Code 额度刷新失败",
+        "kimi.code_oauth_failed": "Kimi Code 授权失败",
         "kimi.code_fallback_refresh_failed": "Kimi Code 备用额度刷新失败",
         "kimi.oauth_failed": "KIMI 授权失败",
         "kimi.logout_partial": "Kimi 退出登录未完全完成",
@@ -144,7 +161,30 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "feedback.status_marked": "已标记为 {status}",
         "feedback.task_copied": "任务信息已复制",
         "feedback.automation_queued": "自动操作已排队",
+        "usage.cache": "缓存",
+        "automation.focused": "已聚焦 {name}",
+        "automation.key_sent": "已发送 {key}",
+        "automation.text_sent": "文本已发送",
+        "automation.voice_started": "已触发系统语音输入",
+        "automation.timeout": "桌面自动化超时",
+        "automation.unavailable": "桌面自动化不可用",
+        "automation.cancelled": "桌面自动化已取消",
+        "automation.unsupported_operation": "不支持的桌面自动化操作",
+        "automation.executor_closed": "桌面自动化执行器已关闭",
+        "automation.queue_full": "桌面自动化队列已满",
+        "automation.window_not_found": "未找到目标窗口",
+        "automation.window_focus_failed": "无法将目标窗口置前",
+        "automation.app_unconfigured": "未配置目标应用",
+        "automation.injection_disabled": "AACC 设置中已停用键盘输入",
+        "automation.accessibility_required": "需要辅助功能权限",
+        "automation.key_not_allowed": "不允许发送该按键",
+        "automation.text_invalid": "文本长度必须为 1 到 2000 个字符",
+        "automation.text_nul": "文本不能包含 NUL 字符",
+        "automation.voice_hotkey_unsupported": "不支持当前语音热键",
         "common.cancel": "取消",
+        "common.ok": "确定",
+        "common.yes": "是",
+        "common.close": "关闭",
         "common.done": "完成",
         "common.apply": "应用",
     },
@@ -285,6 +325,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "kimi.web_refresh_timeout": "Kimi membership quota refresh timed out",
         "kimi.web_refresh_failed": "Kimi membership quota refresh failed",
         "kimi.web_state_save_failed": "Kimi web login state could not be saved",
+        "kimi.code_refresh_failed": "Kimi Code quota refresh failed",
+        "kimi.code_oauth_failed": "Kimi Code authorization failed",
         "kimi.code_fallback_refresh_failed": "Kimi Code fallback quota refresh failed",
         "kimi.oauth_failed": "KIMI authorization failed",
         "kimi.logout_partial": "Kimi sign-out did not fully complete",
@@ -294,7 +336,30 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "feedback.status_marked": "Marked as {status}",
         "feedback.task_copied": "Task information copied",
         "feedback.automation_queued": "Automation queued",
+        "usage.cache": "Cache",
+        "automation.focused": "Focused {name}",
+        "automation.key_sent": "Sent {key}",
+        "automation.text_sent": "Text sent",
+        "automation.voice_started": "Started system voice input",
+        "automation.timeout": "Desktop automation timed out",
+        "automation.unavailable": "Desktop automation is unavailable",
+        "automation.cancelled": "Desktop automation was cancelled",
+        "automation.unsupported_operation": "Unsupported desktop automation operation",
+        "automation.executor_closed": "Desktop automation executor is closed",
+        "automation.queue_full": "Desktop automation queue is full",
+        "automation.window_not_found": "Target window was not found",
+        "automation.window_focus_failed": "Target window could not be brought to the front",
+        "automation.app_unconfigured": "Target application is not configured",
+        "automation.injection_disabled": "Keyboard input is disabled in AACC settings",
+        "automation.accessibility_required": "Accessibility permission is required",
+        "automation.key_not_allowed": "That key is not allowed",
+        "automation.text_invalid": "Text must contain 1 to 2000 characters",
+        "automation.text_nul": "Text must not contain NUL",
+        "automation.voice_hotkey_unsupported": "The configured voice hotkey is unsupported",
         "common.cancel": "Cancel",
+        "common.ok": "OK",
+        "common.yes": "Yes",
+        "common.close": "Close",
         "common.done": "Done",
         "common.apply": "Apply",
     },
@@ -334,13 +399,18 @@ class LanguageManager:
     def __init__(self, language: Language, settings: QSettings | None = None) -> None:
         self.language = language
         self._settings = settings
-        self._subscribers: list[Callable[[], None]] = []
+        self._subscribers: list[tuple[str, Callable[[], None]]] = []
 
-    def text(self, key: str, **values: object) -> str:
-        template = CATALOGS[self.language].get(key)
+    def text(self, translation_key: str, **values: object) -> str:
+        template = CATALOGS[self.language].get(translation_key)
         if template is None:
-            return key
-        return template.format(**values)
+            _logger.warning("Unknown translation key key=%s", translation_key)
+            return SAFE_ENGLISH_TEXT_FALLBACK
+        try:
+            return template.format(**values)
+        except Exception:  # noqa: BLE001 - a formatter value may raise arbitrary exceptions
+            _logger.warning("Translation formatting failed key=%s", translation_key)
+            return CATALOGS[EN_US][translation_key]
 
     def set_language(self, language: Language) -> None:
         if language == self.language:
@@ -348,19 +418,32 @@ class LanguageManager:
 
         self.language = language
         if self._settings is not None:
-            self._settings.setValue("ui_language", language)
+            try:
+                self._settings.setValue("ui_language", language)
+                self._settings.sync()
+                if self._settings.status() != QSettings.Status.NoError:
+                    _logger.warning("Language preference persistence failed")
+            except Exception:  # noqa: BLE001 - persistence must not block live retranslation
+                _logger.warning("Language preference persistence failed")
 
-        for callback in tuple(self._subscribers):
+        for component, callback in tuple(self._subscribers):
             try:
                 callback()
             except Exception:
-                _logger.warning("Language subscriber failed")
+                _logger.warning("Language subscriber failed component=%s", component)
 
-    def subscribe(self, callback: Callable[[], None]) -> Callable[[], None]:
-        self._subscribers.append(callback)
+    def subscribe(
+        self,
+        callback: Callable[[], None],
+        *,
+        component: LanguageSubscriberComponent,
+    ) -> Callable[[], None]:
+        safe_component = component if component in LANGUAGE_SUBSCRIBER_COMPONENTS else "unknown"
+        subscription = (safe_component, callback)
+        self._subscribers.append(subscription)
 
         def unsubscribe() -> None:
             with suppress(ValueError):
-                self._subscribers.remove(callback)
+                self._subscribers.remove(subscription)
 
         return unsubscribe

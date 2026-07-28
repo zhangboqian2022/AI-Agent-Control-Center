@@ -85,9 +85,11 @@ def test_web_quota_service_parses_snapshot_and_preserves_it_on_error(qapp, tmp_p
         now=lambda: datetime(2026, 7, 27, 5, 0, tzinfo=UTC),
     )
     updates = []
-    errors = []
+    web_errors = []
+    code_errors = []
     service.quota_updated.connect(updates.append)
-    service.error_occurred.connect(errors.append)
+    service.web_error_occurred.connect(web_errors.append)
+    service.code_error_occurred.connect(code_errors.append)
 
     session.quota_received.emit(
         {
@@ -102,7 +104,8 @@ def test_web_quota_service_parses_snapshot_and_preserves_it_on_error(qapp, tmp_p
     assert len(updates) == 1
     assert updates[0].monthly.percentage == 31
     assert service.last_quota is updates[0]
-    assert errors == ["refresh_timeout"]
+    assert web_errors == ["web_refresh_timeout"]
+    assert code_errors == []
 
 
 def test_web_quota_service_clears_snapshot_on_definitive_unauthorized(qapp, tmp_path: Path):
@@ -121,8 +124,10 @@ def test_web_quota_service_clears_snapshot_on_definitive_unauthorized(qapp, tmp_
 def test_fallback_error_is_sanitized_and_does_not_skip_web_refresh(qapp, tmp_path: Path):
     session = FakeSession()
     service = KimiWebQuotaService(tmp_path, session=session)
-    errors: list[str] = []
-    service.error_occurred.connect(errors.append)
+    code_errors: list[str] = []
+    web_errors: list[str] = []
+    service.code_error_occurred.connect(code_errors.append)
+    service.web_error_occurred.connect(web_errors.append)
 
     def fail_fallback() -> None:
         raise RuntimeError("token=private-fallback-secret")
@@ -132,8 +137,9 @@ def test_fallback_error_is_sanitized_and_does_not_skip_web_refresh(qapp, tmp_pat
     service.refresh_now()
 
     assert session.refreshes == 1
-    assert errors == ["code_fallback_refresh_failed"]
-    assert "private-fallback-secret" not in errors[0]
+    assert code_errors == ["code_refresh_failed"]
+    assert web_errors == []
+    assert "private-fallback-secret" not in code_errors[0]
 
 
 def test_web_quota_service_maps_unknown_external_error_to_fixed_safe_category(
@@ -141,14 +147,17 @@ def test_web_quota_service_maps_unknown_external_error_to_fixed_safe_category(
 ) -> None:
     session = FakeSession()
     service = KimiWebQuotaService(tmp_path, session=session)
-    errors: list[str] = []
-    service.error_occurred.connect(errors.append)
+    web_errors: list[str] = []
+    code_errors: list[str] = []
+    service.web_error_occurred.connect(web_errors.append)
+    service.code_error_occurred.connect(code_errors.append)
 
     session.error_occurred.emit(
         "https://www.kimi.com/?code=secret#access_token=remote-token remote body"
     )
 
-    assert errors == ["refresh_failed"]
+    assert web_errors == ["web_refresh_failed"]
+    assert code_errors == []
 
 
 def test_web_quota_service_delegates_login_logout_and_close(qapp, tmp_path: Path):

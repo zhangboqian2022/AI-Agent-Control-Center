@@ -7,6 +7,7 @@ from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -165,6 +166,138 @@ def test_kimi_device_authorization_uses_current_language(qapp: object) -> None:
     assert "Cancel authorization" in {button.text() for button in dialog.findChildren(QPushButton)}
 
 
+def test_open_kimi_device_authorization_retranslates_and_unsubscribes_on_close(
+    qtbot: object,
+) -> None:
+    language_manager = LanguageManager(ZH_CN)
+    dialog = KimiOAuthDialog(language_manager=language_manager)
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+    dialog.show()
+
+    language_manager.set_language(EN_US)
+
+    assert dialog.windowTitle() == "Kimi authorization"
+    assert any(
+        label.text().startswith("The Kimi authorization page")
+        for label in dialog.findChildren(QLabel)
+    )
+    assert "Cancel authorization" in {button.text() for button in dialog.findChildren(QPushButton)}
+
+    dialog.close()
+    language_manager.set_language(ZH_CN)
+
+    assert dialog.windowTitle() == "Kimi authorization"
+
+
+def test_kimi_device_authorization_unsubscribes_when_rejected(qtbot: object) -> None:
+    language_manager = LanguageManager(ZH_CN)
+    dialog = KimiOAuthDialog(language_manager=language_manager)
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+    dialog.show()
+
+    dialog.reject()
+    language_manager.set_language(EN_US)
+
+    assert language_manager._subscribers == []
+    assert dialog.windowTitle() == "Kimi 授权"
+
+
+def test_aacc_dialog_buttons_ignore_opposite_qt_button_language(
+    tmp_path: Path,
+    qtbot: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    language_manager = LanguageManager(EN_US)
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    original_set_standard_buttons = QMessageBox.setStandardButtons
+    original_set_window_title = QMessageBox.setWindowTitle
+    shown_boxes: list[tuple[str, set[str]]] = []
+    shown_inputs: list[set[str]] = []
+    box_titles: dict[int, str] = {}
+
+    def install_opposite_qt_labels(
+        box: QMessageBox,
+        buttons: QMessageBox.StandardButton,
+    ) -> None:
+        original_set_standard_buttons(box, buttons)
+        for standard, opposite in (
+            (QMessageBox.StandardButton.Ok, "系统确定"),
+            (QMessageBox.StandardButton.Yes, "系统是"),
+            (QMessageBox.StandardButton.Cancel, "系统取消"),
+            (QMessageBox.StandardButton.Close, "系统关闭"),
+        ):
+            button = box.button(standard)
+            if button is not None:
+                button.setText(opposite)
+
+    def remember_window_title(box: QMessageBox, title: str) -> None:
+        box_titles[id(box)] = title
+        original_set_window_title(box, title)
+
+    def execute_message_box(box: QMessageBox) -> int:
+        title = box_titles[id(box)]
+        shown_boxes.append((title, {button.text() for button in box.buttons()}))
+        if title == "Reset credentials":
+            return int(QMessageBox.StandardButton.Yes)
+        return int(QMessageBox.StandardButton.Cancel)
+
+    def execute_input(dialog: QInputDialog) -> int:
+        shown_inputs.append({button.text() for button in dialog.findChildren(QPushButton)})
+        return int(QDialog.DialogCode.Rejected)
+
+    monkeypatch.setattr(QMessageBox, "setStandardButtons", install_opposite_qt_labels)
+    monkeypatch.setattr(QMessageBox, "setWindowTitle", remember_window_title)
+    monkeypatch.setattr(QMessageBox, "exec", execute_message_box)
+    monkeypatch.setattr(QInputDialog, "exec", execute_input)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: pytest.fail("static QMessageBox.question used"),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "about",
+        lambda *_args, **_kwargs: pytest.fail("static QMessageBox.about used"),
+    )
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *_args, **_kwargs: pytest.fail("static QInputDialog.getText used"),
+    )
+
+    window.rotate_credentials()
+    task = TaskConfig(
+        id="codex:dialog-buttons",
+        slot=1,
+        name="Dialog buttons",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "completed", source="codex_local"))
+    window.set_codex_monitoring_preferences(set(), {"dialog-buttons"}, set())
+    window.clear_retained_tasks()
+    window.accessibility_trusted = False
+    window.show_accessibility_guidance()
+    window.show_about()
+    window.rename_task(task.id)
+
+    buttons_by_title = dict(shown_boxes)
+    assert {"Yes", "Cancel"} <= buttons_by_title["Reset credentials"]
+    assert {"Copy", "Close"} <= buttons_by_title["Credentials reset"]
+    assert {"Yes", "Cancel"} <= buttons_by_title["Clear completed tasks"]
+    assert {"Yes", "Cancel"} <= buttons_by_title["Accessibility permission required"]
+    assert {"OK"} <= buttons_by_title["About AACC"]
+    assert len(shown_inputs) == 1
+    assert {"OK", "Cancel"} <= shown_inputs[0]
+    assert not any(
+        button.startswith("系统") for buttons in buttons_by_title.values() for button in buttons
+    )
+    manager.close()
+
+
 def test_confirmations_accessibility_and_about_use_current_language(
     tmp_path: Path, qtbot: object, monkeypatch: object
 ) -> None:
@@ -174,25 +307,29 @@ def test_confirmations_accessibility_and_about_use_current_language(
         qtbot,
         language_manager=language_manager,
     )
-    captured_questions: list[tuple[str, str]] = []
-    shown_boxes: list[QMessageBox] = []
     shown_box_titles: list[str] = []
-    shown_about: list[tuple[str, str]] = []
+    shown_boxes: list[tuple[str, str, str | None]] = []
     monkeypatch.setattr(  # type: ignore[attr-defined]
         QMessageBox,
         "setWindowTitle",
         lambda _box, title: shown_box_titles.append(title),
     )
-
     monkeypatch.setattr(  # type: ignore[attr-defined]
         QMessageBox,
-        "question",
-        lambda _parent, title, prompt, *_args: (
-            captured_questions.append((title, prompt)) or QMessageBox.StandardButton.Cancel
+        "exec",
+        lambda box: (
+            shown_boxes.append(
+                (
+                    shown_box_titles[-1],
+                    box.text(),
+                    box.checkBox().text() if box.checkBox() is not None else None,
+                )
+            )
+            or QMessageBox.StandardButton.Cancel
         ),
     )
     window.rotate_credentials()
-    assert captured_questions[-1] == (
+    assert shown_boxes[-1][:2] == (
         "Reset credentials",
         "The old credentials will become invalid immediately. Continue?",
     )
@@ -207,31 +344,21 @@ def test_confirmations_accessibility_and_about_use_current_language(
     window.set_codex_monitoring_preferences(set(), {"english-confirmation"}, set())
     assert window.task_summary_label.text().endswith("1 task")
     window.clear_retained_tasks()
-    assert captured_questions[-1] == (
+    assert shown_boxes[-1][:2] == (
         "Clear completed tasks",
         "Remove 1 completed task from the panel?",
     )
 
-    monkeypatch.setattr(  # type: ignore[attr-defined]
-        QMessageBox,
-        "exec",
-        lambda box: shown_boxes.append(box) or QMessageBox.StandardButton.Cancel,
-    )
     window.accessibility_trusted = False
     window.show_accessibility_guidance()
-    assert shown_box_titles[-1] == "Accessibility permission required"
-    assert shown_boxes[-1].text().startswith("AACC needs Accessibility permission")
-    assert shown_boxes[-1].checkBox() is not None
-    assert shown_boxes[-1].checkBox().text() == "Do not remind me again"
+    assert shown_boxes[-1][0] == "Accessibility permission required"
+    assert shown_boxes[-1][1].startswith("AACC needs Accessibility permission")
+    assert shown_boxes[-1][2] == "Do not remind me again"
 
-    monkeypatch.setattr(  # type: ignore[attr-defined]
-        "aacc.gui.QMessageBox.about",
-        lambda _parent, title, text: shown_about.append((title, text)),
-    )
     window.show_about()
-    assert shown_about[-1][0] == "About AACC"
-    assert "\nVersion " in shown_about[-1][1]
-    assert "\nmacOS DMG AACC-" in shown_about[-1][1]
+    assert shown_boxes[-1][0] == "About AACC"
+    assert "\nVersion " in shown_boxes[-1][1]
+    assert "\nmacOS DMG AACC-" in shown_boxes[-1][1]
     manager.close()
 
 
@@ -244,9 +371,10 @@ def test_credential_result_and_rename_prompt_use_current_language(
         qtbot,
         language_manager=language_manager,
     )
-    shown_boxes: list[QMessageBox] = []
     shown_box_titles: list[str] = []
+    shown_boxes: list[tuple[str, str, set[str]]] = []
     rename_prompts: list[tuple[str, str]] = []
+    rename_titles: list[str] = []
     monkeypatch.setattr(  # type: ignore[attr-defined]
         QMessageBox,
         "setWindowTitle",
@@ -254,25 +382,41 @@ def test_credential_result_and_rename_prompt_use_current_language(
     )
     monkeypatch.setattr(  # type: ignore[attr-defined]
         QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
-    )
-    monkeypatch.setattr(  # type: ignore[attr-defined]
-        QMessageBox, "exec", lambda box: shown_boxes.append(box) or 0
+        "exec",
+        lambda box: (
+            shown_boxes.append(
+                (
+                    shown_box_titles[-1],
+                    box.text(),
+                    {button.text() for button in box.buttons()},
+                )
+            )
+            or (
+                QMessageBox.StandardButton.Yes
+                if shown_box_titles[-1] == "Reset credentials"
+                else QMessageBox.StandardButton.Close
+            )
+        ),
     )
     monkeypatch.setattr(  # type: ignore[attr-defined]
         QInputDialog,
-        "getText",
-        lambda _parent, title, prompt, **_kwargs: (
-            rename_prompts.append((title, prompt)) or ("", False)
+        "setWindowTitle",
+        lambda _dialog, title: rename_titles.append(title),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog,
+        "exec",
+        lambda dialog: (
+            rename_prompts.append((rename_titles[-1], dialog.labelText()))
+            or QDialog.DialogCode.Rejected
         ),
     )
 
     window.rotate_credentials()
     result_box = shown_boxes[-1]
-    assert shown_box_titles[-1] == "Credentials reset"
-    assert result_box.text().startswith("The old credentials are invalid.")
-    assert "Copy" in {button.text() for button in result_box.buttons()}
+    assert result_box[0] == "Credentials reset"
+    assert result_box[1].startswith("The old credentials are invalid.")
+    assert "Copy" in result_box[2]
 
     task = TaskConfig(
         id="codex:english-rename",
@@ -304,8 +448,280 @@ def test_manual_selection_and_copy_feedback_use_current_language(
 
     window._perform_action("status:running", "task-1")
     assert window.subtitle.text() == "MARKED AS RUNNING"
-    assert manager.get("task-1").message == "Manually updated"
+    assert manager.get("task-1").message == ""
+    assert manager.get("task-1").metadata["aacc_message_category"] == "manual_update"
     manager.close()
+
+
+@pytest.mark.parametrize(
+    ("start", "target", "start_text", "target_text"),
+    [
+        (ZH_CN, EN_US, "缓存 68%", "Cache 68%"),
+        (EN_US, ZH_CN, "Cache 68%", "缓存 68%"),
+    ],
+)
+def test_usage_text_retranslates_both_directions(
+    tmp_path: Path,
+    qtbot: object,
+    start: str,
+    target: str,
+    start_text: str,
+    target_text: str,
+) -> None:
+    language_manager = LanguageManager(start)  # type: ignore[arg-type]
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    task = TaskConfig(
+        id="kimi:localized-usage",
+        slot=1,
+        name="Localized usage",
+        agent=AgentConfig(type="kimi_code", display_name="Kimi Code"),
+    )
+    manager.register(
+        task,
+        TaskState.new(
+            task.id,
+            "running",
+            source="kimi_local",
+            metadata={
+                "usage": {
+                    "total_input_tokens": 12_300,
+                    "output_tokens": 1_200,
+                    "cache_read_pct": 68,
+                    "speed_tps": 42,
+                }
+            },
+        ),
+    )
+    window.set_kimi_selected_ids({"localized-usage"})
+    card = window.cards[task.id]
+
+    assert start_text in card.usage_label.text()
+
+    language_manager.set_language(target)  # type: ignore[arg-type]
+
+    assert target_text in card.usage_label.text()
+    assert start_text not in card.usage_label.text()
+    manager.close()
+
+
+@pytest.mark.parametrize(
+    ("start", "target", "start_text", "target_text"),
+    [
+        (ZH_CN, EN_US, "手动更新", "Manually updated"),
+        (EN_US, ZH_CN, "Manually updated", "手动更新"),
+    ],
+)
+def test_manual_status_stores_a_stable_category_and_retranslates_both_directions(
+    tmp_path: Path,
+    qtbot: object,
+    start: str,
+    target: str,
+    start_text: str,
+    target_text: str,
+) -> None:
+    language_manager = LanguageManager(start)  # type: ignore[arg-type]
+    window, manager = build_window(
+        tmp_path,
+        qtbot,
+        language_manager=language_manager,
+    )
+    task = TaskConfig(
+        id="codex:manual-language",
+        slot=1,
+        name="Manual language",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "idle", source="codex_local"))
+    window.set_codex_selected_ids({"manual-language"})
+
+    window._perform_action("status:running", task.id)
+
+    state = manager.get(task.id)
+    assert state.message == ""
+    assert state.metadata["aacc_message_category"] == "manual_update"
+    assert window.cards[task.id].message_label.text() == start_text
+
+    language_manager.set_language(target)  # type: ignore[arg-type]
+
+    assert window.cards[task.id].message_label.text() == target_text
+    assert window.subtitle.text() in {"MARKED AS RUNNING", "已标记为 执行中"}
+    manager.close()
+
+
+@pytest.mark.parametrize(
+    ("start", "target", "start_text", "target_text"),
+    [
+        (ZH_CN, EN_US, "已聚焦 Codex 任务", "Focused Codex 任务"),
+        (EN_US, ZH_CN, "Focused Codex 任务", "已聚焦 Codex 任务"),
+    ],
+)
+def test_automation_success_retranslates_both_directions_from_trusted_action(
+    tmp_path: Path,
+    qtbot: object,
+    start: str,
+    target: str,
+    start_text: str,
+    target_text: str,
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    executor = DeferredExecutor()
+    language_manager = LanguageManager(start)  # type: ignore[arg-type]
+    window = MainWindow(  # type: ignore[arg-type]
+        manager,
+        executor,
+        enable_tray=False,
+        language_manager=language_manager,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="codex:automation-language",
+        slot=1,
+        name="Codex 任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "idle", source="codex_local"))
+    window.set_codex_selected_ids({"automation-language"})
+
+    window._perform_action("focus", task.id)
+    executor.future.set_result("legacy controller presentation")
+    qtbot.waitUntil(  # type: ignore[attr-defined]
+        lambda: window.subtitle.text() == start_text.upper(),
+        timeout=500,
+    )
+
+    language_manager.set_language(target)  # type: ignore[arg-type]
+
+    assert window.subtitle.text() == target_text.upper()
+    manager.close()
+
+
+def test_key_automation_success_retranslates_without_colliding_with_text_key(
+    tmp_path: Path,
+    qtbot: object,
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    executor = DeferredExecutor()
+    language_manager = LanguageManager(EN_US)
+    window = MainWindow(  # type: ignore[arg-type]
+        manager,
+        executor,
+        enable_tray=False,
+        language_manager=language_manager,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="codex:key-automation-language",
+        slot=1,
+        name="Key automation",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "idle", source="codex_local"))
+    window.set_codex_selected_ids({"key-automation-language"})
+
+    window._perform_action("key:ENTER", task.id)
+    executor.future.set_result("legacy controller presentation")
+    qtbot.waitUntil(  # type: ignore[attr-defined]
+        lambda: window.subtitle.text() == "SENT ENTER",
+        timeout=500,
+    )
+
+    language_manager.set_language(ZH_CN)
+
+    assert window.subtitle.text() == "已发送 ENTER"
+    manager.close()
+
+
+@pytest.mark.parametrize(
+    ("start", "target", "start_text", "target_text"),
+    [
+        (ZH_CN, EN_US, "桌面自动化超时", "Desktop automation timed out"),
+        (EN_US, ZH_CN, "Desktop automation timed out", "桌面自动化超时"),
+    ],
+)
+def test_owned_automation_error_stores_category_and_retranslates_both_directions(
+    tmp_path: Path,
+    qtbot: object,
+    start: str,
+    target: str,
+    start_text: str,
+    target_text: str,
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    executor = DeferredExecutor()
+    language_manager = LanguageManager(start)  # type: ignore[arg-type]
+    window = MainWindow(  # type: ignore[arg-type]
+        manager,
+        executor,
+        enable_tray=False,
+        language_manager=language_manager,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    task = TaskConfig(
+        id="codex:automation-error-language",
+        slot=1,
+        name="Automation error",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(task, TaskState.new(task.id, "idle", source="codex_local"))
+    window.set_codex_selected_ids({"automation-error-language"})
+
+    window._perform_action("focus", task.id)
+    executor.future.set_exception(
+        AutomationError(
+            "Desktop automation timed out",
+            category="timeout",
+        )
+    )
+    qtbot.waitUntil(  # type: ignore[attr-defined]
+        lambda: manager.get(task.id).status is TaskStatus.WARNING,
+        timeout=500,
+    )
+
+    state = manager.get(task.id)
+    assert state.message == ""
+    assert state.metadata["aacc_message_category"] == "automation.timeout"
+    assert window.cards[task.id].message_label.text() == start_text
+
+    language_manager.set_language(target)  # type: ignore[arg-type]
+
+    assert window.cards[task.id].message_label.text() == target_text
+    assert window.subtitle.text() == f"⚠ {target_text}"
+    manager.close()
+
+
+def test_external_agent_message_is_not_translated(qapp: object) -> None:
+    language_manager = LanguageManager(ZH_CN)
+    task = TaskConfig(
+        id="codex:external-message",
+        slot=1,
+        name="External",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    state = TaskState.new(
+        task.id,
+        "running",
+        message="Agent says: 等待 external approval",
+        source="codex_local",
+    )
+    card = TaskCard(task, state, language_manager=language_manager)
+
+    language_manager.set_language(EN_US)
+    card.retranslate_ui()
+
+    assert card.message_label.text() == "Agent says: 等待 external approval"
 
 
 def test_queued_automation_and_empty_kimi_key_use_current_language(
@@ -555,8 +971,9 @@ def test_about_button_shows_platform_specific_artifact(
     )
     shown: dict[str, str] = {}
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        "aacc.gui.QMessageBox.about",
-        lambda _parent, title, text: shown.update(title=title, text=text),
+        QMessageBox,
+        "exec",
+        lambda box: shown.update(text=box.text()) or QMessageBox.StandardButton.Ok,
     )
 
     window.about_button.click()
@@ -1070,7 +1487,9 @@ def test_codex_cards_are_grouped_running_before_retained_terminal(
     assert window.cards[finished.id].updated_label.text().startswith("最后活动：")
 
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        "aacc.gui.QMessageBox.question", lambda *_args: 0x00004000
+        QMessageBox,
+        "exec",
+        lambda _box: QMessageBox.StandardButton.Yes,
     )
     window.clear_retained_tasks()
     assert finished.id not in window.cards
@@ -1151,12 +1570,18 @@ def test_rotate_credentials_shows_token_and_copies_only_on_request(
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
     old = config.app.api.token
+    shown_tokens: list[str] = []
+
+    def execute_box(box: QMessageBox) -> QMessageBox.StandardButton:
+        if box.standardButtons() & QMessageBox.StandardButton.Yes:
+            return QMessageBox.StandardButton.Yes
+        shown_tokens.append(box.informativeText())
+        return QMessageBox.StandardButton.Close
+
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
-    )
-    shown: list[QMessageBox] = []
-    monkeypatch.setattr(  # type: ignore[attr-defined]
-        QMessageBox, "exec", lambda box: shown.append(box) or 0
+        QMessageBox,
+        "exec",
+        execute_box,
     )
     window = MainWindow(
         manager,
@@ -1171,7 +1596,7 @@ def test_rotate_credentials_shows_token_and_copies_only_on_request(
     window.rotate_credentials()
 
     assert config.app.api.token != old
-    assert shown and shown[0].informativeText() == config.app.api.token
+    assert shown_tokens == [config.app.api.token]
     # Token is never pushed to the clipboard without an explicit user action.
     assert QGuiApplication.clipboard().text() == "unrelated clipboard content"
 
@@ -1599,7 +2024,14 @@ def test_rename_codex_task_updates_card_and_persists(
     window.sync_cards()
 
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        QInputDialog, "getText", lambda *args, **kwargs: ("我的改名", True)
+        QInputDialog,
+        "exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog,
+        "textValue",
+        lambda _dialog: "我的改名",
     )
     window.rename_task(task.id)
 
@@ -1654,13 +2086,22 @@ def test_rename_task_with_empty_name_restores_default(
     window.sync_cards()
 
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        QInputDialog, "getText", lambda *args, **kwargs: ("自定义名", True)
+        QInputDialog,
+        "exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog,
+        "textValue",
+        lambda _dialog: "自定义名",
     )
     window.rename_task(task.id)
     assert window.cards[task.id].display_name == "自定义名"
 
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        QInputDialog, "getText", lambda *args, **kwargs: ("", True)
+        QInputDialog,
+        "textValue",
+        lambda _dialog: "",
     )
     window.rename_task(task.id)
 
@@ -1780,7 +2221,9 @@ def test_clear_retained_tasks_removes_terminal_kimi_cards(
 
     assert not window.clear_retained_button.isHidden()
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        "aacc.gui.QMessageBox.question", lambda *_args: 0x00004000
+        QMessageBox,
+        "exec",
+        lambda _box: QMessageBox.StandardButton.Yes,
     )
     window.clear_retained_tasks()
 

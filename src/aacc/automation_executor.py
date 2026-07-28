@@ -69,7 +69,10 @@ class AutomationExecutor:
         try:
             if cancel_event.is_set():
                 outcome = "cancelled"
-                raise AutomationError("Desktop automation was cancelled")
+                raise AutomationError(
+                    "Desktop automation was cancelled",
+                    category="cancelled",
+                )
             if method == "focus" and task is not None:
                 result = self._controller.focus(task, cancel_event=cancel_event)
             elif method == "send_key" and task is not None and len(args) == 2:
@@ -79,7 +82,10 @@ class AutomationExecutor:
             elif method == "start_voice" and task is not None:
                 result = self._controller.start_voice(task, cancel_event=cancel_event)
             else:
-                raise AutomationError("Unsupported desktop automation operation")
+                raise AutomationError(
+                    "Unsupported desktop automation operation",
+                    category="unsupported_operation",
+                )
             outcome = "success"
             return result
         except AutomationError:
@@ -102,13 +108,19 @@ class AutomationExecutor:
                 self._logger.warning(
                     "automation operation=%s target=unknown outcome=busy reason=closed", method
                 )
-                raise AutomationBusyError("Desktop automation executor is closed")
+                raise AutomationBusyError(
+                    "Desktop automation executor is closed",
+                    category="executor_closed",
+                )
             if not self._slots.acquire(blocking=False):
                 self._logger.warning(
                     "automation operation=%s target=unknown outcome=busy reason=queue_full",
                     method,
                 )
-                raise AutomationBusyError("Desktop automation queue is full")
+                raise AutomationBusyError(
+                    "Desktop automation queue is full",
+                    category="queue_full",
+                )
             try:
                 future = self._pool.submit(self._execute, method, cancel_event, *args)
             except Exception:
@@ -129,7 +141,7 @@ class AutomationExecutor:
             cancel_event.set()
             future.cancel()
             self._logger.warning("automation operation=%s target=unknown outcome=timeout", method)
-            raise AutomationError("Desktop automation timed out") from error
+            raise AutomationError("Desktop automation timed out", category="timeout") from error
 
     def focus(self, task: TaskConfig) -> str:
         return self._wait("focus", task)

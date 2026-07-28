@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
 )
 
 from aacc import public_version
-from aacc.automation import AutomationError
+from aacc.automation import AUTOMATION_ERROR_CATEGORIES, AutomationError
 from aacc.automation_executor import AutomationExecutor
 from aacc.codex_discovery import CodexSession
 from aacc.codex_quota import CodexQuotaSnapshot, CodexQuotaStatus
@@ -78,9 +78,12 @@ from aacc.kimi_quota import (
     format_reset_countdown,
 )
 from aacc.kimi_web_error import (
-    KimiWebErrorCategory,
+    KimiCodeQuotaErrorCategory,
+    KimiWebQuotaErrorCategory,
+    kimi_code_quota_error_text,
     kimi_web_error_text,
-    normalize_kimi_web_error_category,
+    normalize_kimi_code_quota_error_category,
+    normalize_kimi_web_quota_error_category,
 )
 from aacc.kimi_web_quota import merge_kimi_quota
 from aacc.kimi_web_quota_service import KimiWebQuotaService
@@ -125,10 +128,43 @@ STATUS_NAME_KEYS = {
 }
 
 STATUS_LIGHT_FONT_SIZE = 64
+AACC_MESSAGE_CATEGORY_KEY = "aacc_message_category"
+AACC_MESSAGE_TEXT_KEYS = {
+    "manual_update": "feedback.manual_update",
+    **{
+        f"automation.{category}": f"automation.{category}"
+        for category in AUTOMATION_ERROR_CATEGORIES
+    },
+}
+_STANDARD_BUTTON_TEXT_KEYS = {
+    QMessageBox.StandardButton.Ok: "common.ok",
+    QMessageBox.StandardButton.Yes: "common.yes",
+    QMessageBox.StandardButton.Cancel: "common.cancel",
+    QMessageBox.StandardButton.Close: "common.close",
+}
+
+
+def _localize_standard_buttons(
+    box: QMessageBox,
+    language_manager: LanguageManager,
+) -> None:
+    for standard_button, text_key in _STANDARD_BUTTON_TEXT_KEYS.items():
+        button = box.button(standard_button)
+        if button is not None:
+            button.setText(language_manager.text(text_key))
 
 
 def status_name(status: TaskStatus, language: LanguageManager) -> str:
     return language.text(STATUS_NAME_KEYS[status])
+
+
+def _task_message_text(state: TaskState, language: LanguageManager) -> str:
+    category = state.metadata.get(AACC_MESSAGE_CATEGORY_KEY)
+    if isinstance(category, str):
+        key = AACC_MESSAGE_TEXT_KEYS.get(category)
+        if key is not None:
+            return language.text(key)
+    return state.message or language.text("task.no_message")
 
 
 def format_quota_reset(
@@ -223,6 +259,14 @@ class _QuotaMetricRow:
     reset_label: QLabel
 
 
+@dataclass(frozen=True)
+class _SubtitlePresentation:
+    key: str
+    values: dict[str, object]
+    uppercase: bool = True
+    prefix: str = ""
+
+
 def _add_quota_metric_row(
     layout: QGridLayout,
     row_index: int,
@@ -278,7 +322,8 @@ class QuotaBar(QFrame):
         self._last_quota_tooltip = ""
         self._last_quota: KimiQuota | None = None
         self._display_state = "unauthorized"
-        self._last_error: KimiWebErrorCategory | None = None
+        self._last_code_error: KimiCodeQuotaErrorCategory | None = None
+        self._last_web_error: KimiWebQuotaErrorCategory | None = None
         self.setObjectName("quotaBar")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QGridLayout(self)
@@ -343,7 +388,8 @@ class QuotaBar(QFrame):
     def show_unauthorized(self) -> None:
         self._display_state = "unauthorized"
         self._last_quota = None
-        self._last_error = None
+        self._last_code_error = None
+        self._last_web_error = None
         self._has_known_quota = False
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #e06c75;")
@@ -363,7 +409,8 @@ class QuotaBar(QFrame):
 
     def show_pending(self) -> None:
         self._display_state = "pending"
-        self._last_error = None
+        self._last_code_error = None
+        self._last_web_error = None
         self.dot.setStyleSheet("color: #e5c07b;")
         self.summary_label.setText(
             f"{self.language_manager.text('quota.kimi')}\n"
@@ -371,10 +418,21 @@ class QuotaBar(QFrame):
         )
         self.setToolTip(self.language_manager.text("quota.authorizing"))
 
-    def show_quota(self, quota: KimiQuota) -> None:
-        self._display_state = "quota"
+    def show_quota(
+        self,
+        quota: KimiQuota,
+        *,
+        preserve_errors: bool = False,
+    ) -> None:
         self._last_quota = quota
-        self._last_error = None
+        if not preserve_errors:
+            self._last_code_error = None
+            self._last_web_error = None
+        if self._last_code_error is not None or self._last_web_error is not None:
+            self._display_state = "error"
+            self._render_error()
+            return
+        self._display_state = "quota"
         self._render_quota(quota)
 
     def _render_quota(self, quota: KimiQuota) -> None:
@@ -423,10 +481,21 @@ class QuotaBar(QFrame):
         self._last_quota_tooltip = "\n".join(tooltip_lines)
         self.setToolTip(self._last_quota_tooltip)
 
-    def show_error(self, category: object) -> None:
+    def show_code_error(self, category: object) -> None:
         self._display_state = "error"
-        self._last_error = normalize_kimi_web_error_category(category)
+        self._last_code_error = normalize_kimi_code_quota_error_category(category)
         self._render_error()
+
+    def show_web_error(self, category: object) -> None:
+        self._display_state = "error"
+        self._last_web_error = normalize_kimi_web_quota_error_category(category)
+        self._render_error()
+
+    def clear_code_error(self) -> None:
+        self._last_code_error = None
+
+    def clear_web_error(self) -> None:
+        self._last_web_error = None
 
     def _render_error(self) -> None:
         if self._last_quota is not None:
@@ -446,12 +515,18 @@ class QuotaBar(QFrame):
             )
         self.summary_label.setText(f"{self.language_manager.text('quota.kimi')}\n{state_text}")
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
-        error_prefix = (
-            "额度刷新失败" if self.language_manager.language == ZH_CN else "Quota refresh failed"
-        )
         retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
-        error = kimi_web_error_text(self._last_error, self.language_manager)
-        self.setToolTip(f"{previous}{error_prefix}: {error}\n{retry}")
+        errors: list[str] = []
+        if self._last_code_error is not None:
+            errors.append(
+                kimi_code_quota_error_text(
+                    self._last_code_error,
+                    self.language_manager,
+                )
+            )
+        if self._last_web_error is not None:
+            errors.append(kimi_web_error_text(self._last_web_error, self.language_manager))
+        self.setToolTip(f"{previous}{'\n'.join(errors)}\n{retry}")
 
     def _show_detail(self, row: _QuotaMetricRow, detail: QuotaDetail | None) -> None:
         if detail is None:
@@ -681,22 +756,34 @@ class KimiOAuthDialog(QDialog):
         )
         self._cancel_emitted = False
         self._finishing = False
-        self.setWindowTitle(self.language_manager.text("kimi.device_title"))
+        self._unsubscribe_language: Callable[[], None] = lambda: None
         self.setMinimumWidth(320)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(self.language_manager.text("kimi.device_opened")))
+        self.opened_label = QLabel()
+        layout.addWidget(self.opened_label)
         self.code_label = QLabel("")
         self.code_label.setObjectName("oauthCode")
         self.code_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.code_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.code_label)
-        hint = QLabel(self.language_manager.text("kimi.device_finished"))
-        hint.setObjectName("quotaText")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(hint)
-        cancel = QPushButton(self.language_manager.text("kimi.device_cancel"))
-        cancel.clicked.connect(self._on_cancel)
-        layout.addWidget(cancel)
+        self.hint_label = QLabel()
+        self.hint_label.setObjectName("quotaText")
+        self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.hint_label)
+        self.cancel_button = QPushButton()
+        self.cancel_button.clicked.connect(self._on_cancel)
+        layout.addWidget(self.cancel_button)
+        self._unsubscribe_language = self.language_manager.subscribe(
+            self.retranslate_ui,
+            component="kimi_oauth_dialog",
+        )
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(self.language_manager.text("kimi.device_title"))
+        self.opened_label.setText(self.language_manager.text("kimi.device_opened"))
+        self.hint_label.setText(self.language_manager.text("kimi.device_finished"))
+        self.cancel_button.setText(self.language_manager.text("kimi.device_cancel"))
 
     def set_code(self, user_code: str) -> None:
         self.code_label.setText(user_code)
@@ -715,12 +802,18 @@ class KimiOAuthDialog(QDialog):
         self._finishing = True
         self.close()
 
+    def _stop_language_updates(self) -> None:
+        self._unsubscribe_language()
+        self._unsubscribe_language = lambda: None
+
     def reject(self) -> None:
         if not self._finishing:
             self.cancel_once()
+        self._stop_language_updates()
         super().reject()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._stop_language_updates()
         if not self._finishing:
             self.cancel_once()
         super().closeEvent(event)
@@ -857,11 +950,16 @@ class TaskCard(QFrame):
             self.workdir_label.hide()
         usage = state.metadata.get("usage")
         if self.task.agent.type == "kimi_code" and isinstance(usage, dict):
-            self.usage_label.setText(format_usage_line(usage))
+            self.usage_label.setText(
+                format_usage_line(
+                    usage,
+                    cache_label=self.language_manager.text("usage.cache"),
+                )
+            )
             self.usage_label.show()
         else:
             self.usage_label.hide()
-        self.message_label.setText(state.message or self.language_manager.text("task.no_message"))
+        self.message_label.setText(_task_message_text(state, self.language_manager))
         updated_time = state.updated_at.astimezone().strftime("%H:%M:%S")
         self.updated_label.setText(
             f"最后活动：{updated_time}"
@@ -1339,6 +1437,7 @@ class MainWindow(QWidget):
         self._kimi_web_authorized = False
         self._open_url = open_url or (lambda url: QDesktopServices.openUrl(QUrl(url)))
         self._oauth_dialog: KimiOAuthDialog | None = None
+        self._subtitle_presentation: _SubtitlePresentation | None = None
         self.quota_bar: QuotaBar | None = None
         self.codex_quota_bar: CodexQuotaBar | None = None
         self._unsubscribe_discovery_health = (
@@ -1525,12 +1624,13 @@ class MainWindow(QWidget):
             self.quota_service.auth_state_changed.connect(self._on_quota_auth_state)
             self.quota_service.oauth_code_ready.connect(self._on_oauth_code_ready)
             self.quota_service.oauth_finished.connect(self._on_oauth_finished)
-            self.quota_service.error_occurred.connect(self._on_quota_error)
+            self.quota_service.error_occurred.connect(self._on_kimi_code_quota_error)
             self._on_quota_auth_state(self.quota_service.state())
         if self.kimi_web_quota_service is not None:
             self.kimi_web_quota_service.quota_updated.connect(self._on_kimi_web_quota_updated)
             self.kimi_web_quota_service.login_state_changed.connect(self._on_kimi_web_login_state)
-            self.kimi_web_quota_service.error_occurred.connect(self._on_quota_error)
+            self.kimi_web_quota_service.web_error_occurred.connect(self._on_kimi_web_quota_error)
+            self.kimi_web_quota_service.code_error_occurred.connect(self._on_kimi_code_quota_error)
 
         self.discovery_warning = QFrame()
         self.discovery_warning.setObjectName("discoveryWarning")
@@ -1631,7 +1731,10 @@ class MainWindow(QWidget):
         self._timer.timeout.connect(self.refresh)
         self._timer.start(1000)
         self.sync_cards()
-        self._unsubscribe_language = self.language_manager.subscribe(self.retranslate_ui)
+        self._unsubscribe_language = self.language_manager.subscribe(
+            self.retranslate_ui,
+            component="main_window",
+        )
         self.retranslate_ui()
 
     def _apply_styles(self) -> None:
@@ -1675,6 +1778,44 @@ class MainWindow(QWidget):
             self.tray_compact_action.setText(self.language_manager.text("compact.toggle"))
         if self.tray_quit_action is not None:
             self.tray_quit_action.setText(self.language_manager.text("tray.quit"))
+        self._render_subtitle_presentation()
+
+    def _set_subtitle_presentation(
+        self,
+        translation_key: str,
+        *,
+        uppercase: bool = True,
+        prefix: str = "",
+        **values: object,
+    ) -> None:
+        self._subtitle_presentation = _SubtitlePresentation(
+            key=translation_key,
+            values=dict(values),
+            uppercase=uppercase,
+            prefix=prefix,
+        )
+        self._render_subtitle_presentation()
+
+    def _render_subtitle_presentation(self) -> None:
+        presentation = self._subtitle_presentation
+        if presentation is None:
+            return
+        values = {
+            name: (
+                status_name(value, self.language_manager)
+                if isinstance(value, TaskStatus)
+                else value
+            )
+            for name, value in presentation.values.items()
+        }
+        text = self.language_manager.text(presentation.key, **values)
+        if presentation.uppercase:
+            text = text.upper()
+        self.subtitle.setText(f"{presentation.prefix}{text}")
+
+    def _set_external_subtitle(self, text: str) -> None:
+        self._subtitle_presentation = None
+        self.subtitle.setText(text)
 
     def _render_task_summary(self) -> None:
         running_count, terminal_count = (len(group) for group in self._layout_group_ids)
@@ -1919,7 +2060,11 @@ class MainWindow(QWidget):
             ):
                 self.tray.showMessage(
                     card.task.name,
-                    state.message or status_name(state.status, self.language_manager),
+                    (
+                        _task_message_text(state, self.language_manager)
+                        if state.message or AACC_MESSAGE_CATEGORY_KEY in state.metadata
+                        else status_name(state.status, self.language_manager)
+                    ),
                 )
 
     def _on_quota_bar_clicked(self) -> None:
@@ -1948,6 +2093,8 @@ class MainWindow(QWidget):
         if not isinstance(quota, KimiQuota):
             return
         self._latest_kimi_code_quota = quota
+        if self.quota_bar is not None:
+            self.quota_bar.clear_code_error()
         self._render_kimi_quota()
 
     def _on_kimi_web_quota_updated(self, quota: object) -> None:
@@ -1955,6 +2102,8 @@ class MainWindow(QWidget):
             return
         self._latest_kimi_web_quota = quota
         self._kimi_web_authorized = True
+        if self.quota_bar is not None:
+            self.quota_bar.clear_web_error()
         self._render_kimi_quota()
 
     def _render_kimi_quota(self) -> None:
@@ -1964,7 +2113,7 @@ class MainWindow(QWidget):
             self._latest_kimi_web_quota,
             self._latest_kimi_code_quota,
         )
-        self.quota_bar.show_quota(quota)
+        self.quota_bar.show_quota(quota, preserve_errors=True)
 
     def _on_kimi_web_login_state(self, authorized: bool) -> None:
         self._kimi_web_authorized = authorized
@@ -1987,13 +2136,20 @@ class MainWindow(QWidget):
         elif state != STATE_AUTHORIZED:
             self.quota_bar.show_unauthorized()
 
-    def _on_quota_error(self, message: str) -> None:
+    def _on_kimi_code_quota_error(self, category: str) -> None:
         if self.quota_bar is not None:
-            self.quota_bar.show_error(message)
+            self.quota_bar.show_code_error(category)
+
+    def _on_kimi_web_quota_error(self, category: str) -> None:
+        if self.quota_bar is not None:
+            self.quota_bar.show_web_error(category)
 
     def _on_oauth_code_ready(self, user_code: str, url: str) -> None:
         if self._oauth_dialog is None:
-            self._oauth_dialog = KimiOAuthDialog(self)
+            self._oauth_dialog = KimiOAuthDialog(
+                self,
+                language_manager=self.language_manager,
+            )
             self._oauth_dialog.cancelled.connect(self._on_oauth_cancelled)
         self._oauth_dialog.set_code(user_code)
         self._oauth_dialog.show()
@@ -2009,7 +2165,7 @@ class MainWindow(QWidget):
             self._oauth_dialog.deleteLater()
             self._oauth_dialog = None
         if not success and message:
-            self.subtitle.setText(self.language_manager.text("kimi.oauth_failed"))
+            self._set_subtitle_presentation("kimi.oauth_failed", uppercase=False)
 
     def save_kimi_api_key(self, key: str) -> None:
         if self.quota_service is None:
@@ -2017,7 +2173,7 @@ class MainWindow(QWidget):
         try:
             self.quota_service.set_api_key(key)
         except ValueError:
-            self.subtitle.setText(self.language_manager.text("settings.kimi_key_required"))
+            self._set_subtitle_presentation("settings.kimi_key_required", uppercase=False)
 
     def open_kimi_web_login(self) -> None:
         if self.kimi_web_quota_service is not None:
@@ -2045,7 +2201,7 @@ class MainWindow(QWidget):
         if self.quota_bar is not None:
             self.quota_bar.show_unauthorized()
         if logout_failed:
-            self._on_quota_error(KimiWebErrorCategory.LOGOUT_PARTIAL.value)
+            self._on_kimi_web_quota_error(KimiWebQuotaErrorCategory.LOGOUT_PARTIAL.value)
 
     def set_compact(self, compact: bool) -> None:
         self.compact_mode = compact
@@ -2177,7 +2333,7 @@ class MainWindow(QWidget):
             self.remove_kimi_desktop_task(task_id)
         else:
             _logger.error("Unknown brand dispatch: %s", task_id)
-            self.subtitle.setText(self.language_manager.text("feedback.operation_failed"))
+            self._set_subtitle_presentation("feedback.operation_failed", uppercase=False)
 
     def remove_kimi_desktop_task(self, task_id: str) -> None:
         if not task_id.startswith("kimi_desktop:"):
@@ -2215,14 +2371,16 @@ class MainWindow(QWidget):
         except KeyError:
             return
         current_name = self.custom_task_names.get(task_id, task.name)
-        name, accepted = QInputDialog.getText(
-            self,
-            self.language_manager.text("rename.title"),
-            self.language_manager.text("rename.prompt"),
-            text=current_name,
-        )
-        if not accepted:
+        dialog = QInputDialog(self)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        dialog.setWindowTitle(self.language_manager.text("rename.title"))
+        dialog.setLabelText(self.language_manager.text("rename.prompt"))
+        dialog.setTextValue(current_name)
+        dialog.setOkButtonText(self.language_manager.text("common.ok"))
+        dialog.setCancelButtonText(self.language_manager.text("common.cancel"))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        name = dialog.textValue()
         name = name.strip()[:120]
         if name and name != task.name:
             self.custom_task_names[task_id] = name
@@ -2254,18 +2412,21 @@ class MainWindow(QWidget):
         ]
         if not task_ids:
             return
-        answer = QMessageBox.question(
-            self,
-            self.language_manager.text("clear_completed.title"),
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(self.language_manager.text("clear_completed.title"))
+        box.setText(
             self.language_manager.text(
                 "clear_completed.prompt.one"
                 if len(task_ids) == 1
                 else "clear_completed.prompt.other",
                 count=len(task_ids),
-            ),
-            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
-            QMessageBox.StandardButton.Cancel,
+            )
         )
+        box.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        _localize_standard_buttons(box, self.language_manager)
+        answer = box.exec()
         if answer != QMessageBox.StandardButton.Yes:
             return
         for task_id in task_ids:
@@ -2348,7 +2509,8 @@ class MainWindow(QWidget):
             task = self.manager.task_config(task_id)
             self.selected_task_id = task_id
             if action == "select":
-                result = self.language_manager.text("feedback.task_selected", name=task.name)
+                self._set_subtitle_presentation("feedback.task_selected", name=task.name)
+                return
             elif action == "focus":
                 self._submit_automation(action, task_id, "focus", task)
                 return
@@ -2364,27 +2526,29 @@ class MainWindow(QWidget):
                     TaskState.new(
                         task_id,
                         status,
-                        message=self.language_manager.text("feedback.manual_update"),
                         source="manual",
+                        metadata={AACC_MESSAGE_CATEGORY_KEY: "manual_update"},
                     )
                 )
-                marked_status = status_name(TaskStatus.parse(status), self.language_manager)
-                result = self.language_manager.text(
+                self._set_subtitle_presentation(
                     "feedback.status_marked",
-                    status=marked_status,
+                    status=TaskStatus.parse(status),
                 )
+                return
             elif action == "rename":
                 self.rename_task(task_id)
                 return
             elif action == "copy":
                 state = self.manager.get(task_id)
                 QGuiApplication.clipboard().setText(
-                    f"{task.name}\n{state.status.value}\n{state.message}\n{state.updated_at.isoformat()}"
+                    f"{task.name}\n{state.status.value}\n"
+                    f"{_task_message_text(state, self.language_manager)}\n"
+                    f"{state.updated_at.isoformat()}"
                 )
-                result = self.language_manager.text("feedback.task_copied")
+                self._set_subtitle_presentation("feedback.task_copied")
+                return
             else:
                 return
-            self.subtitle.setText(result.upper())
         except (AutomationError, KeyError, ValueError) as error:
             self._show_automation_error(task_id, error)
 
@@ -2397,36 +2561,65 @@ class MainWindow(QWidget):
             self.automation_finished.emit(action, task_id, completed)
 
         future.add_done_callback(notify)
-        self.subtitle.setText(self.language_manager.text("feedback.automation_queued").upper())
+        self._set_subtitle_presentation("feedback.automation_queued")
 
-    def _automation_completed(self, _action: str, task_id: str, value: object) -> None:
+    def _automation_completed(self, action: str, task_id: str, value: object) -> None:
         if not isinstance(value, Future):
             return
         try:
-            self.subtitle.setText(value.result().upper())
+            external_result = value.result()
+            task = self.manager.task_config(task_id)
+            if action == "focus":
+                self._set_subtitle_presentation("automation.focused", name=task.name)
+            elif action == "voice":
+                self._set_subtitle_presentation("automation.voice_started")
+            elif action.startswith("key:"):
+                self._set_subtitle_presentation(
+                    "automation.key_sent",
+                    key=action.split(":", 1)[1],
+                )
+            else:
+                self._set_external_subtitle(external_result.upper())
         except (AutomationError, KeyError, ValueError) as error:
             self._show_automation_error(task_id, error)
 
     def _show_automation_error(self, task_id: str, error: Exception) -> None:
-        self.subtitle.setText(f"⚠ {error}")
+        category = error.category if isinstance(error, AutomationError) else None
+        if category in AUTOMATION_ERROR_CATEGORIES:
+            marker = f"automation.{category}"
+            self._set_subtitle_presentation(
+                marker,
+                uppercase=False,
+                prefix="⚠ ",
+            )
+            message = ""
+            metadata = {AACC_MESSAGE_CATEGORY_KEY: marker}
+        else:
+            self._set_external_subtitle(f"⚠ {error}")
+            message = str(error)
+            metadata = {}
         self.manager.update(
             TaskState.new(
                 task_id,
                 TaskStatus.WARNING,
-                message=str(error),
+                message=message,
                 source="automation",
                 confidence=0.85,
+                metadata=metadata,
             )
         )
 
     def rotate_credentials(self) -> None:
-        answer = QMessageBox.question(
-            self,
-            self.language_manager.text("credentials.reset_title"),
-            self.language_manager.text("credentials.reset_prompt"),
-            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
-            QMessageBox.StandardButton.Cancel,
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Icon.Question)
+        confirmation.setWindowTitle(self.language_manager.text("credentials.reset_title"))
+        confirmation.setText(self.language_manager.text("credentials.reset_prompt"))
+        confirmation.setStandardButtons(
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes
         )
+        confirmation.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        _localize_standard_buttons(confirmation, self.language_manager)
+        answer = confirmation.exec()
         if answer != QMessageBox.StandardButton.Yes:
             return
         token = self._rotate_api_token()
@@ -2437,6 +2630,7 @@ class MainWindow(QWidget):
         box.setInformativeText(token)
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         box.setStandardButtons(QMessageBox.StandardButton.Close)
+        _localize_standard_buttons(box, self.language_manager)
         copy_button = box.addButton(
             self.language_manager.text("credentials.copy"),
             QMessageBox.ButtonRole.ActionRole,
@@ -2488,6 +2682,7 @@ class MainWindow(QWidget):
         box.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes)
         box.setDefaultButton(QMessageBox.StandardButton.Yes)
         box.setCheckBox(QCheckBox(self.language_manager.text("accessibility.do_not_remind"), box))
+        _localize_standard_buttons(box, self.language_manager)
         answer = box.exec()
         checkbox = box.checkBox()
         if checkbox is not None and checkbox.isChecked():
@@ -2501,11 +2696,13 @@ class MainWindow(QWidget):
     def show_about(self) -> None:
         version = public_version()
         body_key = "about.body.windows" if sys.platform == "win32" else "about.body.macos"
-        QMessageBox.about(
-            self,
-            self.language_manager.text("about.title"),
-            self.language_manager.text(body_key, version=version),
-        )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(self.language_manager.text("about.title"))
+        box.setText(self.language_manager.text(body_key, version=version))
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        _localize_standard_buttons(box, self.language_manager)
+        box.exec()
 
     def toggle_visible(self) -> None:
         if self.isVisible() and not self.isMinimized():

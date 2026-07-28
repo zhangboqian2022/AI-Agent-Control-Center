@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from aacc.models import AppConfig, TaskConfig
 from aacc.security import redact
@@ -16,8 +16,53 @@ if TYPE_CHECKING:
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
+AutomationErrorCategory = Literal[
+    "timeout",
+    "unavailable",
+    "cancelled",
+    "unsupported_operation",
+    "executor_closed",
+    "queue_full",
+    "window_not_found",
+    "window_focus_failed",
+    "app_unconfigured",
+    "injection_disabled",
+    "accessibility_required",
+    "key_not_allowed",
+    "text_invalid",
+    "text_nul",
+    "voice_hotkey_unsupported",
+]
+AUTOMATION_ERROR_CATEGORIES = frozenset(
+    {
+        "timeout",
+        "unavailable",
+        "cancelled",
+        "unsupported_operation",
+        "executor_closed",
+        "queue_full",
+        "window_not_found",
+        "window_focus_failed",
+        "app_unconfigured",
+        "injection_disabled",
+        "accessibility_required",
+        "key_not_allowed",
+        "text_invalid",
+        "text_nul",
+        "voice_hotkey_unsupported",
+    }
+)
+
+
 class AutomationError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        category: AutomationErrorCategory | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.category = category
 
 
 KEY_CODES = {
@@ -64,9 +109,12 @@ class MacAutomation:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
-            raise AutomationError("Desktop automation timed out") from error
+            raise AutomationError("Desktop automation timed out", category="timeout") from error
         except OSError as error:
-            raise AutomationError("Desktop automation is unavailable") from error
+            raise AutomationError(
+                "Desktop automation is unavailable",
+                category="unavailable",
+            ) from error
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or "automation failed"
             raise AutomationError(redact(detail)[:500])
@@ -131,14 +179,20 @@ class MacAutomation:
         else:
             bundle_id = terminal.app_bundle_id
             if not bundle_id:
-                raise AutomationError("No app bundle identifier is configured")
+                raise AutomationError(
+                    "No app bundle identifier is configured",
+                    category="app_unconfigured",
+                )
             self._run(["/usr/bin/osascript", "-e", self._mac_app_script(bundle_id)])
         return f"已聚焦 {task.name}"
 
     @staticmethod
     def _check_cancelled(cancel_event: threading.Event | None) -> None:
         if cancel_event is not None and cancel_event.is_set():
-            raise AutomationError("Desktop automation was cancelled")
+            raise AutomationError(
+                "Desktop automation was cancelled",
+                category="cancelled",
+            )
 
     def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
         with self._lock:
@@ -147,9 +201,15 @@ class MacAutomation:
 
     def _ensure_injection(self) -> None:
         if not self.config.app.keyboard_injection:
-            raise AutomationError("Keyboard injection is disabled in AACC settings")
+            raise AutomationError(
+                "Keyboard injection is disabled in AACC settings",
+                category="injection_disabled",
+            )
         if not self._accessibility_trusted():
-            raise AutomationError("Accessibility permission is required")
+            raise AutomationError(
+                "Accessibility permission is required",
+                category="accessibility_required",
+            )
 
     def send_key(
         self,
@@ -163,7 +223,10 @@ class MacAutomation:
             self._ensure_injection()
             normalized = key.upper()
             if normalized not in {*KEY_CODES, "CTRL_C"}:
-                raise AutomationError(f"Key {normalized} is not allowed")
+                raise AutomationError(
+                    f"Key {normalized} is not allowed",
+                    category="key_not_allowed",
+                )
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)
@@ -185,9 +248,15 @@ class MacAutomation:
             self._check_cancelled(cancel_event)
             self._ensure_injection()
             if not text or len(text) > 2000:
-                raise AutomationError("Text must contain 1 to 2000 characters")
+                raise AutomationError(
+                    "Text must contain 1 to 2000 characters",
+                    category="text_invalid",
+                )
             if "\0" in text:
-                raise AutomationError("Text must not contain NUL")
+                raise AutomationError(
+                    "Text must not contain NUL",
+                    category="text_nul",
+                )
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)
@@ -203,7 +272,10 @@ class MacAutomation:
             self._sleep(self.config.voice.voice_delay_ms / 1000)
             self._check_cancelled(cancel_event)
             if self.config.voice.hotkey.upper() != "FN_FN":
-                raise AutomationError("V1.0 voice hotkey currently supports FN_FN")
+                raise AutomationError(
+                    "V1.0 voice hotkey currently supports FN_FN",
+                    category="voice_hotkey_unsupported",
+                )
             statement = (
                 'tell application "System Events" to key code 63\n'
                 "delay 0.12\n"

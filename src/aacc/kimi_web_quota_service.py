@@ -13,8 +13,8 @@ from PySide6.QtWidgets import QWidget
 from aacc.i18n import ZH_CN, LanguageManager
 from aacc.kimi_quota import KimiQuota
 from aacc.kimi_web_error import (
-    KimiWebErrorCategory,
-    normalize_kimi_web_error_category,
+    KimiCodeQuotaErrorCategory,
+    normalize_kimi_web_quota_error_category,
 )
 from aacc.kimi_web_quota import parse_membership_quota
 from aacc.kimi_web_session import KimiWebSession
@@ -41,7 +41,8 @@ class _WebSessionLike(Protocol):
 class KimiWebQuotaService(QObject):
     quota_updated = Signal(object)
     login_state_changed = Signal(bool)
-    error_occurred = Signal(str)
+    web_error_occurred = Signal(str)
+    code_error_occurred = Signal(str)
 
     def __init__(
         self,
@@ -85,7 +86,7 @@ class KimiWebQuotaService(QObject):
             try:
                 self._fallback_refresh()
             except Exception:  # noqa: BLE001 - one failed source must not skip the other
-                self._on_error(KimiWebErrorCategory.CODE_FALLBACK_REFRESH_FAILED)
+                self.code_error_occurred.emit(KimiCodeQuotaErrorCategory.REFRESH_FAILED.value)
         self._ensure_session().refresh()
 
     def set_fallback_refresh(self, callback: Callable[[], None]) -> None:
@@ -108,9 +109,9 @@ class KimiWebQuotaService(QObject):
         self.last_quota = quota
         self.quota_updated.emit(quota)
 
-    def _on_error(self, category: object) -> None:
-        normalized = normalize_kimi_web_error_category(category)
-        self.error_occurred.emit(normalized.value)
+    def _on_web_error(self, category: object) -> None:
+        normalized = normalize_kimi_web_quota_error_category(category)
+        self.web_error_occurred.emit(normalized.value)
 
     def _on_login_state_changed(self, authorized: bool) -> None:
         if not authorized:
@@ -130,4 +131,4 @@ class KimiWebQuotaService(QObject):
     def _connect_session(self, session: _WebSessionLike) -> None:
         session.login_state_changed.connect(self._on_login_state_changed)
         session.quota_received.connect(self._on_quota_received)
-        session.error_occurred.connect(self._on_error)
+        session.error_occurred.connect(self._on_web_error)
