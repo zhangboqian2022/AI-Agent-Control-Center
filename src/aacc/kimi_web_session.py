@@ -310,6 +310,8 @@ class KimiWebSession(QObject):
         if self._closed or generation != self._logout_cleanup_generation:
             return
         self._cancel_logout_cleanup()
+        if not self._login_dialog_open:
+            self._background_navigation_pending = False
 
     def _cancel_logout_cleanup(self) -> None:
         self._logout_after_load = False

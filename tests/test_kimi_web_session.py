@@ -1034,6 +1034,28 @@ def test_stale_login_startup_timeout_cannot_affect_a_reopened_attempt(
     assert errors == []
 
 
+def test_logout_navigation_completion_ignores_late_loading_events(
+    qapp, monkeypatch, tmp_path
+):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    _install_login_dialog_fakes(monkeypatch)
+    errors = []
+    session.error_occurred.connect(errors.append)
+    session.view._url = QUrl("https://example.invalid/")
+
+    session.logout()
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+
+    assert session._logout_cleanup_generation is None
+    assert session._background_navigation_pending is False
+
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
+
+    assert errors == []
+
+
 def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(
     qapp, monkeypatch, tmp_path
 ):
