@@ -491,6 +491,60 @@ def test_windows_shutdown_control_command_requires_exact_arguments(
         app_module.main()
 
 
+def test_windows_edge_cdp_smoke_runs_before_paths_or_guard(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    calls: list[tuple[Path, Path]] = []
+    result_path = tmp_path / "result.txt"
+    local_app_data = tmp_path / "LocalAppData"
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.sys,
+        "argv",
+        ["AACC.exe", "--smoke-edge-cdp"],
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))  # type: ignore[attr-defined]
+    monkeypatch.setenv("AACC_EDGE_CDP_SMOKE_RESULT_PATH", str(result_path))  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "run_edge_cdp_smoke",
+        lambda data_dir, result: calls.append((data_dir, result)) or 7,
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "resolve_database_path",
+        lambda: (_ for _ in ()).throw(AssertionError("paths must not resolve")),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "InstanceGuard",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("guard must not start")),
+    )
+
+    assert app_module.main() == 7
+    assert calls == [(local_app_data, result_path)]
+
+
+def test_windows_edge_cdp_smoke_requires_exact_arguments(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.sys,
+        "argv",
+        ["AACC.exe", "--smoke-edge-cdp", "extra"],
+    )
+    monkeypatch.setenv("AACC_CONFIG_PATH", str(tmp_path / "config.yaml"))  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "InstanceGuard",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("normal startup reached")),
+    )
+
+    with pytest.raises(RuntimeError, match="normal startup reached"):
+        app_module.main()
+
+
 def test_removed_windows_native_webview_smoke_flag_reaches_normal_startup(
     tmp_path: Path,
     monkeypatch: object,

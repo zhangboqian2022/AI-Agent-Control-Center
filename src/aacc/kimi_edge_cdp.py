@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -18,6 +20,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
+import psutil
 
 from aacc.file_security import protect_directory
 from aacc.kimi_membership_query import membership_fetch_expression
@@ -76,6 +79,8 @@ class _WebSocketLike(Protocol):
 
 
 class _ProcessLike(Protocol):
+    pid: int
+
     def poll(self) -> int | None: ...
 
     def wait(self, timeout: float | None = None) -> int: ...
@@ -102,12 +107,12 @@ def validate_owned_profile(profile: Path, local_app_data: Path) -> None:
 
     expected = edge_profile_path(local_app_data)
     if profile != expected or _is_reparse_point(profile):
-        raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
+        raise EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE)
     aacc_root = expected.parent
     if _is_reparse_point(aacc_root) or _is_reparse_point(local_app_data):
-        raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
+        raise EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE)
     if profile.exists() and not profile.is_dir():
-        raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
+        raise EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE)
 
 
 def clear_owned_profile(profile: Path, local_app_data: Path) -> None:
@@ -156,11 +161,11 @@ def find_edge_executable(
             candidates.append(Path(root) / _EDGE_RELATIVE_PATH)
 
     for candidate in candidates:
-        if (
-            candidate.name.casefold() == "msedge.exe"
-            and candidate.is_file()
-            and not _is_reparse_point(candidate)
-        ):
+        if candidate.name.casefold() != "msedge.exe" or not candidate.is_file():
+            continue
+        if _is_reparse_point(candidate):
+            raise EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE)
+        if candidate.is_file():
             return candidate
     raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
 
@@ -251,7 +256,54 @@ def parse_quota_payload(payload: object) -> EdgeQuotaResult:
         raise EdgeUnauthorizedError
     if kind != "quota" or "stats" not in payload or "subscription" not in payload:
         raise EdgeSessionError(KimiWebErrorCategory.REFRESH_FAILED)
-    return EdgeQuotaResult(payload["stats"], payload["subscription"])
+    stats = payload["stats"]
+    subscription = payload["subscription"]
+    if not isinstance(stats, dict) or not isinstance(subscription, dict):
+        raise EdgeSessionError(KimiWebErrorCategory.REFRESH_FAILED)
+    allowed_stats = {"subscriptionBalance", "ratelimitCode5h", "ratelimitCode7d"}
+    if not set(stats).issubset(allowed_stats) or not set(subscription).issubset(
+        {"membershipLevel"}
+    ):
+        raise EdgeSessionError(KimiWebErrorCategory.REFRESH_FAILED)
+
+    safe_stats: dict[str, object] = {}
+    for key, value in stats.items():
+        safe_stats[key] = _validate_safe_window(value)
+    level = subscription.get("membershipLevel")
+    if level is not None and (not isinstance(level, str) or not level or len(level) > 64):
+        raise EdgeSessionError(KimiWebErrorCategory.REFRESH_FAILED)
+    safe_subscription = {"membershipLevel": level} if level is not None else {}
+    return EdgeQuotaResult(safe_stats, safe_subscription)
+
+
+def _validate_safe_window(value: object) -> object:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not set(value).issubset({"percentage", "resetTime"}):
+        raise EdgeSessionError(KimiWebErrorCategory.REFRESH_FAILED)
+    percentage = value.get("percentage")
+    if percentage is not None and (
+        isinstance(percentage, bool)
+        or not isinstance(percentage, (int, float))
+        or not math.isfinite(float(percentage))
+        or not 0 <= float(percentage) <= 100
+    ):
+        raise EdgeSessionError(KimiWebErrorCategory.REFRESH_FAILED)
+    reset = value.get("resetTime")
+    reset_is_number = (
+        not isinstance(reset, bool)
+        and isinstance(reset, (int, float))
+        and math.isfinite(float(reset))
+        and float(reset) >= 0
+    )
+    reset_is_timestamp = (
+        isinstance(reset, str)
+        and len(reset) <= 40
+        and re.fullmatch(r"\d{4}-\d{2}-\d{2}T[0-9:.+\-Z]+", reset) is not None
+    )
+    if reset is not None and not reset_is_number and not reset_is_timestamp:
+        raise EdgeSessionError(KimiWebErrorCategory.REFRESH_FAILED)
+    return {"percentage": percentage, "resetTime": reset}
 
 
 class CdpConnection:
@@ -343,6 +395,23 @@ def _open_socket(url: str) -> _WebSocketLike:
     )
 
 
+def _terminate_process_tree(process: _ProcessLike) -> None:
+    """Terminate only descendants of the Edge process AACC started."""
+
+    descendants: list[psutil.Process] = []
+    with suppress(psutil.Error):
+        descendants = psutil.Process(process.pid).children(recursive=True)
+    for child in reversed(descendants):
+        with suppress(psutil.Error):
+            child.terminate()
+    with suppress(Exception):
+        process.terminate()
+    _gone, alive = psutil.wait_procs(descendants, timeout=2.0)
+    for child in alive:
+        with suppress(psutil.Error):
+            child.kill()
+
+
 class ManagedEdgeOperation:
     """Run one visible login or headless quota refresh against the owned profile."""
 
@@ -355,6 +424,8 @@ class ManagedEdgeOperation:
         process_factory: Callable[[list[str]], _ProcessLike] = _start_process,
         target_loader: Callable[[str], object] = _load_targets,
         socket_factory: Callable[[str], _WebSocketLike] = _open_socket,
+        process_tree_terminator: Callable[[_ProcessLike], None] = _terminate_process_tree,
+        expression_factory: Callable[[], str] = membership_fetch_expression,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -365,6 +436,8 @@ class ManagedEdgeOperation:
         self._process_factory = process_factory
         self._target_loader = target_loader
         self._socket_factory = socket_factory
+        self._process_tree_terminator = process_tree_terminator
+        self._expression_factory = expression_factory
         self._sleep = sleep
         self._monotonic = monotonic
 
@@ -378,7 +451,7 @@ class ManagedEdgeOperation:
         except EdgeSessionError:
             raise
         except Exception as error:
-            raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED) from error
+            raise EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE) from error
         self._remove_stale_active_port()
         executable = self.executable or find_edge_executable()
         spec = build_edge_launch(executable, self.profile, visible=visible)
@@ -394,6 +467,7 @@ class ManagedEdgeOperation:
             port = urlparse(endpoint.http_origin).port
             if port is None:
                 raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
+            startup_deadline = self._monotonic() + EDGE_STARTUP_TIMEOUT_SECONDS
             login_deadline = self._monotonic() + EDGE_LOGIN_TIMEOUT_SECONDS
             while True:
                 if cancel.is_set():
@@ -401,11 +475,17 @@ class ManagedEdgeOperation:
                 if process.poll() is not None:
                     raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
                 try:
-                    targets = self._target_loader(endpoint.http_origin)
-                    page_url = select_kimi_target(targets, expected_port=port)
-                    page = CdpConnection(self._socket_factory(page_url))
                     try:
-                        payload = page.evaluate(membership_fetch_expression())
+                        targets = self._target_loader(endpoint.http_origin)
+                    except Exception as error:
+                        raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED) from error
+                    page_url = select_kimi_target(targets, expected_port=port)
+                    try:
+                        page = CdpConnection(self._socket_factory(page_url))
+                    except Exception as error:
+                        raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED) from error
+                    try:
+                        payload = page.evaluate(self._expression_factory())
                     finally:
                         page.close()
                     return parse_quota_payload(payload)
@@ -417,8 +497,15 @@ class ManagedEdgeOperation:
                     self._sleep(2.0)
                 except EdgeCancelledError:
                     raise
-                except EdgeSessionError:
-                    if not visible or self._monotonic() >= login_deadline:
+                except EdgeSessionError as error:
+                    now = self._monotonic()
+                    if (
+                        error.category is KimiWebErrorCategory.LOAD_FAILED
+                        and now < startup_deadline
+                    ):
+                        self._sleep(0.1)
+                        continue
+                    if not visible or now >= login_deadline:
                         raise
                     self._sleep(1.0)
         finally:
@@ -456,14 +543,12 @@ class ManagedEdgeOperation:
         except OSError as error:
             raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED) from error
 
-    @staticmethod
-    def _shutdown_process(process: _ProcessLike) -> None:
+    def _shutdown_process(self, process: _ProcessLike) -> None:
         try:
             process.wait(timeout=EDGE_SHUTDOWN_TIMEOUT_SECONDS)
             return
         except Exception:
             pass
-        with suppress(Exception):
-            process.terminate()
+        self._process_tree_terminator(process)
         with suppress(Exception):
             process.wait(timeout=EDGE_SHUTDOWN_TIMEOUT_SECONDS)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -26,6 +27,7 @@ class FakeSocket:
 
 class FakeProcess:
     def __init__(self) -> None:
+        self.pid = 123
         self.return_code: int | None = None
         self.terminated = False
 
@@ -40,6 +42,12 @@ class FakeProcess:
     def terminate(self) -> None:
         self.terminated = True
         self.return_code = 1
+
+
+class StubbornProcess(FakeProcess):
+    def wait(self, timeout: float | None = None) -> int:
+        del timeout
+        raise TimeoutError
 
 
 def test_edge_profile_is_isolated_under_local_app_data(tmp_path: Path) -> None:
@@ -77,7 +85,7 @@ def test_edge_discovery_rejects_reparse_point(tmp_path: Path, monkeypatch) -> No
             registry_reader=lambda _key, _name: None,
         )
 
-    assert raised.value.category is KimiWebErrorCategory.LOAD_FAILED
+    assert raised.value.category is KimiWebErrorCategory.PROFILE_UNSAFE
     assert str(edge) not in str(raised.value)
 
 
@@ -91,7 +99,7 @@ def test_profile_validation_rejects_reparse_point(tmp_path: Path, monkeypatch) -
     with pytest.raises(edge_cdp.EdgeSessionError) as raised:
         edge_cdp.validate_owned_profile(profile, tmp_path)
 
-    assert raised.value.category is KimiWebErrorCategory.LOAD_FAILED
+    assert raised.value.category is KimiWebErrorCategory.PROFILE_UNSAFE
 
 
 def test_background_launch_uses_random_loopback_cdp_and_dedicated_profile(
@@ -231,12 +239,28 @@ def test_select_kimi_target_rejects_nonlocal_endpoint(websocket_url: str) -> Non
 def test_parse_quota_payload_returns_only_two_membership_documents() -> None:
     from aacc.kimi_edge_cdp import EdgeQuotaResult, parse_quota_payload
 
-    stats = {"ratelimitCode5h": 0.2}
-    subscription = {"plan": "max"}
+    stats = {"ratelimitCode5h": {"percentage": 20, "resetTime": "2026-07-29T10:00:00Z"}}
+    subscription = {"membershipLevel": "MAX"}
 
     assert parse_quota_payload(
         {"kind": "quota", "stats": stats, "subscription": subscription}
     ) == EdgeQuotaResult(stats, subscription)
+
+
+def test_parse_quota_payload_rejects_unrelated_membership_fields() -> None:
+    from aacc.kimi_edge_cdp import EdgeSessionError, parse_quota_payload
+
+    with pytest.raises(EdgeSessionError):
+        parse_quota_payload(
+            {
+                "kind": "quota",
+                "stats": {
+                    "ratelimitCode5h": {"percentage": 20},
+                    "accountId": "must-not-cross",
+                },
+                "subscription": {"membershipLevel": "MAX"},
+            }
+        )
 
 
 def test_parse_unauthorized_payload_uses_internal_exception() -> None:
@@ -257,7 +281,9 @@ def test_managed_edge_operation_returns_quota_and_closes_browser(tmp_path: Path)
         [
             (
                 '{"id":1,"result":{"result":{"type":"object","value":'
-                '{"kind":"quota","stats":{"five":5},"subscription":{"month":30}}}}}'
+                '{"kind":"quota","stats":{"ratelimitCode5h":'
+                '{"percentage":5,"resetTime":null}},'
+                '"subscription":{"membershipLevel":"MAX"}}}}}'
             )
         ]
     )
@@ -296,12 +322,60 @@ def test_managed_edge_operation_returns_quota_and_closes_browser(tmp_path: Path)
 
     result = operation.run(visible=False, cancel=Event())
 
-    assert result.stats == {"five": 5}
-    assert result.subscription == {"month": 30}
+    assert result.stats == {"ratelimitCode5h": {"percentage": 5, "resetTime": None}}
+    assert result.subscription == {"membershipLevel": "MAX"}
     assert launched[0][0] == str(edge)
     assert "--headless=new" in launched[0]
     assert browser_socket.sent
     assert '"method":"Browser.close"' in browser_socket.sent[0]
+
+
+def test_managed_edge_operation_uses_injected_smoke_expression(tmp_path: Path) -> None:
+    from aacc.kimi_edge_cdp import ManagedEdgeOperation
+
+    edge = tmp_path / "msedge.exe"
+    edge.write_bytes(b"MZ")
+    process = FakeProcess()
+    page_socket = FakeSocket(
+        [('{"id":1,"result":{"result":{"value":{"kind":"quota","stats":{},"subscription":{}}}}}')]
+    )
+    browser_socket = FakeSocket(['{"id":1,"result":{}}'])
+
+    def protect(profile: Path) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+
+    def start(_command: list[str]) -> FakeProcess:
+        profile = tmp_path / "AACC" / "kimi-edge-profile"
+        (profile / "DevToolsActivePort").write_text(
+            "43127\n/devtools/browser/browser-id\n",
+            encoding="ascii",
+        )
+        return process
+
+    operation = ManagedEdgeOperation(
+        local_app_data=tmp_path,
+        executable=edge,
+        protector=protect,
+        process_factory=start,
+        target_loader=lambda _origin: [
+            {
+                "type": "page",
+                "url": "https://www.kimi.com/membership/subscription",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:43127/devtools/page/page-id",
+            }
+        ],
+        socket_factory=lambda url: browser_socket if "/browser/" in url else page_socket,
+        expression_factory=lambda: "Promise.resolve({kind:'quota'})",
+        sleep=lambda _seconds: None,
+    )
+
+    result = operation.run(visible=False, cancel=Event())
+
+    assert result.stats == {}
+    assert page_socket.sent
+    assert json.loads(page_socket.sent[0])["params"]["expression"] == (
+        "Promise.resolve({kind:'quota'})"
+    )
 
 
 def test_managed_edge_operation_honors_cancellation_before_launch(tmp_path: Path) -> None:
@@ -316,6 +390,113 @@ def test_managed_edge_operation_honors_cancellation_before_launch(tmp_path: Path
 
     with pytest.raises(EdgeCancelledError):
         operation.run(visible=True, cancel=cancelled)
+
+
+def test_managed_edge_retries_target_endpoint_during_browser_startup(tmp_path: Path) -> None:
+    from aacc.kimi_edge_cdp import ManagedEdgeOperation
+
+    edge = tmp_path / "msedge.exe"
+    edge.write_bytes(b"MZ")
+    process = FakeProcess()
+    page_socket = FakeSocket(
+        [
+            (
+                '{"id":1,"result":{"result":{"type":"object","value":'
+                '{"kind":"quota","stats":{},"subscription":{}}}}}'
+            )
+        ]
+    )
+    browser_socket = FakeSocket(['{"id":1,"result":{}}'])
+    target_attempts = 0
+
+    def protect(profile: Path) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+
+    def start(_command: list[str]) -> FakeProcess:
+        profile = tmp_path / "AACC" / "kimi-edge-profile"
+        (profile / "DevToolsActivePort").write_text(
+            "43127\n/devtools/browser/browser-id\n",
+            encoding="ascii",
+        )
+        return process
+
+    def load_targets(_origin: str) -> object:
+        nonlocal target_attempts
+        target_attempts += 1
+        if target_attempts == 1:
+            raise OSError("endpoint not ready")
+        return [
+            {
+                "type": "page",
+                "url": "https://www.kimi.com/membership/subscription",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:43127/devtools/page/page-id",
+            }
+        ]
+
+    operation = ManagedEdgeOperation(
+        local_app_data=tmp_path,
+        executable=edge,
+        protector=protect,
+        process_factory=start,
+        target_loader=load_targets,
+        socket_factory=lambda url: browser_socket if "/browser/" in url else page_socket,
+        sleep=lambda _seconds: None,
+    )
+
+    operation.run(visible=False, cancel=Event())
+
+    assert target_attempts == 2
+
+
+def test_managed_edge_terminates_owned_tree_when_browser_close_does_not_exit(
+    tmp_path: Path,
+) -> None:
+    from aacc.kimi_edge_cdp import ManagedEdgeOperation
+
+    edge = tmp_path / "msedge.exe"
+    edge.write_bytes(b"MZ")
+    process = StubbornProcess()
+    terminated: list[int] = []
+    page_socket = FakeSocket(
+        [
+            (
+                '{"id":1,"result":{"result":{"type":"object","value":'
+                '{"kind":"quota","stats":{},"subscription":{}}}}}'
+            )
+        ]
+    )
+    browser_socket = FakeSocket(['{"id":1,"result":{}}'])
+
+    def protect(profile: Path) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+
+    def start(_command: list[str]) -> StubbornProcess:
+        profile = tmp_path / "AACC" / "kimi-edge-profile"
+        (profile / "DevToolsActivePort").write_text(
+            "43127\n/devtools/browser/browser-id\n",
+            encoding="ascii",
+        )
+        return process
+
+    operation = ManagedEdgeOperation(
+        local_app_data=tmp_path,
+        executable=edge,
+        protector=protect,
+        process_factory=start,
+        target_loader=lambda _origin: [
+            {
+                "type": "page",
+                "url": "https://www.kimi.com/membership/subscription",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:43127/devtools/page/page-id",
+            }
+        ],
+        socket_factory=lambda url: browser_socket if "/browser/" in url else page_socket,
+        process_tree_terminator=lambda owned: terminated.append(owned.pid),
+    )
+
+    operation.run(visible=False, cancel=Event())
+
+    assert terminated == [123]
 
 
 def test_clear_owned_profile_removes_only_exact_aacc_profile(tmp_path: Path) -> None:

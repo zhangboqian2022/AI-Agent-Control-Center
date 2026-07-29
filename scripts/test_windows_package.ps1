@@ -700,6 +700,35 @@ function Assert-ProductProcessBaseline {
     Assert-True ($ActualText -ceq $ExpectedText) "product process baseline changed"
 }
 
+function Get-ManagedEdgeProcessBaseline {
+    param([Parameter(Mandatory = $true)][string]$ProfilePath)
+    $Needle = "--user-data-dir=$ProfilePath"
+    $Identities = @()
+    foreach ($Record in @(Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'")) {
+        if (
+            -not [string]::IsNullOrWhiteSpace([string]$Record.CommandLine) -and
+            ([string]$Record.CommandLine).IndexOf(
+                $Needle,
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -ge 0
+        ) {
+            try { $Identities += Get-ProcessIdentity -Id ([int]$Record.ProcessId) } catch {}
+        }
+    }
+    return @($Identities | Sort-Object Id, CreationTimeUtc)
+}
+
+function Assert-ManagedEdgeProcessBaseline {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()]$Expected
+    )
+    $Actual = @(Get-ManagedEdgeProcessBaseline -ProfilePath $ProfilePath)
+    $ExpectedText = ConvertTo-Json -InputObject @($Expected) -Compress
+    $ActualText = ConvertTo-Json -InputObject @($Actual) -Compress
+    Assert-True ($ActualText -ceq $ExpectedText) "managed Edge process baseline changed"
+}
+
 function Wait-ProcessDeadline {
     param(
         [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
@@ -1457,6 +1486,43 @@ function Invoke-InstalledLaunch {
         -MarkerPath $MarkerPath -Category "installed AACC"
 }
 
+function Invoke-InstalledEdgeCdpSmoke {
+    $EdgeLocalAppData = Join-Path $SmokeRoot "installed\edge-cdp-local-app-data"
+    $EdgeProfile = Join-Path $EdgeLocalAppData "AACC\kimi-edge-profile"
+    $ResultPath = Join-Path $SmokeRoot "installed\edge-cdp-result.txt"
+    [System.IO.Directory]::CreateDirectory($EdgeLocalAppData) | Out-Null
+    $Baseline = @(Get-ManagedEdgeProcessBaseline -ProfilePath $EdgeProfile)
+    $SavedLocalAppData = $env:LOCALAPPDATA
+    try {
+        $env:LOCALAPPDATA = $EdgeLocalAppData
+        $env:AACC_EDGE_CDP_SMOKE_RESULT_PATH = $ResultPath
+        $ExitCode = Invoke-ExternalDeadline -FilePath $InstalledAacc `
+            -Arguments @("--smoke-edge-cdp") -TimeoutSeconds 60 `
+            -Category "installed Edge CDP smoke"
+        Assert-True ($ExitCode -eq 0) "installed Edge CDP smoke failed"
+        Assert-True (Test-Path -LiteralPath $ResultPath -PathType Leaf) `
+            "installed Edge CDP smoke result is missing"
+        $Result = [System.IO.File]::ReadAllText($ResultPath)
+        Assert-True (
+            $Result -ceq "AACC_EDGE_CDP_SMOKE category=success`n"
+        ) "installed Edge CDP smoke result is malformed"
+        Assert-True (Test-Path -LiteralPath $EdgeProfile -PathType Container) `
+            "managed Edge profile is missing"
+        Assert-ExactAcl -Path $EdgeProfile -Directory $true `
+            -EvidenceCategory "installed" -EvidenceName "kimi-edge-profile"
+        Assert-ManagedEdgeProcessBaseline -ProfilePath $EdgeProfile -Expected $Baseline
+    }
+    finally {
+        Remove-Item Env:AACC_EDGE_CDP_SMOKE_RESULT_PATH -ErrorAction SilentlyContinue
+        if ([string]::IsNullOrEmpty($SavedLocalAppData)) {
+            Remove-Item Env:LOCALAPPDATA -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:LOCALAPPDATA = $SavedLocalAppData
+        }
+    }
+}
+
 function Test-InstalledControlRefusal {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("setup", "uninstall")][string]$Action,
@@ -1850,6 +1916,7 @@ foreach ($ProgramFilesRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
     }
 }
 
+Invoke-InstalledEdgeCdpSmoke
 $Installed = Invoke-InstalledLaunch -Category "installed"
 Write-CredentialsFixture -ConfigDirectory $AppDataRoot
 foreach ($Leaf in @("aacc.db-wal", "aacc.db-shm", "kimi-credentials.json")) {

@@ -353,6 +353,22 @@ def test_windows_2025_ci_runs_installed_product_without_native_webview_smoke() -
     assert "AACC_WEBVIEW_SMOKE_RESULT_PATH" not in package_smoke
 
 
+def test_windows_installed_product_smoke_exercises_managed_edge_cdp_path() -> None:
+    script = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
+    fresh_install = script.index('Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"')
+    edge_smoke = script.rindex("Invoke-InstalledEdgeCdpSmoke")
+    installed_launch = script.index('$Installed = Invoke-InstalledLaunch -Category "installed"')
+
+    assert fresh_install < edge_smoke < installed_launch
+    assert "AACC_EDGE_CDP_SMOKE_RESULT_PATH" in script
+    assert "AACC_EDGE_CDP_SMOKE category=success" in script
+    assert '"AACC\\kimi-edge-profile"' in script
+    assert "Assert-ExactAcl -Path $EdgeProfile -Directory $true" in script
+    assert '-EvidenceCategory "installed" -EvidenceName "kimi-edge-profile"' in script
+    assert "Assert-ProductProcessBaseline" in script
+    assert "Assert-ManagedEdgeProcessBaseline" in script
+
+
 def test_windows_edge_docs_explain_persistent_isolated_login() -> None:
     def normalized(name: str) -> str:
         return " ".join((ROOT / name).read_text(encoding="utf-8").split())
@@ -434,6 +450,10 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
         "aacc.automation_windows",
         "aacc.hotkeys_windows",
         "aacc.windows_broker",
+        "aacc.kimi_edge_cdp",
+        "aacc.kimi_edge_session",
+        "aacc.kimi_membership_query",
+        "websocket",
     ):
         assert module in workflow
     assert (
