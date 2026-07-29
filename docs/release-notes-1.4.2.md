@@ -86,8 +86,8 @@
 
 ### 自动化证据边界
 
-候选应用提交 `e0d9450` 的
-[GitHub Actions 运行 30432641773](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30432641773)
+候选应用提交 `5f7966b` 的
+[GitHub Actions 运行 30436090922](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30436090922)
 已在托管的 Windows Server 2022 与 Windows Server 2025 环境通过：原生
 broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、重装、写入前
 锁定目标拒绝、卸载、ACL 与进程清理产品冒烟；安装后的 `AACC.exe` 还实际
@@ -95,7 +95,7 @@ broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、
 profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格内容校验与
 资产上传，以及 macOS 质量作业、Windows 双版本完整测试、ruff、格式、mypy 和
 依赖审计也在同一次运行中通过。候选 Setup SHA-256 为
-`1e71dd24c7e6b5f8f8b152db4dc677b2260208d484969e478313c10ad2122228`。
+`139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`。
 这些仍只是托管服务器自动证据。
 
 即使上述托管工作流全部通过，它也不能证明消费级 Windows 10 或 Windows 11、
@@ -206,8 +206,8 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
 
 ### Automated evidence boundary
 
-Candidate application commit `e0d9450` passed
-[GitHub Actions run 30432641773](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30432641773)
+Candidate application commit `5f7966b` passed
+[GitHub Actions run 30436090922](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30436090922)
 on hosted Windows Server 2022 and Windows Server 2025: native broker,
 PyInstaller onedir, and Setup builds; frozen first launch; installation;
 reinstall; pre-mutation locked-target refusal; uninstall; ACL and process
@@ -218,7 +218,7 @@ processes. Strict Setup, SHA-256, portable ZIP content verification and
 artifact upload, plus the macOS quality job, both complete Windows test legs,
 Ruff, formatting, mypy, and dependency audit passed in the same run. The
 candidate Setup SHA-256 is
-`1e71dd24c7e6b5f8f8b152db4dc677b2260208d484969e478313c10ad2122228`.
+`139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`.
 This remains hosted-server automated evidence only.
 
 Hosted Windows Server evidence is not the real Windows 10/11 consumer test. It
