@@ -422,6 +422,15 @@ def test_windows_2025_ci_contractually_runs_native_webview_from_installed_produc
     assert "native-webview-result.txt" in native_smoke_section
     assert "$env:LOCALAPPDATA = $NativeWebViewLocalAppData" in native_smoke_section
     assert "AACC\\kimi-web-session" in native_smoke_section
+    assert (
+        "Assert-ExactAcl -Path $NativeWebViewUserDataPath -Directory $true `\n"
+        '        -EvidenceCategory "installed native WebView user data" `\n'
+        '        -EvidenceName "kimi-web-session"'
+    ) in native_smoke_section
+    assert "Get-ChildItem -LiteralPath $NativeWebViewUserDataPath" in native_smoke_section
+    assert "$NativeWebViewArtifacts.Count -gt 0" in native_smoke_section
+    assert '[string]::Concat($InstalledAacc, ".WebView2")' in native_smoke_section
+    assert "-not (Test-Path -LiteralPath $DefaultWebViewUserDataPath)" in native_smoke_section
     assert "category=outer-harness-failure" in native_smoke_section
     assert "category=success" in native_smoke_section
 
