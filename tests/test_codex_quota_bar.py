@@ -128,6 +128,22 @@ def test_codex_bar_error_preserves_last_value_and_marks_stale(qapp):
     assert "read failed" in bar.toolTip()
 
 
+def test_codex_unknown_refresh_preserves_last_value_and_marks_stale(qapp):
+    bar = CodexQuotaBar(LanguageManager(ZH_CN))
+    bar.show_quota(snapshot(27))
+    unknown = CodexQuotaSnapshot(
+        weekly=None,
+        observed_at=None,
+        status=CodexQuotaStatus.UNKNOWN,
+    )
+
+    bar.show_quota(unknown)
+
+    assert "数据过期" in bar.summary_label.text()
+    assert bar.percent_labels() == ["27%"]
+    assert "27%" in bar.toolTip()
+
+
 def test_codex_bar_click_emits_refresh(qapp):
     bar = CodexQuotaBar(LanguageManager(ZH_CN))
     clicks: list[bool] = []

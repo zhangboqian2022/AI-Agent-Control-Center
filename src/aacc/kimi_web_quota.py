@@ -193,11 +193,16 @@ def merge_kimi_quota(
     """Prefer coherent web data and use Kimi Code only for its two windows."""
 
     reference_time = now or datetime.now(UTC)
+    code_is_current = False
     code_is_fresh = False
     if code is not None and code.fetched_at is not None:
         age_seconds = (reference_time - code.fetched_at).total_seconds()
+        code_is_current = age_seconds >= 0
         code_is_fresh = 0 <= age_seconds <= fallback_max_age_seconds
-    fallback = code if code_is_fresh else None
+    # A temporary background refresh failure must not turn a previously known
+    # 0% (or any other valid value) into "--". Keep verifiable last-known
+    # values and label the merged snapshot stale until a poll succeeds.
+    fallback = code if code_is_current else None
     five_hour = (
         web.five_hour
         if web and web.five_hour is not None
@@ -208,7 +213,25 @@ def merge_kimi_quota(
     )
     monthly = web.monthly if web else None
     known = sum(item is not None for item in (five_hour, weekly, monthly))
-    status = QuotaStatus.OK if known == 3 else QuotaStatus.PARTIAL if known else QuotaStatus.UNKNOWN
+    stale_fallback_used = (
+        not code_is_fresh
+        and fallback is not None
+        and (
+            (web is None or web.five_hour is None)
+            and fallback.five_hour is not None
+            or (web is None or web.weekly is None)
+            and fallback.weekly is not None
+        )
+    )
+    status = (
+        QuotaStatus.STALE
+        if known and stale_fallback_used
+        else QuotaStatus.OK
+        if known == 3
+        else QuotaStatus.PARTIAL
+        if known
+        else QuotaStatus.UNKNOWN
+    )
     fetched_candidates = [
         item.fetched_at
         for item in (web, fallback)

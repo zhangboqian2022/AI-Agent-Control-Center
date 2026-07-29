@@ -451,6 +451,12 @@ class QuotaBar(QFrame):
                 if self.language_manager.language == ZH_CN
                 else "Kimi quota\nPartial quota data"
             )
+        elif quota.status is QuotaStatus.STALE:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('quota.kimi')}\n"
+                f"{self.language_manager.text('quota.stale')}"
+            )
         else:
             self.dot.setStyleSheet("color: #98c379;")
             self.summary_label.setText(self.language_manager.text("quota.kimi"))
@@ -647,14 +653,19 @@ class CodexQuotaBar(QFrame):
         )
 
     def show_quota(self, quota: CodexQuotaSnapshot) -> None:
-        self._last_codex_quota = quota
-        self._last_error = ""
         if quota.status is CodexQuotaStatus.UNKNOWN or quota.weekly is None:
+            if self._has_known_quota:
+                self.show_error("live quota source temporarily unavailable")
+                return
+            self._last_codex_quota = quota
+            self._last_error = ""
             self._display_state = "unknown"
             self._has_known_quota = False
             self._last_quota_tooltip = ""
             self._render_unknown()
             return
+        self._last_codex_quota = quota
+        self._last_error = ""
         self._display_state = "quota"
         self._render_quota(quota)
 
@@ -1732,7 +1743,7 @@ class MainWindow(QWidget):
         # app but does not unhide a hidden panel; restore it like other Mac
         # apps do.
         app = QGuiApplication.instance()
-        if isinstance(app, QGuiApplication):
+        if sys.platform == "darwin" and isinstance(app, QGuiApplication):
             app.applicationStateChanged.connect(self.handle_app_state_change)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
@@ -2136,7 +2147,7 @@ class MainWindow(QWidget):
         if self.quota_bar is None:
             return
         fallback = merge_kimi_quota(None, self._latest_kimi_code_quota)
-        if fallback.status is QuotaStatus.UNKNOWN:
+        if fallback.status in (QuotaStatus.UNKNOWN, QuotaStatus.STALE):
             self.quota_bar.show_unauthorized()
             return
         self.quota_bar.show_quota(fallback)
@@ -2727,6 +2738,8 @@ class MainWindow(QWidget):
             self.activateWindow()
 
     def handle_app_state_change(self, state: Qt.ApplicationState) -> None:
+        if sys.platform != "darwin":
+            return
         if state is Qt.ApplicationState.ApplicationActive and not self.isVisible():
             self.toggle_visible()
 

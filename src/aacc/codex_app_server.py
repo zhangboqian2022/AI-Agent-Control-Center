@@ -49,13 +49,56 @@ def _is_regular_file(path: Path) -> bool:
     return path.is_file()
 
 
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_trusted_windows_desktop_codex(
+    executable: Path,
+    environment: Mapping[str, str],
+) -> bool:
+    trusted_roots: list[Path] = []
+    local_app_data = environment.get("LOCALAPPDATA")
+    if local_app_data:
+        local_programs = Path(local_app_data) / "Programs"
+        trusted_roots.extend(
+            (
+                local_programs / "ChatGPT",
+                local_programs / "OpenAI" / "ChatGPT",
+            )
+        )
+    program_files = environment.get("PROGRAMFILES")
+    if program_files:
+        program_files_path = Path(program_files)
+        trusted_roots.extend(
+            (
+                program_files_path / "ChatGPT",
+                program_files_path / "OpenAI" / "ChatGPT",
+            )
+        )
+        windows_apps = program_files_path / "WindowsApps"
+        if _is_relative_to(executable, windows_apps):
+            relative = executable.relative_to(windows_apps)
+            if relative.parts:
+                package = relative.parts[0].casefold()
+                if package.startswith(("openai.chatgpt_", "openai.chatgpt-desktop_")):
+                    return True
+    return any(_is_relative_to(executable, root) for root in trusted_roots)
+
+
 def find_running_desktop_codex(
     *,
     process_iter: ProcessIterator = psutil.process_iter,
     is_file: IsRegularFile = _is_regular_file,
+    environ: Mapping[str, str] | None = None,
 ) -> Path | None:
     """Locate a running Codex binary only inside an OpenAI desktop install."""
 
+    environment = os.environ if environ is None else environ
     try:
         processes = process_iter(("name", "exe"))
         for process in processes:
@@ -72,11 +115,7 @@ def find_running_desktop_codex(
             executable = Path(raw_executable)
             if not executable.is_absolute() or executable.name.casefold() != "codex.exe":
                 continue
-            trusted_component = any(
-                "chatgpt" in component.casefold() or "openai" in component.casefold()
-                for component in executable.parts[:-1]
-            )
-            if trusted_component and is_file(executable):
+            if _is_trusted_windows_desktop_codex(executable, environment) and is_file(executable):
                 return executable
     except (psutil.Error, OSError):
         return None
@@ -90,7 +129,7 @@ def find_codex_executable(
     environ: Mapping[str, str] | None = None,
     which: WhichExecutable = shutil.which,
     is_file: IsRegularFile = _is_regular_file,
-    running_desktop_locator: RunningDesktopLocator = find_running_desktop_codex,
+    running_desktop_locator: RunningDesktopLocator | None = None,
 ) -> Path | None:
     """Locate a Codex executable without launching a task or a shell."""
 
@@ -144,7 +183,11 @@ def find_codex_executable(
         if is_file(candidate):
             return candidate
     if platform == "win32":
-        running = running_desktop_locator()
+        running = (
+            running_desktop_locator()
+            if running_desktop_locator is not None
+            else find_running_desktop_codex(environ=environment, is_file=is_file)
+        )
         if running is not None and is_file(running):
             return running
     return None

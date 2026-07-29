@@ -114,7 +114,8 @@ def test_find_codex_executable_checks_windows_npm_locations(tmp_path: Path) -> N
 def test_find_running_desktop_codex_accepts_trusted_chatgpt_resource(
     tmp_path: Path,
 ) -> None:
-    codex = tmp_path / "OpenAI" / "ChatGPT" / "resources" / "codex.exe"
+    local = tmp_path / "Local"
+    codex = local / "Programs" / "ChatGPT" / "resources" / "codex.exe"
     codex.parent.mkdir(parents=True)
     codex.write_bytes(b"MZ")
 
@@ -123,6 +124,7 @@ def test_find_running_desktop_codex_accepts_trusted_chatgpt_resource(
 
     result = find_running_desktop_codex(
         process_iter=lambda _attrs: [Process()],
+        environ={"LOCALAPPDATA": str(local)},
     )
 
     assert result == codex
@@ -139,6 +141,52 @@ def test_find_running_desktop_codex_rejects_untrusted_same_named_process(
         info = {"name": "codex.exe", "exe": str(codex)}
 
     assert find_running_desktop_codex(process_iter=lambda _attrs: [Process()]) is None
+
+
+def test_find_running_desktop_codex_rejects_deceptive_openai_component(
+    tmp_path: Path,
+) -> None:
+    local = tmp_path / "Local"
+    codex = tmp_path / "not-openai-malware" / "resources" / "codex.exe"
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"MZ")
+
+    class Process:
+        info = {"name": "codex.exe", "exe": str(codex)}
+
+    assert (
+        find_running_desktop_codex(
+            process_iter=lambda _attrs: [Process()],
+            environ={"LOCALAPPDATA": str(local)},
+        )
+        is None
+    )
+
+
+def test_find_running_desktop_codex_accepts_bounded_windows_store_package(
+    tmp_path: Path,
+) -> None:
+    program_files = tmp_path / "Program Files"
+    codex = (
+        program_files
+        / "WindowsApps"
+        / "OpenAI.ChatGPT-Desktop_1.2.3.0_x64__abc"
+        / "resources"
+        / "codex.exe"
+    )
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"MZ")
+
+    class Process:
+        info = {"name": "codex.exe", "exe": str(codex)}
+
+    assert (
+        find_running_desktop_codex(
+            process_iter=lambda _attrs: [Process()],
+            environ={"PROGRAMFILES": str(program_files)},
+        )
+        == codex
+    )
 
 
 def test_find_running_desktop_codex_skips_unreadable_and_invalid_processes() -> None:
