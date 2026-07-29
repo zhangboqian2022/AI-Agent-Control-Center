@@ -94,13 +94,15 @@ class KimiEdgeSession(QObject):
         self._generation = 0
         self._busy = False
         self._closed = False
+        self._cleanup_after_worker = False
         self._operation_finished.connect(self._on_operation_finished)
 
     def open_login(self, parent: QWidget | None = None) -> None:
         del parent
-        if self._closed:
+        if self._closed or self._busy:
+            if self._busy:
+                self.error_occurred.emit(KimiWebErrorCategory.REFRESH_FAILED.value)
             return
-        self._cancel_active(wait=True)
         self._start(visible=True)
 
     def refresh(self) -> None:
@@ -109,9 +111,14 @@ class KimiEdgeSession(QObject):
         self._start(visible=False)
 
     def logout(self) -> bool:
-        self._cancel_active(wait=True)
         succeeded = self._persist_reuse(False)
         self.login_state_changed.emit(False)
+        if not self._cancel_active(wait=False):
+            self._cleanup_after_worker = True
+            return succeeded
+        return self._finish_logout_cleanup(succeeded)
+
+    def _finish_logout_cleanup(self, succeeded: bool) -> bool:
         try:
             self._profile_cleaner(self.profile, self.local_app_data)
         except Exception:
@@ -124,7 +131,7 @@ class KimiEdgeSession(QObject):
         if self._closed:
             return
         self._closed = True
-        self._cancel_active(wait=True)
+        self._cancel_active(wait=False)
 
     def retranslate_ui(self) -> None:
         """The browser owns the visible login UI; no Qt widget needs translation."""
@@ -157,6 +164,13 @@ class KimiEdgeSession(QObject):
         thread.start()
 
     def _on_operation_finished(self, generation: int, outcome: object) -> None:
+        if self._cleanup_after_worker:
+            self._cleanup_after_worker = False
+            self._busy = False
+            self._thread = None
+            self._cancel = None
+            self._finish_logout_cleanup(True)
+            return
         if generation != self._generation or self._closed:
             return
         self._busy = False
@@ -178,20 +192,27 @@ class KimiEdgeSession(QObject):
             self.login_state_changed.emit(False)
             return
         category = outcome.category or KimiWebErrorCategory.REFRESH_FAILED
+        if category is KimiWebErrorCategory.PROFILE_UNSAFE:
+            self._persist_reuse(False)
+            self.login_state_changed.emit(False)
         _logger.warning("Kimi Edge operation completed category=%s", category.value)
         self.error_occurred.emit(category.value)
 
-    def _cancel_active(self, *, wait: bool) -> None:
+    def _cancel_active(self, *, wait: bool) -> bool:
         self._generation += 1
         cancel = self._cancel
         thread = self._thread
-        self._cancel = None
-        self._thread = None
-        self._busy = False
         if cancel is not None:
             cancel.set()
         if wait and thread is not None and thread.is_alive():
-            thread.join(timeout=5.0)
+            thread.join(timeout=0)
+        if thread is not None and thread.is_alive():
+            self._busy = True
+            return False
+        self._cancel = None
+        self._thread = None
+        self._busy = False
+        return True
 
     def _persist_reuse(self, value: bool) -> bool:
         try:

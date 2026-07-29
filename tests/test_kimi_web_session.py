@@ -30,6 +30,10 @@ def test_membership_expression_returns_payload_without_exporting_token() -> None
     assert "localStorage.getItem('access_token')" in script
     assert "Authorization" in script
     assert "console.log" not in script
+    assert "safeWindow" in script
+    assert "safeSubscription" in script
+    assert "stats: safeStats" in script
+    assert "subscription: safeSubscription" in script
 
 
 class FakeSignal:

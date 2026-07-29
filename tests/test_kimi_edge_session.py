@@ -6,6 +6,7 @@ from threading import Event
 
 from aacc.i18n import EN_US, LanguageManager
 from aacc.kimi_edge_cdp import (
+    EdgeCancelledError,
     EdgeQuotaResult,
     EdgeSessionError,
     EdgeUnauthorizedError,
@@ -33,6 +34,41 @@ class ImmediateThread:
         return self._alive
 
 
+class NeverStopsThread:
+    def __init__(self, target: Callable[[], None]) -> None:
+        del target
+
+    def start(self) -> None:
+        pass
+
+    def join(self, timeout: float | None = None) -> None:
+        del timeout
+
+    def is_alive(self) -> bool:
+        return True
+
+
+class ManualThread:
+    def __init__(self, target: Callable[[], None]) -> None:
+        self._target = target
+        self._alive = False
+
+    def start(self) -> None:
+        self._alive = True
+
+    def finish(self) -> None:
+        try:
+            self._target()
+        finally:
+            self._alive = False
+
+    def join(self, timeout: float | None = None) -> None:
+        del timeout
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+
 class FakeOperation:
     def __init__(self, outcome: object) -> None:
         self.outcome = outcome
@@ -45,6 +81,14 @@ class FakeOperation:
             raise self.outcome
         assert isinstance(self.outcome, EdgeQuotaResult)
         return self.outcome
+
+
+class CancelAwareOperation:
+    def run(self, *, visible: bool, cancel: Event) -> EdgeQuotaResult:
+        del visible
+        if cancel.is_set():
+            raise EdgeCancelledError
+        return EdgeQuotaResult({}, {})
 
 
 def immediate_thread(target: Callable[[], None]) -> ImmediateThread:
@@ -136,6 +180,23 @@ def test_transient_error_keeps_reuse_and_emits_only_category(qapp, tmp_path: Pat
     assert errors == ["refresh_timeout"]
 
 
+def test_unsafe_profile_revokes_reuse_and_requires_login(qapp, tmp_path: Path) -> None:
+    del qapp
+    operation = FakeOperation(EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE))
+    session, login_state, _cleared = make_session(tmp_path, operation)
+    login_state.set_may_reuse(True)
+    login_states: list[bool] = []
+    errors: list[str] = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+
+    session.refresh()
+
+    assert login_state.may_reuse() is False
+    assert login_states == [False]
+    assert errors == [KimiWebErrorCategory.PROFILE_UNSAFE.value]
+
+
 def test_logout_revokes_reuse_before_owned_profile_cleanup(qapp, tmp_path: Path) -> None:
     del qapp
     operation = FakeOperation(EdgeQuotaResult({}, {}))
@@ -152,3 +213,58 @@ def test_logout_revokes_reuse_before_owned_profile_cleanup(qapp, tmp_path: Path)
             tmp_path / "local",
         )
     ]
+
+
+def test_logout_does_not_delete_profile_while_old_worker_is_alive(qapp, tmp_path: Path) -> None:
+    del qapp
+    from aacc.kimi_edge_session import KimiEdgeSession
+
+    login_state = KimiWebLoginStateStore(tmp_path)
+    login_state.set_may_reuse(True)
+    cleaned: list[Path] = []
+    errors: list[str] = []
+    session = KimiEdgeSession(
+        tmp_path,
+        login_state=login_state,
+        operation=FakeOperation(EdgeQuotaResult({}, {})),
+        local_app_data=tmp_path / "local",
+        thread_factory=NeverStopsThread,
+        profile_cleaner=lambda profile, _root: cleaned.append(profile),
+    )
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+
+    result = session.logout()
+
+    assert result is True
+    assert login_state.may_reuse() is False
+    assert cleaned == []
+    assert errors == []
+
+
+def test_logout_cleans_profile_after_cancelled_worker_finishes(qapp, tmp_path: Path) -> None:
+    del qapp
+    from aacc.kimi_edge_session import KimiEdgeSession
+
+    threads: list[ManualThread] = []
+    cleaned: list[Path] = []
+
+    def create_thread(target: Callable[[], None]) -> ManualThread:
+        thread = ManualThread(target)
+        threads.append(thread)
+        return thread
+
+    session = KimiEdgeSession(
+        tmp_path,
+        operation=CancelAwareOperation(),
+        local_app_data=tmp_path / "local",
+        thread_factory=create_thread,
+        profile_cleaner=lambda profile, _root: cleaned.append(profile),
+    )
+    session.open_login()
+    session.logout()
+
+    assert cleaned == []
+    threads[0].finish()
+
+    assert cleaned == [tmp_path / "local" / "AACC" / "kimi-edge-profile"]
