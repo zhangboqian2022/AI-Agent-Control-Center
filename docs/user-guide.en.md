@@ -39,6 +39,10 @@ Runtime is available for the current user. Network access is needed only if the
 Runtime is absent; an already-installed usable Runtime is not reinstalled. If
 the native Kimi login view produces no loading event, the dialog replaces its
 blank surface with a 15-second diagnostic and Microsoft's WebView2 repair link.
+On Windows, AACC sets the writable WebView2 user data folder to
+`%LOCALAPPDATA%\AACC\kimi-web-session` before Qt initializes the native backend.
+This avoids WebView2's installer-sensitive default beside `AACC.exe`; AACC
+protects the directory for the current user before the Runtime starts.
 
 The 1.4.2 candidate is unsigned. Windows may show Unknown publisher or SmartScreen; verify the checksum before choosing **More info → Run anyway**. Sensitive configuration, credential, database, WAL, and SHM files receive an exact native protected DACL for only the current user, Local System, and Administrators. The packaged Codex read-only query uses a fixed-purpose broker beside `AACC.exe` so the app never shells out to `icacls.exe`, `whoami.exe`, or `taskkill.exe`.
 

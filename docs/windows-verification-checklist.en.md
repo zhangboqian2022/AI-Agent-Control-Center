@@ -36,7 +36,9 @@ Commit and candidate SHA-256:
   Windows 10 or 11 standard-user machine with an already-installed WebView2
   Runtime, run Setup with network monitoring or disconnected after download.
   Setup recognizes the Runtime and does not require a network installation;
-  the first Kimi login still creates a usable native view.
+  the first Kimi login still creates a usable native view. Confirm the writable
+  WebView2 user data folder is created at
+  `%LOCALAPPDATA%\AACC\kimi-web-session`, not beside `AACC.exe`.
 - [ ] **WebView2 diagnostic**: if a native Kimi login view cannot produce a
   loading event, it replaces the blank surface with the fixed 15-second
   WebView2/network repair diagnostic and Microsoft repair-page action. Record

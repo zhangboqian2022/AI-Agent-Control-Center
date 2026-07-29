@@ -34,6 +34,9 @@ Windows 1.4.2 主候选产物是 `AACC-1.4.2-Setup.exe`，普通用户无需安�
 运行时可用；仅在运行时不存在时才需要网络下载，已安装且可用的运行时不会被重复
 安装。若 Kimi 登录的原生视图没有产生加载事件，对话框会用 15 秒诊断和 Microsoft
 WebView2 修复链接替换空白界面。
+在 Windows 上，AACC 会在 Qt 初始化原生后端前，把可写的 WebView2 用户数据目录
+固定为 `%LOCALAPPDATA%\AACC\kimi-web-session`。这避免使用 `AACC.exe` 旁边对
+安装型程序不可靠的默认目录；AACC 会在运行时启动前按当前用户保护该目录。
 
 1.4.2 候选版尚未签名，Windows 可能显示“未知发布者”或 SmartScreen；请先验证校验值，再选择“更多信息 → 仍要运行”。敏感配置、凭据、数据库、WAL 与 SHM 文件使用原生精确受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 只读查询通过 `AACC.exe` 旁的固定用途 broker 执行，因此应用不再调用 `icacls.exe`、`whoami.exe` 或 `taskkill.exe`。
 

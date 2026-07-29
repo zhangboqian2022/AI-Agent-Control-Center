@@ -416,6 +416,8 @@ def test_windows_2025_ci_contractually_runs_native_webview_from_installed_produc
     assert "Assert-ProductProcessBaseline" in native_smoke_section
     assert "AACC_WEBVIEW_SMOKE_RESULT_PATH" in native_smoke_section
     assert "native-webview-result.txt" in native_smoke_section
+    assert "WEBVIEW2_USER_DATA_FOLDER" in native_smoke_section
+    assert "native-webview-user-data" in native_smoke_section
     assert "category=outer-harness-failure" in native_smoke_section
     assert "category=success" in native_smoke_section
 
