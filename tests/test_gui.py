@@ -1002,6 +1002,22 @@ def test_app_reactivation_shows_hidden_window(tmp_path: Path, qtbot: object) -> 
     manager.close()
 
 
+def test_windows_app_activation_does_not_show_hidden_tray_window(
+    tmp_path: Path,
+    qtbot: object,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("aacc.gui.sys.platform", "win32")
+    window, manager = build_window(tmp_path, qtbot)
+    window.show()
+    window.hide()
+
+    window.handle_app_state_change(Qt.ApplicationState.ApplicationActive)
+
+    assert not window.isVisible()
+    manager.close()
+
+
 def test_toggle_visible_restores_minimized_window_instead_of_hiding_it(
     tmp_path: Path, qtbot: object
 ) -> None:

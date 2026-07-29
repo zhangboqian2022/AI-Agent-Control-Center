@@ -227,7 +227,7 @@ def test_merge_never_uses_kimi_code_monthly_value():
     assert result.status is QuotaStatus.PARTIAL
 
 
-def test_merge_rejects_code_fallback_older_than_330_seconds():
+def test_merge_retains_code_fallback_older_than_330_seconds_as_stale():
     web = quota(
         five_hour=None,
         weekly=None,
@@ -243,9 +243,10 @@ def test_merge_rejects_code_fallback_older_than_330_seconds():
 
     result = merge_kimi_quota(web, code, now=NOW)
 
-    assert result.five_hour is None
-    assert result.weekly is None
+    assert result.five_hour is code.five_hour
+    assert result.weekly is code.weekly
     assert result.monthly is web.monthly
+    assert result.status is QuotaStatus.STALE
 
 
 def test_merge_accepts_code_fallback_exactly_330_seconds_old():
@@ -307,15 +308,8 @@ def test_merge_rejects_code_fallback_without_timestamp_or_from_future():
     assert future_result.weekly is None
 
 
-@pytest.mark.parametrize(
-    "fetched_at",
-    [
-        NOW - timedelta(seconds=331),
-        None,
-        NOW + timedelta(seconds=1),
-    ],
-)
-def test_merge_rejects_stale_or_unverifiable_code_metadata(
+@pytest.mark.parametrize("fetched_at", [None, NOW + timedelta(seconds=1)])
+def test_merge_rejects_unverifiable_code_metadata(
     fetched_at: datetime | None,
 ):
     web = quota(
@@ -403,5 +397,6 @@ def test_merge_rejects_code_when_web_and_code_are_equally_old():
 
     result = merge_kimi_quota(web, code)
 
-    assert result.five_hour is None
-    assert result.weekly is None
+    assert result.five_hour is code.five_hour
+    assert result.weekly is code.weekly
+    assert result.status is QuotaStatus.STALE

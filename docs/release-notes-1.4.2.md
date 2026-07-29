@@ -34,9 +34,10 @@
   日常 Edge 配置，并跨 AACC 和电脑重启保留，直到手动退出、Kimi 令会话失效
   或安全检查失败。AACC 不保存 Cookie、密码或网页 Bearer Token；Kimi Code OAuth
   凭据由 AACC 凭据保护另行保存。
-- 网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能用
-  足够新的数据补临时缺失的 `5H`/`WEEK`，不能虚构 `MONTH`。额度查询只读取
-  元数据、不发送提示词，也不消耗生成 Token。
+- 网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；临时刷新失败时保留
+  最后一次可验证的 `5H`/`WEEK` 并标记“数据过期”，成功后自动替换，且绝不
+  用 Kimi Code 虚构 `MONTH`。真实 `0%` 显示为 `0%`，只有未知值显示 `--`。
+  额度查询只读取元数据、不发送提示词，也不消耗生成 Token。
 - 每行将百分比、进度条和完整本地重置日期时间分开排版。百分比已知但没有
   可信重置时间时，百分比仍显示，重置位置为 `--`；其他缺失值也诚实显示
   `--`，不会伪装为 `0%`。
@@ -139,9 +140,10 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
   bearer token. Kimi Code OAuth credentials are stored separately under AACC
   credential protection.
 - The web source and Kimi Code fallback start in the same five-minute cycle.
-  Only sufficiently fresh Kimi Code data may fill a missing `5H` or `WEEK`;
-  it never supplies `MONTH`. Metadata-only lookups send no prompt and use no
-  generation tokens.
+  A temporary refresh failure retains the last verifiable `5H`/`WEEK` values
+  as stale and replaces them after the next successful poll; Kimi Code never
+  supplies `MONTH`. A real `0%` remains `0%`, and only unknown values use `--`.
+  Metadata-only lookups send no prompt and use no generation tokens.
 - Each available row separates percentage, progress, and complete local reset
   date/time. A known percentage without a trustworthy reset remains visible
   while the reset displays `--`; other missing data also stays `--`, never
