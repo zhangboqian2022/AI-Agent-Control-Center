@@ -988,6 +988,7 @@ def test_explicit_quit_hides_tray_and_closes_window(
     manager.close()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Dock activation is macOS-only")
 def test_app_reactivation_shows_hidden_window(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     window.show()

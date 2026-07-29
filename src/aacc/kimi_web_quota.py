@@ -237,7 +237,13 @@ def merge_kimi_quota(
         for item in (web, fallback)
         if item is not None and item.fetched_at is not None
     ]
-    fetched_at = max(fetched_candidates) if fetched_candidates else None
+    fetched_at = (
+        fallback.fetched_at
+        if stale_fallback_used and fallback is not None
+        else max(fetched_candidates)
+        if fetched_candidates
+        else None
+    )
     membership_level = (
         web.membership_level
         if web is not None and web.membership_level
