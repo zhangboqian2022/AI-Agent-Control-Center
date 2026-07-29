@@ -204,7 +204,7 @@ def test_lazy_web_session_receives_same_language_manager(
 
     monkeypatch.setattr(  # type: ignore[attr-defined]
         web_quota_service,
-        "KimiWebSession",
+        "_create_native_web_session",
         create_session,
     )
     service = KimiWebQuotaService(

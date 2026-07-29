@@ -1164,7 +1164,12 @@ class SettingsDialog(QDialog):
             save_key.clicked.connect(lambda: window.save_kimi_api_key(api_key.text()))
             layout.addWidget(save_key)
         if window.kimi_web_quota_service is not None:
-            web_login = QPushButton(language.text("settings.kimi_web_login"))
+            login_key = (
+                "settings.kimi_edge_login"
+                if sys.platform == "win32"
+                else "settings.kimi_web_login"
+            )
+            web_login = QPushButton(language.text(login_key))
             web_login.clicked.connect(window.open_kimi_web_login)
             layout.addWidget(web_login)
         if window.quota_service is not None or window.kimi_web_quota_service is not None:

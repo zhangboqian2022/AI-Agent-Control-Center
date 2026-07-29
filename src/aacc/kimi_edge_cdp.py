@@ -20,6 +20,7 @@ from uuid import uuid4
 import httpx
 
 from aacc.file_security import protect_directory
+from aacc.kimi_membership_query import membership_fetch_expression
 from aacc.kimi_web_error import KimiWebErrorCategory
 
 KIMI_MEMBERSHIP_URL = "https://www.kimi.com/membership/subscription"
@@ -404,8 +405,6 @@ class ManagedEdgeOperation:
                     page_url = select_kimi_target(targets, expected_port=port)
                     page = CdpConnection(self._socket_factory(page_url))
                     try:
-                        from aacc.kimi_web_session import membership_fetch_expression
-
                         payload = page.evaluate(membership_fetch_expression())
                     finally:
                         page.close()

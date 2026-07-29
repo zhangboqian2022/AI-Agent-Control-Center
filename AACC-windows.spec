@@ -21,7 +21,7 @@ a = Analysis(
     hiddenimports=[
         'aacc.adapters',
         'aacc.windows_broker',
-        'PySide6.QtWebView',
+        'websocket',
         'win32api',
         'win32con',
         'win32event',

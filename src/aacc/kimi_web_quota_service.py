@@ -5,8 +5,9 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QWidget
@@ -19,7 +20,6 @@ from aacc.kimi_web_error import (
     normalize_kimi_web_quota_error_category,
 )
 from aacc.kimi_web_quota import parse_membership_quota
-from aacc.kimi_web_session import KimiWebSession
 
 WEB_QUOTA_INTERVAL_MS = 300_000
 
@@ -38,6 +38,19 @@ class _WebSessionLike(Protocol):
     def close(self) -> None: ...
 
     def retranslate_ui(self) -> None: ...
+
+
+def _create_native_web_session(
+    config_dir: Path,
+    parent: QObject,
+    *,
+    language_manager: LanguageManager,
+) -> _WebSessionLike:
+    session_type: Any = import_module("aacc.kimi_web_session").KimiWebSession
+    return cast(
+        _WebSessionLike,
+        session_type(config_dir, parent, language_manager=language_manager),
+    )
 
 
 class KimiWebQuotaService(QObject):
@@ -122,10 +135,14 @@ class KimiWebQuotaService(QObject):
 
     def _ensure_session(self) -> _WebSessionLike:
         if self._session is None:
-            session_type = KimiEdgeSession if sys.platform == "win32" else KimiWebSession
-            self._session = session_type(
-                self._config_dir, self, language_manager=self.language_manager
-            )
+            if sys.platform == "win32":
+                self._session = KimiEdgeSession(
+                    self._config_dir, self, language_manager=self.language_manager
+                )
+            else:
+                self._session = _create_native_web_session(
+                    self._config_dir, self, language_manager=self.language_manager
+                )
             self._connect_session(self._session)
         return self._session
 
