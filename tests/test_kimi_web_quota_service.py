@@ -192,6 +192,11 @@ def test_lazy_web_session_receives_same_language_manager(
     del qapp
     language_manager = LanguageManager(EN_US)
     created: list[tuple[Path, object, LanguageManager]] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        web_quota_service.sys,
+        "platform",
+        "darwin",
+    )
 
     def create_session(
         config_dir: Path,

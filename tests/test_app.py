@@ -617,6 +617,7 @@ def test_webview_user_data_protection_failure_stops_before_runtime(
 ) -> None:
     shown: list[tuple[str, str]] = []
     events: list[str] = []
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "configure_logging", lambda *_args: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module,
