@@ -19,6 +19,7 @@ import psutil
 
 from aacc import public_version
 from aacc.codex_quota import (
+    CodexQuotaReaderLike,
     CodexQuotaSnapshot,
     CodexQuotaStatus,
     parse_app_server_rate_limits,
@@ -39,6 +40,7 @@ PopenFactory = Callable[..., subprocess.Popen[str]]
 ProcessCommandFactory = Callable[[Path], BrokerCommand]
 ProcessIterator = Callable[[tuple[str, ...]], Iterable[Any]]
 RunningDesktopLocator = Callable[[], Path | None]
+QuotaReaderFactory = Callable[[Path], CodexQuotaReaderLike]
 
 _logger = logging.getLogger("aacc.codex_quota")
 
@@ -151,6 +153,28 @@ def find_codex_executable(
         if running is not None and is_file(running):
             return running
     return None
+
+
+class RediscoveringCodexQuotaReader:
+    """Resolve the live Codex source for every read so late startup recovers."""
+
+    def __init__(
+        self,
+        locator: RunningDesktopLocator,
+        reader_factory: QuotaReaderFactory,
+    ) -> None:
+        self._locator = locator
+        self._reader_factory = reader_factory
+
+    def read_latest(self) -> CodexQuotaSnapshot:
+        try:
+            executable = self._locator()
+            if executable is None:
+                return CodexAppServerReader._unknown()
+            return self._reader_factory(executable).read_latest()
+        except (OSError, TypeError, ValueError):
+            _logger.debug("Codex live quota rediscovery unavailable")
+            return CodexAppServerReader._unknown()
 
 
 class CodexAppServerReader:

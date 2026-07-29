@@ -17,11 +17,14 @@ import pytest
 from aacc.codex_app_server import (
     WINDOWS_PROCESS_CREATION_FLAGS,
     CodexAppServerReader,
+    RediscoveringCodexQuotaReader,
     find_codex_executable,
     find_running_desktop_codex,
 )
 from aacc.codex_quota import (
+    CodexQuotaSnapshot,
     CodexQuotaStatus,
+    CodexQuotaWindow,
     parse_app_server_rate_limits,
 )
 from aacc.windows_broker import BrokerCommand
@@ -167,6 +170,55 @@ def test_find_codex_executable_rejects_non_files(tmp_path: Path) -> None:
     )
 
     assert result is None
+
+
+def test_rediscovering_reader_recovers_when_executable_appears_late(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "ChatGPT" / "codex.exe"
+    locations = iter((None, executable))
+    created: list[Path] = []
+    expected = CodexQuotaSnapshot(
+        weekly=CodexQuotaWindow(23, 10_080, NOW + timedelta(days=1)),
+        observed_at=NOW,
+        status=CodexQuotaStatus.OK,
+    )
+
+    class Reader:
+        def read_latest(self) -> CodexQuotaSnapshot:
+            return expected
+
+    reader = RediscoveringCodexQuotaReader(
+        locator=lambda: next(locations),
+        reader_factory=lambda path: (created.append(path), Reader())[1],
+    )
+
+    assert reader.read_latest().status is CodexQuotaStatus.UNKNOWN
+    assert reader.read_latest() == expected
+    assert created == [executable]
+
+
+def test_rediscovering_reader_uses_replaced_executable_on_next_read(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "ChatGPT" / "codex.exe"
+    second = tmp_path / "OpenAI" / "codex.exe"
+    locations = iter((first, second))
+    created: list[Path] = []
+
+    class Reader:
+        def read_latest(self) -> CodexQuotaSnapshot:
+            return CodexQuotaSnapshot(None, None, CodexQuotaStatus.UNKNOWN)
+
+    reader = RediscoveringCodexQuotaReader(
+        locator=lambda: next(locations),
+        reader_factory=lambda path: (created.append(path), Reader())[1],
+    )
+
+    reader.read_latest()
+    reader.read_latest()
+
+    assert created == [first, second]
 
 
 def _window(
