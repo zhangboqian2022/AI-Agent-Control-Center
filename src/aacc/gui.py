@@ -1600,11 +1600,14 @@ class MainWindow(QWidget):
         self.settings_button.clicked.connect(self.open_settings)
         self.hide_button = QPushButton("—")
         self.hide_button.clicked.connect(self.hide)
+        self.quit_button = QPushButton("⏻")
+        self.quit_button.clicked.connect(self.quit_application)
         for button in (
             self.language_button,
             self.about_button,
             self.settings_button,
             self.hide_button,
+            self.quit_button,
         ):
             if button is not self.language_button:
                 button.setObjectName("headerButton")
@@ -1719,6 +1722,7 @@ class MainWindow(QWidget):
             self.setWindowOpacity(float(saved_opacity))
 
         self.tray: QSystemTrayIcon | None = None
+        self.tray_menu: QMenu | None = None
         self.tray_show_action: QAction | None = None
         self.tray_compact_action: QAction | None = None
         self.tray_quit_action: QAction | None = None
@@ -1753,6 +1757,7 @@ class MainWindow(QWidget):
         self.about_button.setToolTip(self.language_manager.text("header.about"))
         self.settings_button.setToolTip(self.language_manager.text("header.settings"))
         self.hide_button.setToolTip(self.language_manager.text("header.hide"))
+        self.quit_button.setToolTip(self.language_manager.text("header.quit"))
         self.running_group_label.setText(self.language_manager.text("group.running"))
         self.retained_group_label.setText(
             "已完成 · 保留直到移除"
@@ -1849,7 +1854,8 @@ class MainWindow(QWidget):
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "A")
         painter.end()
         self.tray = QSystemTrayIcon(QIcon(pixmap), self)
-        menu = QMenu()
+        menu = QMenu(self)
+        self.tray_menu = menu
         self.tray_show_action = menu.addAction("")
         self.tray_show_action.triggered.connect(self.toggle_visible)
         self.tray_compact_action = menu.addAction("")
@@ -1858,9 +1864,13 @@ class MainWindow(QWidget):
         self.tray_quit_action = menu.addAction("")
         self.tray_quit_action.triggered.connect(self.quit_application)
         self.tray.setContextMenu(menu)
-        self.tray.activated.connect(lambda _reason: self.toggle_visible())
+        self.tray.activated.connect(self._on_tray_activated)
         self.retranslate_ui()
         self.tray.show()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason is QSystemTrayIcon.ActivationReason.Trigger:
+            self.toggle_visible()
 
     def refresh(self) -> None:
         if self.manager.closed:
@@ -2722,6 +2732,9 @@ class MainWindow(QWidget):
 
     def quit_application(self) -> None:
         self._quitting = True
+        if self.tray is not None:
+            self.tray.hide()
+        self.close()
         QGuiApplication.quit()
 
     def moveEvent(self, event: QMoveEvent) -> None:

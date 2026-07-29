@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSystemTrayIcon,
 )
 
 from aacc.automation import AutomationError, MacAutomation
@@ -96,6 +97,27 @@ def test_header_language_button_switches_live_and_persists(tmp_path: Path, qtbot
     assert window.about_button.toolTip() == "About"
     assert window.settings_button.toolTip() == "Settings"
     assert window.hide_button.toolTip() == "Hide"
+    assert window.quit_button.toolTip() == "Quit AACC"
+    manager.close()
+
+
+def test_header_quit_button_uses_explicit_quit_path(
+    tmp_path: Path,
+    qtbot: object,
+    monkeypatch,
+) -> None:
+    calls: list[MainWindow] = []
+    monkeypatch.setattr(
+        MainWindow,
+        "quit_application",
+        lambda window: calls.append(window),
+    )
+    window, manager = build_window(tmp_path, qtbot)
+
+    assert window.quit_button.toolTip() == "退出 AACC"
+    window.quit_button.click()
+
+    assert calls == [window]
     manager.close()
 
 
@@ -904,6 +926,7 @@ def test_tray_actions_retranslate_and_keep_compact_toggle(tmp_path: Path, qtbot:
         language_manager=language_manager,
     )
     window._create_tray()
+    assert window.tray_menu is not None
     assert window.tray_show_action is not None
     assert window.tray_compact_action is not None
     assert window.tray_quit_action is not None
@@ -919,6 +942,49 @@ def test_tray_actions_retranslate_and_keep_compact_toggle(tmp_path: Path, qtbot:
     assert window.tray_quit_action.text() == "Quit AACC"
     window._quitting = True
     window.close()
+    manager.close()
+
+
+def test_tray_activation_only_toggles_for_normal_trigger(
+    tmp_path: Path,
+    qtbot: object,
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    toggles: list[bool] = []
+    window.toggle_visible = lambda: toggles.append(True)  # type: ignore[method-assign]
+
+    window._on_tray_activated(QSystemTrayIcon.ActivationReason.Context)
+    window._on_tray_activated(QSystemTrayIcon.ActivationReason.DoubleClick)
+    assert toggles == []
+
+    window._on_tray_activated(QSystemTrayIcon.ActivationReason.Trigger)
+    assert toggles == [True]
+    manager.close()
+
+
+def test_explicit_quit_hides_tray_and_closes_window(
+    tmp_path: Path,
+    qtbot: object,
+    monkeypatch,
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    hidden: list[bool] = []
+
+    class Tray:
+        def hide(self) -> None:
+            hidden.append(True)
+
+    quit_calls: list[bool] = []
+    monkeypatch.setattr(QGuiApplication, "quit", lambda: quit_calls.append(True))
+    window.tray = Tray()  # type: ignore[assignment]
+    window.show()
+
+    window.quit_application()
+
+    assert window._quitting is True
+    assert hidden == [True]
+    assert quit_calls == [True]
+    assert not window.isVisible()
     manager.close()
 
 
