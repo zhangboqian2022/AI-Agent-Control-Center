@@ -247,6 +247,7 @@ def test_merge_retains_code_fallback_older_than_330_seconds_as_stale():
     assert result.weekly is code.weekly
     assert result.monthly is web.monthly
     assert result.status is QuotaStatus.STALE
+    assert result.fetched_at == code.fetched_at
 
 
 def test_merge_accepts_code_fallback_exactly_330_seconds_old():
