@@ -81,15 +81,17 @@
 
 ### 自动化证据边界
 
-候选应用提交 `b7be123` 的
-[GitHub Actions 运行 30412622959](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30412622959)
+候选应用提交 `4f1a7f2` 的
+[GitHub Actions 运行 30424147975](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30424147975)
 已在托管的 Windows Server 2022 与 Windows Server 2025 环境通过：原生
 broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、重装、写入前
-锁定目标拒绝、卸载、ACL 与进程清理产品冒烟。该运行早于本次 Edge 登录替换，
-因此不作为新 Edge 路径的验证证据。Setup、SHA-256
-和便携 ZIP 的严格内容校验与资产上传，以及 macOS 质量作业、Windows 双版本
-测试、ruff、格式、mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务器
-自动证据。
+锁定目标拒绝、卸载、ACL 与进程清理产品冒烟；安装后的 `AACC.exe` 还实际
+启动了 AACC 专用 Edge、建立 CDP/WebSocket、运行无凭据额度表达式，并确认
+profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格内容校验与
+资产上传，以及 macOS 质量作业、Windows 双版本完整测试、ruff、格式、mypy 和
+依赖审计也在同一次运行中通过。候选 Setup SHA-256 为
+`808e8b285e7268dceb649a6e03699cec43f86fd56513340e887a364584b294be`。
+这些仍只是托管服务器自动证据。
 
 即使上述托管工作流全部通过，它也不能证明消费级 Windows 10 或 Windows 11、
 标准用户安装、另一账户拒读、SmartScreen 交互、真实 Kimi/Codex、托盘、聚焦、
@@ -192,16 +194,20 @@ broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、
 
 ### Automated evidence boundary
 
-Candidate application commit `b7be123` passed
-[GitHub Actions run 30412622959](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30412622959)
+Candidate application commit `4f1a7f2` passed
+[GitHub Actions run 30424147975](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30424147975)
 on hosted Windows Server 2022 and Windows Server 2025: native broker,
 PyInstaller onedir, and Setup builds; frozen first launch; installation;
 reinstall; pre-mutation locked-target refusal; uninstall; ACL and process
-cleanup product smokes. That run predates the Edge login replacement and is
-not evidence for the new Edge path. Strict Setup, SHA-256, portable ZIP
-content verification and artifact upload, plus the macOS quality job, both
-Windows test legs, Ruff, formatting, mypy, and dependency audit passed in the
-same run. This remains hosted-server automated evidence only.
+cleanup product smokes. The installed `AACC.exe` also launched the dedicated
+Edge profile, established CDP/WebSocket, evaluated a credential-free quota
+expression, and verified the exact profile ACL and absence of orphaned Edge
+processes. Strict Setup, SHA-256, portable ZIP content verification and
+artifact upload, plus the macOS quality job, both complete Windows test legs,
+Ruff, formatting, mypy, and dependency audit passed in the same run. The
+candidate Setup SHA-256 is
+`808e8b285e7268dceb649a6e03699cec43f86fd56513340e887a364584b294be`.
+This remains hosted-server automated evidence only.
 
 Hosted Windows Server evidence is not the real Windows 10/11 consumer test. It
 does not replace standard-user installation, separate-account access denial,
