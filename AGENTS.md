@@ -64,16 +64,17 @@ scripts\build_windows_installer.ps1
 
 - `codex/fix-windows-webview2-udf`：针对真实 Windows 机器“已安装 WebView2
   Runtime，但 Kimi 会员登录仍白屏/启动失败”的修复正在进行，**尚未合并**。
-  根因证据：AACC 创建了 `kimi-web-session`，但没有在
-  `QtWebView.initialize()` 前设置 WebView2 用户数据目录；WebView2 因而默认在
-  `AACC.exe.WebView2`（安装目录旁）创建数据。微软 Win32 部署文档明确建议安装型
-  应用使用可写的自定义 UDF。当前 TDD 改动会在 Windows 初始化前把
+  高可信修复方向：AACC 此前没有在 `QtWebView.initialize()` 前设置 WebView2
+  用户数据目录；微软 Win32 部署文档明确建议安装型应用使用可写的自定义 UDF。
+  当前 TDD 改动会在 Windows 初始化前把
   `WEBVIEW2_USER_DATA_FOLDER` 强制设为
   `%LOCALAPPDATA%\AACC\kimi-web-session`，先走 AACC 原生 ACL 保护，再初始化
-  Qt；`KimiWebSession.storage_path` 同步指向同一目录。红灯已确认旧代码因缺少
-  参数/行为失败；3 条聚焦测试已通过。**明日接续点**：补齐初始化保护失败测试、
-  WebView 冒烟使用同一 UDF 的覆盖、双语文档说明；运行全量 pytest/ruff/mypy，
-  评审后合并 `main`、推 CI，再生成并真机验证新的 Windows Setup。
+  Qt；`KimiWebSession.storage_path` 同步指向同一目录。冻结包产品冒烟现通过
+  隔离 `LOCALAPPDATA` 调用同一生产初始化路径，并验证 JavaScript 往返、目录创建
+  与精确 DACL；目录创建/保护失败只输出固定脱敏诊断并安全退出。另修复 Codex
+  `turn_aborted` 未终结任务导致一个真实任务显示两个“执行中”的问题。聚焦测试
+  163 项通过；待全量 pytest/ruff/mypy 与终审后合并 `main`、推 CI，再生成并
+  真机验证新的 Windows Setup。
 - `codex/v1.4.2-quota-windows-hardening`：**1.4.2 Windows Setup 候选正在收尾，
   尚未发布**。主 Windows 候选产物为 `AACC-1.4.2-Setup.exe`，当前用户、
   无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面

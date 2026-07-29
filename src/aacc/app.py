@@ -556,11 +556,11 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
 def main() -> int:
     if sys.platform == "win32" and sys.argv[1:] == ["--shutdown-for-update"]:
         return request_shutdown_for_update()
-    if sys.platform == "win32" and sys.argv[1:] == ["--smoke-native-webview"]:
-        return run_native_webview_smoke()
     config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
-    database_path = resolve_database_path()
     data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
+    if sys.platform == "win32" and sys.argv[1:] == ["--smoke-native-webview"]:
+        return run_native_webview_smoke(data_dir)
+    database_path = resolve_database_path()
     guard = InstanceGuard(data_dir / "aacc.lock")
     if not guard.acquire():
         activate_existing_instance()

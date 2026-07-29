@@ -1836,21 +1836,22 @@ Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed"
 Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"
 $NativeWebViewBaseline = @(Get-ProductProcessBaseline -ProductRoot $InstallRoot)
 $NativeWebViewResultPath = Join-Path $SmokeRoot "installed\native-webview-result.txt"
-$NativeWebViewUserDataPath = Join-Path $SmokeRoot "installed\native-webview-user-data"
+$NativeWebViewLocalAppData = Join-Path $SmokeRoot "installed\native-webview-local-app-data"
+$NativeWebViewUserDataPath = Join-Path $NativeWebViewLocalAppData "AACC\kimi-web-session"
 Remove-Item -LiteralPath $NativeWebViewResultPath -Force -ErrorAction SilentlyContinue
 $PreviousQtQpaPlatform = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
 $PreviousWebViewResultPath = [Environment]::GetEnvironmentVariable(
     "AACC_WEBVIEW_SMOKE_RESULT_PATH",
     "Process"
 )
-$PreviousWebViewUserDataPath = [Environment]::GetEnvironmentVariable(
-    "WEBVIEW2_USER_DATA_FOLDER",
+$PreviousLocalAppData = [Environment]::GetEnvironmentVariable(
+    "LOCALAPPDATA",
     "Process"
 )
 try {
     $env:QT_QPA_PLATFORM = "windows"
     $env:AACC_WEBVIEW_SMOKE_RESULT_PATH = $NativeWebViewResultPath
-    $env:WEBVIEW2_USER_DATA_FOLDER = $NativeWebViewUserDataPath
+    $env:LOCALAPPDATA = $NativeWebViewLocalAppData
     try {
         $ExitCode = Invoke-ExternalDeadline -FilePath $InstalledAacc `
             -Arguments @("--smoke-native-webview") -TimeoutSeconds 40 `
@@ -1877,6 +1878,8 @@ try {
     Assert-True (
         Test-Path -LiteralPath $NativeWebViewUserDataPath -PathType Container
     ) "installed native WebView smoke did not create its writable user data folder"
+    Assert-ExactAcl -Path $NativeWebViewUserDataPath -Directory $true `
+        -EvidenceCategory "installed native WebView user data"
 }
 finally {
     if ($null -eq $PreviousQtQpaPlatform) {
@@ -1891,11 +1894,11 @@ finally {
     else {
         $env:AACC_WEBVIEW_SMOKE_RESULT_PATH = $PreviousWebViewResultPath
     }
-    if ($null -eq $PreviousWebViewUserDataPath) {
-        Remove-Item Env:WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
+    if ($null -eq $PreviousLocalAppData) {
+        Remove-Item Env:LOCALAPPDATA -ErrorAction SilentlyContinue
     }
     else {
-        $env:WEBVIEW2_USER_DATA_FOLDER = $PreviousWebViewUserDataPath
+        $env:LOCALAPPDATA = $PreviousLocalAppData
     }
     Assert-ProductProcessBaseline -ProductRoot $InstallRoot -Expected $NativeWebViewBaseline `
         -Category "installed native WebView smoke"

@@ -369,11 +369,15 @@ def test_windows_webview_smoke_exercises_a_visible_native_controller_after_setup
     assert 'sys.platform != "win32"' in script
     assert "unsupported-platform" in script
     assert 'import_module("aacc.webview_smoke")' in script
-    assert "raise SystemExit(webview_smoke.run_native_webview_smoke())" in script
+    assert 'import_module("aacc.constants")' in script
+    assert (
+        "raise SystemExit(webview_smoke.run_native_webview_smoke(constants.APP_SUPPORT_DIR))"
+        in script
+    )
     assert "class NativeWebViewSmoke" not in script
     assert "QWebView" not in script
     assert "SMOKE_TIMEOUT_MS = 30_000" in module
-    assert module.index("QtWebView.initialize()") < module.index("QApplication(")
+    assert module.index("initialize_native_webview(data_dir)") < module.index("QApplication(")
     assert "QTimer" in module
     assert "QDialog" in module
     assert "_dialog.show()" in module
@@ -416,8 +420,8 @@ def test_windows_2025_ci_contractually_runs_native_webview_from_installed_produc
     assert "Assert-ProductProcessBaseline" in native_smoke_section
     assert "AACC_WEBVIEW_SMOKE_RESULT_PATH" in native_smoke_section
     assert "native-webview-result.txt" in native_smoke_section
-    assert "WEBVIEW2_USER_DATA_FOLDER" in native_smoke_section
-    assert "native-webview-user-data" in native_smoke_section
+    assert "$env:LOCALAPPDATA = $NativeWebViewLocalAppData" in native_smoke_section
+    assert "AACC\\kimi-web-session" in native_smoke_section
     assert "category=outer-harness-failure" in native_smoke_section
     assert "category=success" in native_smoke_section
 

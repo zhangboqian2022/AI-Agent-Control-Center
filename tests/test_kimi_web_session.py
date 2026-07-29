@@ -6,6 +6,7 @@ import logging
 import os
 from types import SimpleNamespace
 
+import pytest
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QWindow
 from PySide6.QtWebView import QWebViewLoadingInfo
@@ -116,6 +117,7 @@ class ExistingFakeDialog:
 def make_session(monkeypatch, tmp_path, *, language_manager=None):
     monkeypatch.setattr(web_session, "_webview_initialized", True)
     monkeypatch.setattr(web_session, "QWebView", FakeView)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     return KimiWebSession(tmp_path, language_manager=language_manager)
 
 
@@ -246,6 +248,76 @@ def test_windows_native_webview_uses_writable_aacc_user_data_before_initialize(
         ("protect", expected),
         ("initialize", str(expected)),
     ]
+
+
+def test_windows_native_webview_wraps_user_data_directory_errors(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        web_session,
+        "sys",
+        SimpleNamespace(platform="win32"),
+        raising=False,
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(web_session, "_webview_initialized", False)
+    monkeypatch.setattr(
+        web_session,
+        "protect_directory",
+        lambda _path: (_ for _ in ()).throw(PermissionError("private path")),
+    )
+
+    class FakeQtWebView:
+        @staticmethod
+        def initialize():
+            raise AssertionError("backend must not initialize after storage failure")
+
+    class NoApplication:
+        @staticmethod
+        def instance():
+            return None
+
+    monkeypatch.setattr(web_session, "QtWebView", FakeQtWebView)
+    monkeypatch.setattr(web_session, "QGuiApplication", NoApplication)
+
+    with pytest.raises(FileProtectionError, match="native web view storage"):
+        web_session.initialize_native_webview(tmp_path / "roaming")
+
+
+def test_windows_native_webview_rejects_file_at_user_data_path(monkeypatch, tmp_path):
+    local_app_data = tmp_path / "local"
+    storage_path = local_app_data / "AACC" / "kimi-web-session"
+    storage_path.parent.mkdir(parents=True)
+    storage_path.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(
+        web_session,
+        "sys",
+        SimpleNamespace(platform="win32"),
+        raising=False,
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setattr(web_session, "_webview_initialized", False)
+
+    class NoApplication:
+        @staticmethod
+        def instance():
+            return None
+
+    monkeypatch.setattr(web_session, "QGuiApplication", NoApplication)
+
+    with pytest.raises(FileProtectionError, match="native web view storage"):
+        web_session.initialize_native_webview(tmp_path / "roaming")
+
+
+def test_windows_native_webview_requires_local_app_data(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        web_session,
+        "sys",
+        SimpleNamespace(platform="win32"),
+        raising=False,
+    )
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    with pytest.raises(FileProtectionError, match="LOCALAPPDATA"):
+        web_session.native_webview_user_data_path(tmp_path)
 
 
 def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path):

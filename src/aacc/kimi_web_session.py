@@ -14,7 +14,7 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from aacc.file_security import protect_directory
+from aacc.file_security import FileProtectionError, protect_directory
 from aacc.i18n import ZH_CN, LanguageManager
 from aacc.kimi_web_error import KimiWebErrorCategory
 from aacc.kimi_web_login_state import KimiWebLoginStateStore
@@ -35,8 +35,9 @@ def native_webview_user_data_path(config_dir: Path) -> Path:
 
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
-        if local_app_data:
-            return Path(local_app_data) / "AACC" / "kimi-web-session"
+        if not local_app_data:
+            raise FileProtectionError("LOCALAPPDATA is unavailable")
+        return Path(local_app_data) / "AACC" / "kimi-web-session"
     return config_dir / "kimi-web-session"
 
 
@@ -50,7 +51,10 @@ def initialize_native_webview(config_dir: Path) -> None:
         raise RuntimeError("native web view must be initialized before QApplication")
     if sys.platform == "win32":
         storage_path = native_webview_user_data_path(config_dir)
-        protect_directory(storage_path)
+        try:
+            protect_directory(storage_path)
+        except OSError as error:
+            raise FileProtectionError("native web view storage could not be protected") from error
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(storage_path)
     QtWebView.initialize()
     _webview_initialized = True
