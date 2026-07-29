@@ -89,14 +89,14 @@ def test_each_bilingual_product_document_keeps_the_live_language_contract() -> N
         "immediately",
         "Compact mode remains in Settings and the tray menu",
         "does not refresh quotas or change monitored tasks or login state",
-        "candidate",
+        "1.4.2",
     )
     chinese_terms = (
         "中英文",
         "即时切换",
         "紧凑模式保留在设置和托盘菜单",
         "不会刷新额度，也不会改变监控任务或登录状态",
-        "候选",
+        "1.4.2",
     )
 
     for name in ("README.md", "docs/user-guide.en.md", "CHANGELOG.md"):
@@ -134,18 +134,14 @@ def test_bilingual_manual_gates_cover_repeated_live_switching() -> None:
         re.DOTALL,
     )
     assert re.search(
-        r"- \[ \].*macOS.*Chinese/English.*Kimi login",
+        r"- .*macOS.*Chinese/English.*Kimi login.*manual checklist",
         notes,
         re.DOTALL | re.IGNORECASE,
     )
-    assert re.search(
-        r"- \[ \].*macOS.*中英文.*Kimi 登录",
-        notes,
-        re.DOTALL,
-    )
+    assert re.search(r"- .*macOS.*中英文.*Kimi 登录.*人工清单", notes, re.DOTALL)
 
 
-def test_release_docs_keep_windows_manual_gates_open() -> None:
+def test_release_docs_describe_formal_release_and_windows_evidence_boundary() -> None:
     notes = _read("docs/release-notes-1.4.2.md")
 
     assert "AACC-1.4.2-Setup.exe" in notes
@@ -154,8 +150,9 @@ def test_release_docs_keep_windows_manual_gates_open() -> None:
     assert "Windows Server" in notes
     assert "native DACL" in notes
     assert "fixed-purpose broker" in notes
-    assert "`v1.4.2` 尚未创建" in notes
-    assert re.search(r"- \[ \].*Windows 10/11", notes, re.DOTALL)
+    assert "`v1.4.2` 正式版" in notes
+    assert "尚未完成的消费级 Windows 10/11 人工验证" in notes
+    assert "does not claim completed consumer Windows 10/11 manual verification" in notes
 
 
 def test_bilingual_guides_describe_setup_lifecycle_and_preserved_appdata() -> None:
@@ -257,7 +254,7 @@ def test_kimi_session_docs_describe_platform_store_and_reuse_gate_honestly() -> 
         "five-minute",
         "no generation tokens",
         "trustworthy reset",
-        "macOS and Windows manual sign-off",
+        "manual verification checklists",
     ):
         assert term in english
     for term in (
@@ -269,7 +266,7 @@ def test_kimi_session_docs_describe_platform_store_and_reuse_gate_honestly() -> 
         "五分钟",
         "不消耗生成 Token",
         "可信重置时间",
-        "macOS 与 Windows 人工签字",
+        "人工验证清单",
     ):
         assert term in chinese
 

@@ -1,16 +1,16 @@
 # 更新日志
 
-## 1.4.2 — 发布候选（尚未发布）
+## 1.4.2 — 2026-07-29
 
-[中英文候选说明](docs/release-notes-1.4.2.md)
+[中英文发布说明](docs/release-notes-1.4.2.md)
 
 - [体验] 完整 macOS 与 Windows 界面支持中英文即时切换；首次启动跟随系统语言，明确选择会持久保存，切换不会刷新额度，也不会改变监控任务或登录状态；紧凑模式保留在设置和托盘菜单。
 - [额度] Codex 只显示一行更清晰的 `WEEK`；Kimi 按 `5H`、`WEEK`、`MONTH` 显示，每个可用窗口均包含完整本地重置日期时间。缓存的 Kimi 会员会话每五分钟刷新一次，不消耗模型 Token。
 - [Windows] 新增当前用户、无需提权的 `AACC-1.4.2-Setup.exe`，默认安装到 `%LocalAppData%\Programs\AACC`，支持优雅原位升级/卸载，并保留 `%APPDATA%\AACC`。
 - [Windows] 用 Microsoft Edge 和隔离的 AACC 专用 Edge 配置目录替换不可靠的内嵌登录。会话会跨应用和电脑重启保留，直到手动退出或 Kimi 令其失效；绝不读取日常 Edge 数据。
 - [安全] 用原生精确受保护 DACL 取代 `whoami.exe`/`icacls.exe` 文件保护；打包后的 Codex 只读 app-server 通过固定用途静态 broker 启动，并移除 `taskkill.exe`。
-- [交付] 新增 Windows Server 2022/2025 冻结包、安装、重装、写入前锁目标拒绝与卸载冒烟门禁；1.4.2 macOS DMG 仍是候选产物。
-- [发版门禁] `v1.4.2` 与正式资产仍被 Windows 10/11 真机清单及另一无特权账户拒读测试阻塞。
+- [交付] 新增 Windows Server 2022/2025 冻结包、安装、重装、写入前锁目标拒绝与卸载冒烟门禁，并发布带校验文件的 macOS DMG 与 Windows Setup。
+- [证据边界] 托管 CI 已通过；消费级 Windows 10/11 与另一账户人工验证仍明确不作已完成声明。
 
 ## 1.4.1 — 2026-07-24
 

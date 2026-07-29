@@ -849,6 +849,8 @@ def test_release_verifier_rejects_incomplete_or_broken_assets() -> None:
     assert "prerelease" in script
     assert "AACC-${release_version}.dmg" in script
     assert "AACC-${release_version}.dmg.sha256" in script
+    assert "AACC-${release_version}-Setup.exe" in script
+    assert "AACC-${release_version}-Setup.exe.sha256" in script
     assert "browser_download_url" in script
     assert "asset_size" in script
     assert 'curl --fail --silent --show-error --location --head --output /dev/null "$url"' in script
@@ -861,7 +863,7 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "10080" in content
         assert "300-minute" not in content
         assert "300 分钟" not in content
-        assert "shasum -a 256 AACC-1.4.1.dmg" in content
+        assert "shasum -a 256 AACC-1.4.2.dmg" in content
         assert "xattr -cr /Applications/AACC.app" in content
 
 
