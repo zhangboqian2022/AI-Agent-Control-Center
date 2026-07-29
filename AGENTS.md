@@ -98,6 +98,11 @@ scripts\build_windows_installer.ps1
   正式 DMG SHA-256 为
   `aa60665e9808e3c0067b2db761893acb2911d1f2600085821cb46c1ef7e03822`；
   本机构建使用 ad-hoc 签名、未经过 Apple 公证。
+  GitHub Release：
+  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.2`
+  （Latest、非草稿、非预发布）；正式提交 `c0aaa07` 的 CI
+  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30440258506`
+  全绿，四项 Release 资产的名称、大小、摘要与下载 URL 已通过发布后校验。
 - 已移除冻结运行时对 `whoami.exe`、`icacls.exe`、`taskkill.exe` 的依赖：
   Windows 敏感目录/文件使用 pywin32 原生精确受保护 DACL（当前用户、System、
   Administrators），Codex 只读 app-server 由旁置 `/MT` 静态
