@@ -22,6 +22,15 @@ KimiWebSession = web_session.KimiWebSession
 membership_fetch_script = web_session.membership_fetch_script
 
 
+def test_membership_expression_returns_payload_without_exporting_token() -> None:
+    script = web_session.membership_fetch_expression(7)
+
+    assert "return await Promise.all" in script
+    assert "localStorage.getItem('access_token')" in script
+    assert "Authorization" in script
+    assert "console.log" not in script
+
+
 class FakeSignal:
     def __init__(self):
         self.callbacks = []
