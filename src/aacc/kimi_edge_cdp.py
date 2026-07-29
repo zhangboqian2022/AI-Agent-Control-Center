@@ -537,11 +537,11 @@ class ManagedEdgeOperation:
         if not active_port.exists():
             return
         if _is_reparse_point(active_port) or not active_port.is_file():
-            raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
+            raise EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE)
         try:
             active_port.unlink()
         except OSError as error:
-            raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED) from error
+            raise EdgeSessionError(KimiWebErrorCategory.PROFILE_UNSAFE) from error
 
     def _shutdown_process(self, process: _ProcessLike) -> None:
         try:
