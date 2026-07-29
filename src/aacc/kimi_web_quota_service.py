@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from aacc.i18n import ZH_CN, LanguageManager
+from aacc.kimi_edge_session import KimiEdgeSession
 from aacc.kimi_quota import KimiQuota
 from aacc.kimi_web_error import (
     KimiCodeQuotaErrorCategory,
@@ -120,10 +122,9 @@ class KimiWebQuotaService(QObject):
 
     def _ensure_session(self) -> _WebSessionLike:
         if self._session is None:
-            self._session = KimiWebSession(
-                self._config_dir,
-                self,
-                language_manager=self.language_manager,
+            session_type = KimiEdgeSession if sys.platform == "win32" else KimiWebSession
+            self._session = session_type(
+                self._config_dir, self, language_manager=self.language_manager
             )
             self._connect_session(self._session)
         return self._session

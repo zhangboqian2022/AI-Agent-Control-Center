@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from collections.abc import Callable, Mapping
@@ -14,6 +15,7 @@ from pathlib import Path
 from threading import Event
 from typing import Protocol, cast
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import httpx
 
@@ -105,6 +107,20 @@ def validate_owned_profile(profile: Path, local_app_data: Path) -> None:
         raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
     if profile.exists() and not profile.is_dir():
         raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
+
+
+def clear_owned_profile(profile: Path, local_app_data: Path) -> None:
+    """Remove only AACC's exact Edge profile, never a user browser profile."""
+
+    validate_owned_profile(profile, local_app_data)
+    if not profile.exists():
+        return
+    quarantine = profile.parent / f".kimi-edge-profile.logout-{uuid4().hex}"
+    try:
+        os.replace(profile, quarantine)
+        shutil.rmtree(quarantine)
+    except OSError as error:
+        raise EdgeSessionError(KimiWebErrorCategory.LOGOUT_PARTIAL) from error
 
 
 def _default_registry_reader(key: str, name: str) -> str | None:
