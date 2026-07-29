@@ -37,7 +37,7 @@ _Illustrative UI with synthetic demo data; no real account or task data._
 
 Download [AACC-1.4.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2.dmg), open it, and drag `AACC.app` to Applications.
 
-This build is signed with a local self-signed certificate and is not notarized by Apple. First download the matching `.dmg.sha256` asset and compare it with:
+This community build uses an ad-hoc signature and is not notarized by Apple. First download the matching `.dmg.sha256` asset and compare it with:
 
 ```bash
 shasum -a 256 AACC-1.4.2.dmg
@@ -88,7 +88,7 @@ Capability comparison with the macOS build:
 | Window focus | Bundle ID + AppleScript | Window-title matching (no bundle ID) |
 | Voice input | macOS dictation | Win+H |
 | Accessibility permission | Required for injection and hotkeys | Not required |
-| Signing | Self-signed, Gatekeeper prompt | Unsigned, SmartScreen prompt |
+| Signing | Ad-hoc, Gatekeeper prompt | Unsigned, SmartScreen prompt |
 
 ## Use AACC with Codex
 

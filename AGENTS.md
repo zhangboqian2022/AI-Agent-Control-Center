@@ -95,6 +95,9 @@ scripts\build_windows_installer.ps1
   产物为 `AACC-1.4.2-Setup.exe`，当前用户、
   无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面
   快捷方式可选、不添加启动项，升级/卸载保留 `%APPDATA%\AACC`。
+  正式 DMG SHA-256 为
+  `aa60665e9808e3c0067b2db761893acb2911d1f2600085821cb46c1ef7e03822`；
+  本机构建使用 ad-hoc 签名、未经过 Apple 公证。
 - 已移除冻结运行时对 `whoami.exe`、`icacls.exe`、`taskkill.exe` 的依赖：
   Windows 敏感目录/文件使用 pywin32 原生精确受保护 DACL（当前用户、System、
   Administrators），Codex 只读 app-server 由旁置 `/MT` 静态

@@ -9,6 +9,10 @@
 - Windows 主下载：`AACC-1.4.2-Setup.exe` 与
   `AACC-1.4.2-Setup.exe.sha256`
 - macOS：`AACC-1.4.2.dmg` 与 `AACC-1.4.2.dmg.sha256`
+- SHA-256：DMG
+  `aa60665e9808e3c0067b2db761893acb2911d1f2600085821cb46c1ef7e03822`；
+  Windows Setup
+  `139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`
 
 ## 中文
 

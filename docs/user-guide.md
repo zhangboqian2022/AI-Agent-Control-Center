@@ -22,7 +22,7 @@ Kimi 按 `5H`、`WEEK`、`MONTH` 显示。Windows 首次登录会用隔离的 AA
 
 ## macOS DMG
 
-当前正式稳定安装包为 `AACC-1.4.2.dmg`。双击后将 `AACC.app` 拖入“应用程序”文件夹。此版本使用自签名证书且未经过 Apple 公证；先用 `shasum -a 256 AACC-1.4.2.dmg` 对比配套 `.sha256`，再选择“仍要打开”。若标准路径仍失败，最后才用 `xattr -cr /Applications/AACC.app` 在本机移除隔离属性。
+当前正式稳定安装包为 `AACC-1.4.2.dmg`。双击后将 `AACC.app` 拖入“应用程序”文件夹。此社区版本使用 ad-hoc 签名且未经过 Apple 公证；先用 `shasum -a 256 AACC-1.4.2.dmg` 对比配套 `.sha256`，再选择“仍要打开”。若标准路径仍失败，最后才用 `xattr -cr /Applications/AACC.app` 在本机移除隔离属性。
 
 ## Windows Setup
 

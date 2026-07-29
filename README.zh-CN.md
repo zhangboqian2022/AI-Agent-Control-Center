@@ -37,7 +37,7 @@ _使用合成演示数据生成的界面示意图，不含真实账户或任务�
 
 下载 [AACC-1.4.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
 
-此版本使用本地自签名证书签名，尚未经过 Apple 公证。请先下载配套的 `.dmg.sha256` 资产，并对比：
+此社区版本使用 ad-hoc 签名，尚未经过 Apple 公证。请先下载配套的 `.dmg.sha256` 资产，并对比：
 
 ```bash
 shasum -a 256 AACC-1.4.2.dmg
@@ -88,7 +88,7 @@ Windows 版本尚未签名，因此 Windows 可能显示“未知发布者”或
 | 窗口聚焦 | Bundle ID + AppleScript | 窗口标题匹配（无 bundle id） |
 | 语音输入 | macOS 听写 | Win+H |
 | 辅助功能授权 | 注入/热键需要 | 不需要 |
-| 签名 | 自签名，Gatekeeper 提示 | 未签名，SmartScreen 提示 |
+| 签名 | ad-hoc，Gatekeeper 提示 | 未签名，SmartScreen 提示 |
 
 ## 用 Codex 任务
 
