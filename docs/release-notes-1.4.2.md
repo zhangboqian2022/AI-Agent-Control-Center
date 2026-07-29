@@ -84,13 +84,15 @@
 
 ### 自动化证据边界
 
-候选提交 `0b2730f` 的
-[GitHub Actions 运行 30319350661](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30319350661)
+候选应用提交 `b7be123` 的
+[GitHub Actions 运行 30412622959](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30412622959)
 已在托管的 Windows Server 2022 与 Windows Server 2025 环境通过：原生
 broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、重装、写入前
-锁定目标拒绝、卸载、ACL 与进程清理产品冒烟，以及 Setup、SHA-256 和便携 ZIP
-的严格内容校验与资产上传。macOS 质量作业、Windows 双版本测试、ruff、格式、
-mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务器自动证据。
+锁定目标拒绝、卸载、ACL 与进程清理产品冒烟；原生 WebView2 冒烟还确认生产
+UDF 内实际产生数据、精确 DACL 生效且安装目录旁没有回退目录。Setup、SHA-256
+和便携 ZIP 的严格内容校验与资产上传，以及 macOS 质量作业、Windows 双版本
+测试、ruff、格式、mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务器
+自动证据。
 
 即使上述托管工作流全部通过，它也不能证明消费级 Windows 10 或 Windows 11、
 标准用户安装、另一账户拒读、SmartScreen 交互、真实 Kimi/Codex、托盘、聚焦、
@@ -197,15 +199,17 @@ mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务
 
 ### Automated evidence boundary
 
-Candidate commit `0b2730f` passed
-[GitHub Actions run 30319350661](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30319350661)
+Candidate application commit `b7be123` passed
+[GitHub Actions run 30412622959](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30412622959)
 on hosted Windows Server 2022 and Windows Server 2025: native broker,
 PyInstaller onedir, and Setup builds; frozen first launch; installation;
 reinstall; pre-mutation locked-target refusal; uninstall; ACL and process
-cleanup product smokes; and strict Setup, SHA-256, portable ZIP content
-verification and artifact upload. The same run also passed the macOS quality
-job, both Windows test legs, Ruff, formatting, mypy, and dependency audit.
-This remains hosted-server automated evidence only.
+cleanup product smokes. The native WebView2 smoke also proved actual writes
+inside the production UDF, its exact DACL, and the absence of an
+executable-adjacent fallback directory. Strict Setup, SHA-256, portable ZIP
+content verification and artifact upload, plus the macOS quality job, both
+Windows test legs, Ruff, formatting, mypy, and dependency audit passed in the
+same run. This remains hosted-server automated evidence only.
 
 Hosted Windows Server evidence is not the real Windows 10/11 consumer test. It
 does not replace standard-user installation, separate-account access denial,
