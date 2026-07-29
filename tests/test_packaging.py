@@ -275,87 +275,28 @@ def test_windows_build_chains_setup_unless_explicitly_skipped() -> None:
     assert '$env:AACC_SKIP_INSTALLER -ne "1"' in script
 
 
-def test_windows_installer_stages_a_verified_webview2_bootstrapper() -> None:
+def test_windows_edge_login_package_does_not_bundle_or_require_webview2() -> None:
     script = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
-
-    assert (
-        "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/"
-        "67ea10bf-049f-4ee6-ade4-ffb14d45b7d1/MicrosoftEdgeWebview2Setup.exe"
-    ) in script
-    assert "0223fa1e8d5bd5e4344fb8734e60d088e79f262c0a24444d01f240bc996f04e5" in script
-    assert "MicrosoftEdgeWebview2Setup.exe" in script
-    assert "Get-AuthenticodeSignature" in script
-    assert ".download" in script
-    assert "build\\installer" in script
-
-
-def test_windows_installer_validates_download_before_move_and_final_cache_after_move() -> None:
-    script = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
-
-    assert '$WebView2DownloadName = "$WebView2BootstrapName.download"' in script
-    download_validation_match = re.search(
-        r"Assert-WebView2BootstrapTrusted\s*`?\s*"
-        r"-Path \$WebView2DownloadPath\s*`?\s*"
-        r"-ExpectedLeafName \$WebView2DownloadName",
-        script,
-    )
-    assert download_validation_match is not None
-    move = script.index(
-        "Move-Item -LiteralPath $WebView2DownloadPath -Destination $WebView2BootstrapPath"
-    )
-    final_revalidation_match = re.search(
-        r"Assert-WebView2BootstrapTrusted\s*`?\s*"
-        r"-Path \$WebView2BootstrapPath\s*`?\s*"
-        r"-ExpectedLeafName \$WebView2BootstrapName",
-        script[move:],
-    )
-    assert final_revalidation_match is not None
-    final_revalidation = move + final_revalidation_match.start()
-    assert download_validation_match.start() < move < final_revalidation
-
-
-def test_windows_installer_requires_webview2_runtime_before_installing() -> None:
     installer = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
 
-    assert (
-        'Source: "..\\build\\installer\\MicrosoftEdgeWebview2Setup.exe"; '
-        "Flags: dontcopy noencryption"
-    ) in installer
-    assert "function WebView2RuntimeInstalled: Boolean;" in installer
-    assert "function EnsureWebView2Runtime(var ErrorMessage: String): Boolean;" in installer
-    assert installer.count("{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}") == 2
-    assert "HKLM32" in installer
-    assert "HKCU32" in installer
-    assert "pv" in installer
-    assert "'/silent /install'" in installer
-    assert "WebView2RuntimeInstalled" in installer.split("EnsureWebView2Runtime", 1)[1]
-    prepare_to_install = installer.split("function PrepareToInstall", 1)[1]
-    assert "EnsureWebView2Runtime(ErrorMessage)" in prepare_to_install
-    assert (
-        "Result := ErrorMessage;"
-        in prepare_to_install.split("EnsureWebView2Runtime(ErrorMessage)", 1)[1]
-    )
-    assert "Microsoft Edge WebView2 Runtime" in installer
-    assert "WebView2 运行时" in installer
+    assert "MicrosoftEdgeWebview2Setup.exe" not in script
+    assert "EnsureWebView2Runtime" not in installer
+    assert "PySide6.QtWebView" not in spec
+    assert "'websocket'" in spec
 
 
-def test_windows_installer_rejects_malformed_or_zero_webview2_runtime_versions() -> None:
+def test_windows_installer_keeps_preflight_without_browser_runtime_gate() -> None:
     installer = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
-    version_validator = installer.split("function IsUsableWebView2RuntimeVersion", 1)[1].split(
-        "function WebView2RuntimeInstalled", 1
-    )[0]
-    runtime_gate = installer.split("function WebView2RuntimeInstalled", 1)[1].split(
-        "function EnsureWebView2Runtime", 1
+    prepare_to_install = installer.split("function PrepareToInstall", 1)[1].split(
+        "function InitializeUninstall", 1
     )[0]
 
-    assert "in ['0'..'9']" not in version_validator
-    assert "(Component[DigitIndex] < '0') or" in version_validator
-    assert "(Component[DigitIndex] > '9')" in version_validator
-    assert "ComponentCount <> 4" in version_validator
-    assert "HasNonZeroDigit" in version_validator
-    assert "StrToInt" not in version_validator
-    assert "Trim(RuntimeVersion)" not in version_validator
-    assert runtime_gate.count("IsUsableWebView2RuntimeVersion(RuntimeVersion)") == 2
+    assert "ValidateInternalRootForInstall(ErrorMessage)" in prepare_to_install
+    assert "ShutdownExistingAACC(ErrorMessage)" in prepare_to_install
+    assert "ValidatePackagedTargetsForInstall(ErrorMessage)" in prepare_to_install
+    assert "WebView2" not in prepare_to_install
+    assert "Result := '';" in prepare_to_install
 
 
 def test_windows_webview_smoke_exercises_a_visible_native_controller_after_setup() -> None:
@@ -394,45 +335,22 @@ def test_windows_webview_smoke_exercises_a_visible_native_controller_after_setup
     assert "QtWebEngine" not in module
 
 
-def test_windows_2025_ci_contractually_runs_native_webview_from_installed_product() -> None:
+def test_windows_2025_ci_runs_installed_product_without_native_webview_smoke() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     package_job = workflow.split("  windows-package-2025:", 1)[1]
-    assert "Smoke frozen, installed, and native WebView Windows product" in package_job
+    assert "Smoke frozen and installed Windows product" in package_job
     assert "uv run python scripts/smoke_windows_webview.py" not in package_job
 
     package_smoke = (ROOT / "scripts" / "test_windows_package.ps1").read_text(encoding="utf-8")
     fresh_install = package_smoke.index(
         'Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"'
     )
-    native_smoke = package_smoke.index("installed native WebView smoke")
     installed_launch = package_smoke.index(
         '$Installed = Invoke-InstalledLaunch -Category "installed"'
     )
-    assert fresh_install < native_smoke < installed_launch
-    native_smoke_section = package_smoke[fresh_install:installed_launch]
-    assert '$env:QT_QPA_PLATFORM = "windows"' in native_smoke_section
-    assert re.search(
-        r"Invoke-ExternalDeadline\s+-FilePath \$InstalledAacc\s+`?\s*"
-        r"-Arguments @\(\"--smoke-native-webview\"\)",
-        native_smoke_section,
-    )
-    assert "-TimeoutSeconds 40" in native_smoke_section
-    assert "Assert-ProductProcessBaseline" in native_smoke_section
-    assert "AACC_WEBVIEW_SMOKE_RESULT_PATH" in native_smoke_section
-    assert "native-webview-result.txt" in native_smoke_section
-    assert "$env:LOCALAPPDATA = $NativeWebViewLocalAppData" in native_smoke_section
-    assert "AACC\\kimi-web-session" in native_smoke_section
-    assert (
-        "Assert-ExactAcl -Path $NativeWebViewUserDataPath -Directory $true `\n"
-        '        -EvidenceCategory "installed native WebView user data" `\n'
-        '        -EvidenceName "kimi-web-session"'
-    ) in native_smoke_section
-    assert "Get-ChildItem -LiteralPath $NativeWebViewUserDataPath" in native_smoke_section
-    assert "$NativeWebViewArtifacts.Count -gt 0" in native_smoke_section
-    assert '[string]::Concat($InstalledAacc, ".WebView2")' in native_smoke_section
-    assert "-not (Test-Path -LiteralPath $DefaultWebViewUserDataPath)" in native_smoke_section
-    assert "category=outer-harness-failure" in native_smoke_section
-    assert "category=success" in native_smoke_section
+    assert fresh_install < installed_launch
+    assert "--smoke-native-webview" not in package_smoke
+    assert "AACC_WEBVIEW_SMOKE_RESULT_PATH" not in package_smoke
 
 
 def test_windows_webview_docs_explain_runtime_provisioning_and_manual_coverage() -> None:
@@ -561,7 +479,7 @@ def test_ci_runs_real_windows_product_smoke_before_primary_artifact_publish() ->
     assert "windows-smoke-windows-2022" in workflow
     assert "windows-smoke-windows-2025-vs2026" in workflow
     assert "Smoke frozen Windows product" in workflow
-    assert "Smoke frozen, installed, and native WebView Windows product" in workflow
+    assert "Smoke frozen and installed Windows product" in workflow
     assert "windows-frozen-2022:" in workflow
     assert "windows-package-2025:" in workflow
     final_job = workflow.split("windows-package-2025:", 1)[1]
@@ -927,15 +845,11 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "xattr -cr /Applications/AACC.app" in content
 
 
-def test_specs_bundle_native_qt_webview_for_kimi_membership_login() -> None:
+def test_windows_spec_bundles_edge_cdp_transport_without_qt_webview() -> None:
     text = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
-    assert "PySide6.QtWebView" in text
+    assert "'websocket'" in text
+    assert "PySide6.QtWebView" not in text
     assert "QtWebEngine" not in text
-    assert "hooks" in text
-
-    hook = (ROOT / "hooks" / "hook-PySide6.QtWebView.py").read_text(encoding="utf-8")
-    assert "collect_module" in hook
-    assert "webengine" in hook.lower()
 
 
 def test_readme_first_screen_and_windows_checklists_are_cross_platform() -> None:
