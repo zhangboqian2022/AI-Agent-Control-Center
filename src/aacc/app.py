@@ -6,6 +6,7 @@ import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 
 import uvicorn
@@ -36,15 +37,14 @@ from aacc.gui import MainWindow
 from aacc.hotkeys import AccessibilityHotkeySync, GlobalHotkeys, HotkeyDriver
 from aacc.i18n import LanguageManager, load_language
 from aacc.instance_guard import InstanceGuard, activate_existing_instance
+from aacc.kimi_edge_smoke import run_edge_cdp_smoke
 from aacc.kimi_web_quota_service import KimiWebQuotaService
-from aacc.kimi_web_session import initialize_native_webview
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
 from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
 from aacc.shutdown_windows import WindowsShutdownListener, request_shutdown_for_update
 from aacc.task_manager import TaskManager
-from aacc.webview_smoke import run_native_webview_smoke
 from aacc.windows_broker import build_broker_command, packaged_broker_path
 
 _logger = logging.getLogger("aacc.app")
@@ -341,10 +341,26 @@ def _show_startup_shutdown_error(data_dir: Path, error: BaseException) -> int:
     return 1
 
 
+def initialize_native_webview(data_dir: Path) -> None:
+    """Dynamically load the native backend excluded from Windows packages."""
+
+    initializer: Callable[[Path], None] = import_module(
+        "aacc.kimi_web_session"
+    ).initialize_native_webview
+    initializer(data_dir)
+
+
+def initialize_web_quota_backend(data_dir: Path) -> None:
+    """Initialize only the platform backend used by the Kimi quota session."""
+
+    if sys.platform != "win32":
+        initialize_native_webview(data_dir)
+
+
 def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> int:
     configure_logging(data_dir / "logs")
     try:
-        initialize_native_webview(data_dir)
+        initialize_web_quota_backend(data_dir)
     except FileProtectionError as error:
         _create_qapplication()
         return _show_startup_security_error(data_dir, error)
@@ -556,10 +572,14 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
 def main() -> int:
     if sys.platform == "win32" and sys.argv[1:] == ["--shutdown-for-update"]:
         return request_shutdown_for_update()
+    if sys.platform == "win32" and sys.argv[1:] == ["--smoke-edge-cdp"]:
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        result_path = os.environ.get("AACC_EDGE_CDP_SMOKE_RESULT_PATH")
+        if not local_app_data or not result_path:
+            return 2
+        return run_edge_cdp_smoke(Path(local_app_data), Path(result_path))
     config_path = Path(os.environ.get("AACC_CONFIG_PATH", DEFAULT_CONFIG_PATH))
     data_dir = config_path.parent if config_path != DEFAULT_CONFIG_PATH else APP_SUPPORT_DIR
-    if sys.platform == "win32" and sys.argv[1:] == ["--smoke-native-webview"]:
-        return run_native_webview_smoke(data_dir)
     database_path = resolve_database_path()
     guard = InstanceGuard(data_dir / "aacc.lock")
     if not guard.acquire():

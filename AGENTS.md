@@ -62,17 +62,20 @@ scripts\build_windows_installer.ps1
 
 ## 当前进度（2026-07-29）
 
-- `main`：Windows Kimi 登录/WebView2 UDF 与重复“执行中”修复已合并
-  （merge `b7be123`）。高可信修复方向：AACC 此前没有在
-  `QtWebView.initialize()` 前设置 WebView2 用户数据目录；现在 Windows 会把
-  `WEBVIEW2_USER_DATA_FOLDER` 强制设为
-  `%LOCALAPPDATA%\AACC\kimi-web-session`，先走 AACC 原生 ACL 保护，再初始化
-  Qt；`KimiWebSession.storage_path` 使用同一目录。冻结包产品冒烟通过隔离
-  `LOCALAPPDATA` 调用同一生产初始化路径，验证 JavaScript 往返、WebView2
-  实际写入、安装目录旁无错误的 `AACC.exe.WebView2`、目录精确 DACL；目录创建/
-  保护失败只输出固定脱敏诊断并安全退出。另已把 Codex `turn_aborted` 识别为
-  `CANCELLED`，修复一个真实任务显示两个“执行中”的问题。
-- `codex/v1.4.2-quota-windows-hardening`：**1.4.2 Windows Setup 候选正在收尾，
+- `codex/windows-edge-kimi-session`：Windows Kimi 登录已从不稳定的内嵌
+  WebView2 改为 AACC 管理的 Microsoft Edge 专用会话。配置目录固定为
+  `%LOCALAPPDATA%\AACC\kimi-edge-profile`，使用原生精确受保护 DACL；正常退出
+  AACC 或重启电脑均保留登录态，只有人工退出、Kimi 鉴权失效或安全故障才撤销
+  复用。每五分钟通过 loopback 随机端口 CDP/WebSocket 刷新 5H/WEEK/MONTH，
+  Cookie 与 access token 始终留在页面上下文，Python 只接收归一化百分比、
+  重置时间和会员级别。Windows 包不再依赖 WebView2 Runtime。
+- 最新加固提交序列已关闭：登录/退出 worker 重叠、Edge 子进程树回收、
+  不安全 profile fail-closed、原始会员文档越界、CDP target 启动竞态；并新增
+  安装后 `AACC.exe --smoke-edge-cdp` 产品冒烟，验证真实 Edge/CDP/WebSocket、
+  profile 精确 ACL 和无孤儿 Edge。macOS 继续使用原生 Qt WebView。当前本机
+  929 passed、7 skipped，ruff、format、mypy、`uv lock --check` 全绿；GitHub
+  hosted Windows 2022/2025 证据待本分支合并 `main` 后生成。
+- `codex/windows-edge-kimi-session`：**1.4.2 Windows Setup 候选正在收尾，
   尚未发布**。主 Windows 候选产物为 `AACC-1.4.2-Setup.exe`，当前用户、
   无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面
   快捷方式可选、不添加启动项，升级/卸载保留 `%APPDATA%\AACC`。
@@ -88,7 +91,7 @@ scripts\build_windows_installer.ps1
   重装、写入前锁目标拒绝、卸载、ACL、进程清理与原生 WebView2 产品冒烟。
   Setup、SHA-256 与便携 ZIP 通过严格内容校验并上传；本机同一提交 885 passed、
   7 skipped，ruff、format、mypy 全绿。该证据不替代 Windows 10/11 真机门禁。
-- 桌面候选产物已更新：Setup SHA-256
+- 桌面旧候选产物（`b7be123`，待 Edge 版构建后替换）：Setup SHA-256
   `e06dbe37f89d77517b0d9626b86b198430a2b4c5ae0bf61f4550eb3eb03fe9a3`，
   Windows 便携 ZIP SHA-256
   `d88f015d271ee52eb31ed554ef8dbcda229a278d5b67a81b22956d282c3c36f5`，

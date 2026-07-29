@@ -22,7 +22,7 @@ _使用合成演示数据生成的界面示意图，不含真实账户或任务�
 - **中英文即时切换：** 首次启动跟随系统语言；面板头部的 `EN`/`中` 操作可在 macOS 与 Windows 上立即切换完整界面，明确选择会持久保存。紧凑模式保留在设置和托盘菜单。切换语言不会刷新额度，也不会改变监控任务或登录状态。
 - **及时且克制的概括：** 每 5 秒检查 Codex 元数据，用“正在修改代码”“正在运行测试”等固定短语反馈活动，不展示原始载荷。
 - **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示。每个可用重置时间都直接写在行内，缺失数据保持 `--`。
-- **Kimi 会员额度缓存：** 操作系统原生的每应用 WebView 存储保留 Kimi 第一方站点会话。对于原生网页会话复用，AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进该门禁；另行受保护保存的 Kimi Code OAuth 凭据不属于这个网页门禁。网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新。查询只读取元数据，不发送提示词，也不消耗生成 Token。明确退出登录会先同步关闭复用，再尝试有界的原生站点数据清理。
+- **Kimi 会员额度缓存：** Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置；Kimi Code OAuth 凭据由 AACC 凭据保护另行保存。网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；查询不消耗生成 Token。
 - **本机优先：** 只读取判断状态所需的本机任务元数据，不上传对话内容。
 - **可靠的完成判断：** 优先依据 Codex `task_started` 与 `task_complete` 会话事件，避免任务完成后仍错误显示“执行中”。
 - **发现故障可见：** Codex 元数据连续读取失败时显示可恢复的黄色告警条，不再静默冻结旧状态。
@@ -72,12 +72,9 @@ cd AI-Agent-Control-Center
 
 1.4.2 的 Windows 主下载文件是 `AACC-1.4.2-Setup.exe`，并配套 `AACC-1.4.2-Setup.exe.sha256`。两者目前仍是候选产物：只有 Windows 10/11 人工门禁全部完成后，才会创建 `v1.4.2` tag 与正式 GitHub Release。
 
-Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC` 下由 AACC 管理的设置、历史、数据库、凭据和 Kimi 复用决定。原生 WebView 存储由操作系统另行管理，因此保留 `%APPDATA%\AACC` 不代表安装器保存了网页会话。
+Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC` 下由 AACC 管理的设置、历史、数据库、凭据和 Kimi 复用决定。
 
-Setup 还会在写入 AACC 文件前为当前用户确保 Microsoft Evergreen WebView2
-运行时可用；仅在运行时不存在时才需要网络下载，已安装且可用的运行时会被复用。
-如果 Kimi 登录的原生视图无法开始加载，AACC 会用 15 秒诊断和 Microsoft
-WebView2 修复页面链接替换空白界面。
+Windows Kimi 登录使用系统已安装的 Microsoft Edge，并把会话隔离在 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile`；Setup 不再安装额外浏览器运行时。首次在专用 Edge 窗口登录成功后，AACC 会关闭该窗口，并每五分钟用同一独立会话在后台刷新额度，直到手动退出或 Kimi 令会话失效。AACC 不读取日常 Edge 配置。
 
 Windows 候选版尚未签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对配套 SHA-256，再选择“更多信息 → 仍要运行”。敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。
 

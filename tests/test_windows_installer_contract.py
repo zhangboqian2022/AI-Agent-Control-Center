@@ -43,11 +43,8 @@ def test_inno_setup_packages_only_the_reviewed_onedir_roots() -> None:
     assert 'Source: "..\\dist\\AACC\\_internal\\*"; DestDir: "{app}\\_internal"' in files
     assert 'Source: "..\\build\\installer\\internal-manifest-v1.txt"' in files
     assert 'Source: "shutdown-v1.capability"' in files
-    assert (
-        'Source: "..\\build\\installer\\MicrosoftEdgeWebview2Setup.exe"; '
-        "Flags: dontcopy noencryption"
-    ) in files
-    assert len(re.findall(r"(?m)^Source:", files)) == 7
+    assert "MicrosoftEdgeWebview2Setup.exe" not in files
+    assert len(re.findall(r"(?m)^Source:", files)) == 6
     internal = files.index('Source: "..\\dist\\AACC\\_internal\\*"')
     aacc = files.index('Source: "..\\dist\\AACC\\AACC.exe"')
     broker = files.index('Source: "..\\dist\\AACC\\aacc-spawn.exe"')
