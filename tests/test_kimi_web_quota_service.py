@@ -218,9 +218,7 @@ def test_lazy_web_session_receives_same_language_manager(
     service.stop()
 
 
-def test_windows_lazy_session_uses_managed_edge(
-    qapp, tmp_path: Path, monkeypatch: object
-) -> None:
+def test_windows_lazy_session_uses_managed_edge(qapp, tmp_path: Path, monkeypatch: object) -> None:
     del qapp
     language_manager = LanguageManager(EN_US)
     created: list[tuple[Path, object, LanguageManager]] = []

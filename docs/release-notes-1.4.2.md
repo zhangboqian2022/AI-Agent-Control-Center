@@ -30,7 +30,8 @@
 - Kimi 严格按 `5H`、`WEEK`、`MONTH` 三行显示。Windows 首次登录使用隔离的
   AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile`；它不读取
   日常 Edge 配置，并跨 AACC 和电脑重启保留，直到手动退出、Kimi 令会话失效
-  或安全检查失败。AACC 不保存 Cookie、密码或网页 Bearer Token。
+  或安全检查失败。AACC 不保存 Cookie、密码或网页 Bearer Token；Kimi Code OAuth
+  凭据由 AACC 凭据保护另行保存。
 - 网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能用
   足够新的数据补临时缺失的 `5H`/`WEEK`，不能虚构 `MONTH`。额度查询只读取
   元数据、不发送提示词，也不消耗生成 Token。
@@ -126,7 +127,8 @@ broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、
   `%LOCALAPPDATA%\AACC\kimi-edge-profile`; it never reads the normal Edge
   profile and survives AACC and PC restarts until you sign out, Kimi expires
   it, or a security check fails. AACC stores no cookie, password, or website
-  bearer token.
+  bearer token. Kimi Code OAuth credentials are stored separately under AACC
+  credential protection.
 - The web source and Kimi Code fallback start in the same five-minute cycle.
   Only sufficiently fresh Kimi Code data may fill a missing `5H` or `WEEK`;
   it never supplies `MONTH`. Metadata-only lookups send no prompt and use no

@@ -104,11 +104,7 @@ class KimiEdgeSession(QObject):
         self._start(visible=True)
 
     def refresh(self) -> None:
-        if (
-            self._closed
-            or self._busy
-            or not self.login_state.may_reuse()
-        ):
+        if self._closed or self._busy or not self.login_state.may_reuse():
             return
         self._start(visible=False)
 
