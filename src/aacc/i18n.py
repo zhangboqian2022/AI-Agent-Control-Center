@@ -101,6 +101,7 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "settings.save_kimi_key": "保存 Kimi API Key",
         "settings.kimi_key_required": "API Key 不能为空",
         "settings.kimi_web_login": "登录 Kimi 会员（同步 5H / WEEK / MONTH）",
+        "settings.kimi_edge_login": "使用专用 Edge 登录 Kimi（同步 5H / WEEK / MONTH）",
         "settings.kimi_logout": "退出 Kimi 登录",
         "settings.visible_agents": "显示哪些程序",
         "settings.generic_cli": "Z Code / 通用 CLI",
@@ -259,6 +260,9 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "settings.save_kimi_key": "Save Kimi API Key",
         "settings.kimi_key_required": "API Key is required",
         "settings.kimi_web_login": "Sign in to Kimi membership (sync 5H / WEEK / MONTH)",
+        "settings.kimi_edge_login": (
+            "Sign in to Kimi with dedicated Edge (sync 5H / WEEK / MONTH)"
+        ),
         "settings.kimi_logout": "Sign out of Kimi",
         "settings.visible_agents": "Visible applications",
         "settings.generic_cli": "Z Code / Generic CLI",

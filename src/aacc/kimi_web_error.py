@@ -15,6 +15,7 @@ class KimiWebErrorCategory(StrEnum):
     REFRESH_TIMEOUT = "refresh_timeout"
     REFRESH_FAILED = "refresh_failed"
     STATE_SAVE_FAILED = "state_save_failed"
+    PROFILE_UNSAFE = "profile_unsafe"
     CODE_FALLBACK_REFRESH_FAILED = "code_fallback_refresh_failed"
     LOGOUT_PARTIAL = "logout_partial"
 
@@ -58,6 +59,7 @@ _SESSION_TO_WEB_QUOTA: Final[dict[KimiWebErrorCategory, KimiWebQuotaErrorCategor
     KimiWebErrorCategory.REFRESH_TIMEOUT: KimiWebQuotaErrorCategory.REFRESH_TIMEOUT,
     KimiWebErrorCategory.REFRESH_FAILED: KimiWebQuotaErrorCategory.REFRESH_FAILED,
     KimiWebErrorCategory.STATE_SAVE_FAILED: KimiWebQuotaErrorCategory.STATE_SAVE_FAILED,
+    KimiWebErrorCategory.PROFILE_UNSAFE: KimiWebQuotaErrorCategory.LOAD_FAILED,
     KimiWebErrorCategory.LOGOUT_PARTIAL: KimiWebQuotaErrorCategory.LOGOUT_PARTIAL,
 }
 

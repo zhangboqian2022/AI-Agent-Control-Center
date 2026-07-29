@@ -86,6 +86,7 @@ def test_catalog_contains_all_shared_keys() -> None:
         "clear_completed.prompt.other",
         "about.body.macos",
         "about.body.windows",
+        "settings.kimi_edge_login",
     }
 
     assert required_keys <= catalog_keys(ZH_CN)
