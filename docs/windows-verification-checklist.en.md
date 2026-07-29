@@ -40,7 +40,9 @@ Commit and candidate SHA-256:
 - [ ] **Shortcuts and startup**: the Start Menu shortcut exists; the desktop
   shortcut follows the selected option; no startup/login item was added.
 - [ ] **First launch and tray**: the installed AACC panel opens, remains
-  responsive, stays in the tray, and restores after hide/minimize.
+  responsive, stays in the tray, and restores after hide/minimize. Left-click
+  toggles the panel, right-click leaves the menu open, and both its **Quit
+  AACC** action and the header power button exit the complete process.
 - [ ] **Live language switching**: repeatedly switch language with real tasks
   and quota data before and after Kimi login. The complete visible UI updates
   each time; the chosen language persists after restart; quota values, task
@@ -51,7 +53,10 @@ Commit and candidate SHA-256:
 - [ ] **Input controls**: allowlisted keys and text reach only the focused
   target; Win+H voice input and configured F13–F20 global hotkeys work.
 - [ ] **Quota rows**: without starting a Codex task, refresh and verify one real
-  Codex `WEEK` row. Kimi shows `5H`, `WEEK`, `MONTH` in that order after real
+  Codex `WEEK` row. Start AACC before ChatGPT/Codex, then confirm the desktop
+  app opened or restarted after AACC recovers synchronization within the
+  automatic every 60 seconds cycle; clicking the Codex strip refreshes
+  immediately. Kimi shows `5H`, `WEEK`, `MONTH` in that order after real
   membership login; each available row shows a complete local reset date/time,
   a known percentage without a trustworthy reset shows `--` for the reset,
   and unavailable percentages are `--`, never `0%`.

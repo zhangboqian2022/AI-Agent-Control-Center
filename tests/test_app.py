@@ -1005,12 +1005,12 @@ def test_default_codex_quota_factory_composes_live_and_local_readers(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    from aacc.codex_app_server import CodexAppServerReader
+    from aacc.codex_app_server import RediscoveringCodexQuotaReader
     from aacc.codex_quota import CodexQuotaReader, CompositeCodexQuotaReader
 
     executable = tmp_path / "codex"
     executable.write_text("", encoding="utf-8")
-    monkeypatch.setattr(app_module, "find_codex_executable", lambda: executable)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: executable)
 
     service = app_module._default_codex_quota_service_factory(
         app_module.load_config(tmp_path / "config.yaml"),
@@ -1019,7 +1019,7 @@ def test_default_codex_quota_factory_composes_live_and_local_readers(
 
     assert service is not None
     assert isinstance(service._reader, CompositeCodexQuotaReader)
-    assert isinstance(service._reader._primary, CodexAppServerReader)
+    assert isinstance(service._reader._primary, RediscoveringCodexQuotaReader)
     assert isinstance(service._reader._fallback, CodexQuotaReader)
 
 
@@ -1038,7 +1038,7 @@ def test_frozen_windows_codex_quota_uses_only_packaged_broker(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"MZ")
     bundle.mkdir()
-    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: codex)
 
     service = app_module._default_codex_quota_service_factory(
         app_module.load_config(tmp_path / "config.yaml"),
@@ -1053,7 +1053,8 @@ def test_frozen_windows_codex_quota_uses_only_packaged_broker(
     assert service is not None
     assert isinstance(service._reader, CompositeCodexQuotaReader)
     assert service._reader._primary is not None
-    command = service._reader._primary._process_command()
+    one_shot = service._reader._primary._reader_factory(codex)
+    command = one_shot._process_command()
     assert command.args[0] == str(broker)
     assert command.args[6] == str(bundle)
     assert command.args[-1] == str(codex)
@@ -1073,7 +1074,7 @@ def test_frozen_windows_missing_or_inconsistent_bundle_uses_local_fallback(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"MZ")
     wrong_bundle.mkdir(parents=True)
-    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: codex)
 
     service = app_module._default_codex_quota_service_factory(
         app_module.load_config(tmp_path / "config.yaml"),
@@ -1104,7 +1105,7 @@ def test_frozen_windows_missing_broker_uses_local_fallback(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"MZ")
     bundle.mkdir()
-    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: codex)
 
     service = app_module._default_codex_quota_service_factory(
         app_module.load_config(tmp_path / "config.yaml"),
@@ -1127,7 +1128,7 @@ def test_source_windows_requires_absolute_broker_override(
     codex = tmp_path / "tools" / "codex.exe"
     codex.parent.mkdir()
     codex.write_bytes(b"MZ")
-    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: codex)
     config = app_module.load_config(tmp_path / "config.yaml")
 
     without_override = app_module._default_codex_quota_service_factory(
@@ -1156,7 +1157,8 @@ def test_source_windows_requires_absolute_broker_override(
 
     assert with_override is not None
     assert with_override._reader._primary is not None
-    command = with_override._reader._primary._process_command()
+    one_shot = with_override._reader._primary._reader_factory(codex)
+    command = one_shot._process_command()
     assert command.args[0] == str(broker)
     assert command.args[6] == str(broker.parent)
 
@@ -1167,7 +1169,7 @@ def test_non_windows_ignores_broker_override_and_keeps_direct_reader(
 ) -> None:
     codex = tmp_path / "codex"
     codex.write_bytes(b"")
-    monkeypatch.setattr(app_module, "find_codex_executable", lambda: codex)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: codex)
 
     service = app_module._default_codex_quota_service_factory(
         app_module.load_config(tmp_path / "config.yaml"),
@@ -1177,7 +1179,8 @@ def test_non_windows_ignores_broker_override_and_keeps_direct_reader(
 
     assert service is not None
     assert service._reader._primary is not None
-    assert service._reader._primary._process_command().args == (
+    one_shot = service._reader._primary._reader_factory(codex)
+    assert one_shot._process_command().args == (
         str(codex),
         "app-server",
         "--stdio",
@@ -1190,12 +1193,37 @@ def test_default_codex_quota_factory_keeps_local_reader_without_executable(
 ) -> None:
     from aacc.codex_quota import CompositeCodexQuotaReader
 
-    monkeypatch.setattr(app_module, "find_codex_executable", lambda: None)
+    monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: None)
 
     service = app_module._default_codex_quota_service_factory(
-        app_module.load_config(tmp_path / "config.yaml")
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="darwin",
     )
 
     assert service is not None
     assert isinstance(service._reader, CompositeCodexQuotaReader)
-    assert service._reader._primary is None
+    assert service._reader._primary is not None
+
+
+def test_default_codex_quota_factory_rediscovers_executable_after_startup(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    codex = tmp_path / "ChatGPT" / "codex.exe"
+    locations = iter((None, codex))
+    monkeypatch.setattr(
+        app_module,
+        "find_codex_executable",
+        lambda **_kwargs: next(locations),
+    )
+
+    service = app_module._default_codex_quota_service_factory(
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="darwin",
+    )
+
+    assert service is not None
+    primary = service._reader._primary
+    assert primary is not None
+    assert primary._locator() is None
+    assert primary._locator() == codex

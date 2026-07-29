@@ -194,6 +194,44 @@ def test_bilingual_guides_make_desktop_controls_platform_specific() -> None:
         assert term in chinese
 
 
+def test_windows_docs_cover_dynamic_codex_refresh_and_explicit_quit() -> None:
+    english = "\n".join(
+        _read(name)
+        for name in (
+            "README.md",
+            "docs/user-guide.en.md",
+            "docs/release-notes-1.4.2.md",
+            "docs/windows-verification-checklist.en.md",
+        )
+    )
+    chinese = "\n".join(
+        _read(name)
+        for name in (
+            "README.zh-CN.md",
+            "docs/user-guide.md",
+            "docs/release-notes-1.4.2.md",
+            "docs/windows-verification-checklist.zh-CN.md",
+        )
+    )
+
+    for term in (
+        "every 60 seconds",
+        "opened or restarted after AACC",
+        "right-click",
+        "power button",
+        "Quit AACC",
+    ):
+        assert term in english
+    for term in (
+        "每 60 秒",
+        "在 AACC 之后打开或重启",
+        "右键",
+        "电源按钮",
+        "退出 AACC",
+    ):
+        assert term in chinese
+
+
 def test_kimi_session_docs_describe_platform_store_and_reuse_gate_honestly() -> None:
     windows_english_names = (
         "README.md",

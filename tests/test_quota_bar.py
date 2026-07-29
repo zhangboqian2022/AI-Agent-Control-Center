@@ -94,6 +94,31 @@ def test_show_quota(qapp):
     assert format_reset_countdown(make_quota().weekly.reset_at) in bar.toolTip()
 
 
+def test_explicit_zero_percent_is_not_rendered_as_missing(qapp):
+    quota = make_quota()
+    bar = QuotaBar(LanguageManager(ZH_CN))
+    bar.show_quota(
+        KimiQuota(
+            weekly=quota.weekly,
+            five_hour=QuotaDetail(
+                used=0,
+                limit=100,
+                remaining=100,
+                reset_at=quota.five_hour.reset_at,
+                percentage=0,
+            ),
+            monthly=quota.monthly,
+            membership_level=quota.membership_level,
+            booster=quota.booster,
+            status=quota.status,
+            fetched_at=quota.fetched_at,
+        )
+    )
+
+    assert bar.percent_labels()[0] == "0%"
+    assert bar.five_hour_bar.value() == 0
+
+
 def test_kimi_quota_retranslates_from_retained_snapshot_without_clicking(qapp):
     language_manager = LanguageManager(ZH_CN)
     bar = QuotaBar(language_manager)
