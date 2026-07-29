@@ -15,7 +15,9 @@ fi
 repository="${AACC_RELEASE_REPOSITORY:-zhangboqian2022/AI-Agent-Control-Center}"
 release_tag="v${release_version}"
 dmg_name="AACC-${release_version}.dmg"
-checksum_name="AACC-${release_version}.dmg.sha256"
+dmg_checksum_name="AACC-${release_version}.dmg.sha256"
+setup_name="AACC-${release_version}-Setup.exe"
+setup_checksum_name="AACC-${release_version}-Setup.exe.sha256"
 api_url="https://api.github.com/repos/${repository}/releases/tags/${release_tag}"
 download_base="https://github.com/${repository}/releases/download/${release_tag}"
 release_json="$(mktemp -t aacc-release.XXXXXX)"
@@ -26,7 +28,8 @@ curl --fail --silent --show-error --location \
   --output "$release_json" \
   "$api_url"
 
-python3 - "$release_json" "$release_tag" "$download_base" "$dmg_name" "$checksum_name" <<'PY'
+python3 - "$release_json" "$release_tag" "$download_base" \
+  "$dmg_name" "$dmg_checksum_name" "$setup_name" "$setup_checksum_name" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -54,9 +57,10 @@ for name in expected_names:
         raise SystemExit(f"错误：发布资产 URL 不一致：{name}")
 PY
 
-for asset_name in "$dmg_name" "$checksum_name"; do
+for asset_name in \
+  "$dmg_name" "$dmg_checksum_name" "$setup_name" "$setup_checksum_name"; do
   url="${download_base}/${asset_name}"
   curl --fail --silent --show-error --location --head --output /dev/null "$url"
 done
 
-echo "发布校验通过：${release_tag}（正式发布，DMG 与 SHA-256 资产可下载）"
+echo "发布校验通过：${release_tag}（正式发布，DMG、Windows Setup 与 SHA-256 资产可下载）"

@@ -2,7 +2,7 @@
 
 > A local-first desktop control center for the AI coding agents you choose to monitor, supporting macOS 13+ and Windows 10+.
 
-[中文文档](README.zh-CN.md) · [Download AACC 1.4.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg) · [Release notes](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.1) · [Product design](docs/product-design.md)
+[中文文档](README.zh-CN.md) · [Download AACC 1.4.2](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.2) · [Release notes](docs/release-notes-1.4.2.md) · [Product design](docs/product-design.md)
 
 AACC is a floating cross-platform panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative platform-specific focus/input automation.
 
@@ -35,12 +35,12 @@ _Illustrative UI with synthetic demo data; no real account or task data._
 
 ### Recommended: download the DMG
 
-Download [AACC-1.4.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg), open it, and drag `AACC.app` to Applications.
+Download [AACC-1.4.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2.dmg), open it, and drag `AACC.app` to Applications.
 
 This build is signed with a local self-signed certificate and is not notarized by Apple. First download the matching `.dmg.sha256` asset and compare it with:
 
 ```bash
-shasum -a 256 AACC-1.4.1.dmg
+shasum -a 256 AACC-1.4.2.dmg
 ```
 
 Only after the checksum matches, use **System Settings → Privacy & Security → Open Anyway** if macOS blocks the first launch. If that documented path still fails, the last-resort local quarantine removal is:
@@ -69,15 +69,15 @@ To create a distributable image:
 ./scripts/build_dmg.sh
 ```
 
-### Windows 1.4.2 candidate
+### Windows 1.4.2
 
-The primary Windows download for 1.4.2 is `AACC-1.4.2-Setup.exe`, accompanied by `AACC-1.4.2-Setup.exe.sha256`. These assets are still release candidates: tag `v1.4.2` and the formal GitHub Release will be created only after the open Windows 10/11 manual gates are completed.
+The primary Windows download is [`AACC-1.4.2-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2-Setup.exe), accompanied by `AACC-1.4.2-Setup.exe.sha256`.
 
 This per-user Setup installs for the current user without administrator elevation at `%LocalAppData%\Programs\AACC`. It always adds a Start Menu shortcut, offers an unchecked desktop shortcut, and adds no login item. Run the same Setup to upgrade in place; uninstall removes the program and shortcuts. Both upgrade and uninstall preserve AACC-owned data under `%APPDATA%\AACC`, including settings, history, database, credentials, and the protected Kimi reuse decision.
 
 Windows Kimi login uses the installed Microsoft Edge browser with an AACC-owned Edge profile at `%LOCALAPPDATA%\AACC\kimi-edge-profile`; Setup does not install a separate browser runtime. Sign in once in the dedicated Edge window. AACC then closes that managed window and reuses the isolated session for five-minute background quota refreshes until you sign out or Kimi expires the session. AACC never reads the normal Edge profile.
 
-The Windows candidate is unsigned, so Windows may show an Unknown publisher or SmartScreen warning. Verify the matching SHA-256 before choosing **More info → Run anyway**. Sensitive configuration, database, and credential files use a native protected DACL limited to the current user, Local System, and Administrators. Packaged Codex quota queries run through a fixed-purpose broker beside `AACC.exe`; the broker accepts only the read-only Codex app-server command and contains its process tree.
+The Windows build is unsigned, so Windows may show an Unknown publisher or SmartScreen warning. Verify the matching SHA-256 before choosing **More info → Run anyway**. Sensitive configuration, database, and credential files use a native protected DACL limited to the current user, Local System, and Administrators. Packaged Codex quota queries run through a fixed-purpose broker beside `AACC.exe`; the broker accepts only the read-only Codex app-server command and contains its process tree. Hosted Windows Server 2022/2025 product tests passed; this does not claim completed consumer Windows 10/11 manual verification.
 
 Developers can still build the onedir payload from source with Python 3.12+, [uv](https://docs.astral.sh/uv/), and `.\scripts\build_windows.ps1`. The portable bundle is a CI/debugging artifact, not the primary user download.
 
@@ -105,7 +105,7 @@ For selected Codex sessions, AACC reads task IDs, titles, timestamps, session-fi
 
 The Codex quota strip is weekly-only. Its primary source starts the installed Codex `app-server` locally and calls only the read-only `account/rateLimits/read` method using the account already configured in Codex; it does not start a task, send a prompt, or initiate a login. AACC rediscovers that live source every 60 seconds, so ChatGPT/Codex opened or restarted after AACC can synchronize without restarting AACC; click the strip for an immediate refresh. AACC accepts only a future 10080-minute window. If that method or executable is unavailable, it falls back to bounded tails of recent local session files and ignores legacy shorter windows. A temporary refresh failure preserves the last valid value and marks it stale; `--` is used only before any valid value is available.
 
-Kimi renders `5H`, `WEEK`, and `MONTH`. A real `0%` is rendered as `0%`. A known percentage with no trustworthy reset time keeps the percentage and shows `--` for its reset. Temporary background failures retain the last verifiable `5H`/`WEEK` values as stale and replace them automatically after a successful refresh. Native-session persistence and logout across restart still require macOS and Windows manual sign-off before 1.4.2 can be released.
+Kimi renders `5H`, `WEEK`, and `MONTH`. A real `0%` is rendered as `0%`. A known percentage with no trustworthy reset time keeps the percentage and shows `--` for its reset. Temporary background failures retain the last verifiable `5H`/`WEEK` values as stale and replace them automatically after a successful refresh. Native-session persistence and logout across restart remain listed in the manual verification checklists.
 
 ## CLI and local API
 

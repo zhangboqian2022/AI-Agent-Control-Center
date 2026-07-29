@@ -2,7 +2,7 @@
 
 > 面向本机 AI Coding Agent 的桌面状态与控制中心，支持 macOS 13+ 与 Windows 10+。
 
-[English README](README.md) · [下载 AACC 1.4.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg) · [发布说明](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.1) · [产品设计](docs/product-design.zh-CN.md)
+[English README](README.md) · [下载 AACC 1.4.2](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.2) · [发布说明](docs/release-notes-1.4.2.md) · [产品设计](docs/product-design.zh-CN.md)
 
 AACC 是一个本机优先的跨平台悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
 
@@ -35,12 +35,12 @@ _使用合成演示数据生成的界面示意图，不含真实账户或任务�
 
 ### 推荐：下载 DMG
 
-下载 [AACC-1.4.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.1/AACC-1.4.1.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
+下载 [AACC-1.4.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
 
 此版本使用本地自签名证书签名，尚未经过 Apple 公证。请先下载配套的 `.dmg.sha256` 资产，并对比：
 
 ```bash
-shasum -a 256 AACC-1.4.1.dmg
+shasum -a 256 AACC-1.4.2.dmg
 ```
 
 仅在校验值一致后，若 macOS 拦截首次启动，再到“系统设置 → 隐私与安全性”选择“仍要打开”。如果该标准路径仍失败，最后才在本机移除隔离属性：
@@ -69,15 +69,15 @@ cd AI-Agent-Control-Center
 ./scripts/build_dmg.sh
 ```
 
-### Windows 1.4.2 候选版
+### Windows 1.4.2
 
-1.4.2 的 Windows 主下载文件是 `AACC-1.4.2-Setup.exe`，并配套 `AACC-1.4.2-Setup.exe.sha256`。两者目前仍是候选产物：只有 Windows 10/11 人工门禁全部完成后，才会创建 `v1.4.2` tag 与正式 GitHub Release。
+Windows 主下载文件是 [`AACC-1.4.2-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2-Setup.exe)，并配套 `AACC-1.4.2-Setup.exe.sha256`。
 
 Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC` 下由 AACC 管理的设置、历史、数据库、凭据和 Kimi 复用决定。
 
 Windows Kimi 登录使用系统已安装的 Microsoft Edge，并把会话隔离在 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile`；Setup 不再安装额外浏览器运行时。首次在专用 Edge 窗口登录成功后，AACC 会关闭该窗口，并每五分钟用同一独立会话在后台刷新额度，直到手动退出或 Kimi 令会话失效。AACC 不读取日常 Edge 配置。
 
-Windows 候选版尚未签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对配套 SHA-256，再选择“更多信息 → 仍要运行”。敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。
+Windows 版本尚未签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对配套 SHA-256，再选择“更多信息 → 仍要运行”。敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。Windows Server 2022/2025 托管产品测试已通过，但这不代表已完成消费级 Windows 10/11 人工验证。
 
 开发者仍可使用 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和 `.\scripts\build_windows.ps1` 从源码生成 onedir 载荷。portable 包只用于 CI/调试，不是面向普通用户的主下载。
 
@@ -105,7 +105,7 @@ Windows 候选版尚未签名，因此 Windows 可能显示“未知发布者”
 
 Codex 额度条只显示周额度。主要数据源是在本机启动已安装的 Codex `app-server`，仅使用 Codex 已配置账户调用只读 `account/rateLimits/read`；不会启动任务、发送提示词或发起登录。AACC 每 60 秒重新发现一次实时来源，因此 ChatGPT/Codex 在 AACC 之后打开或重启也能自动同步，无需重启 AACC；点击额度条可立即刷新。AACC 只接受未来有效的 10080 分钟周窗口。可执行文件或该方法不可用时，才回退扫描近期本机会话文件的有界尾部，并忽略旧版较短窗口。一次临时刷新失败不会清空已有数值，而会保留最后一次有效值并标记“数据过期”；从未取得过有效数据时才显示 `--`。
 
-Kimi 严格显示 `5H`、`WEEK`、`MONTH`。真实 `0%` 显示为 `0%`；百分比已知但没有可信重置时间时，仍显示百分比，重置位置显示 `--`。后台临时刷新失败时保留最后一次可验证的 `5H`/`WEEK` 值并标记“数据过期”，刷新恢复后自动替换。1.4.2 发布前，原生会话跨重启保留与退出后仍保持登出还需要 macOS 与 Windows 人工签字。
+Kimi 严格显示 `5H`、`WEEK`、`MONTH`。真实 `0%` 显示为 `0%`；百分比已知但没有可信重置时间时，仍显示百分比，重置位置显示 `--`。后台临时刷新失败时保留最后一次可验证的 `5H`/`WEEK` 值并标记“数据过期”，刷新恢复后自动替换。原生会话跨重启保留与退出后仍保持登出继续列在人工验证清单中。
 
 ## CLI 与本地 API
 

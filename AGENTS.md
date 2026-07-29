@@ -91,8 +91,8 @@ scripts\build_windows_installer.ps1
   已在 macOS、Windows Server 2022/2025 全绿；包含 Windows 双版本完整 pytest、
   依赖审计、冻结包与 Setup 构建、真实安装后 Edge/CDP/WebSocket、profile 精确
   ACL、无孤儿 Edge、broker、重装、锁目标拒绝、卸载、进程清理及产物严格校验。
-- `main`：**1.4.2 Windows Setup 候选已生成，尚未正式发布**。主 Windows
-  候选产物为 `AACC-1.4.2-Setup.exe`，当前用户、
+- `main`：**1.4.2 已按维护者决定正式发布**。主 Windows
+  产物为 `AACC-1.4.2-Setup.exe`，当前用户、
   无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面
   快捷方式可选、不添加启动项，升级/卸载保留 `%APPDATA%\AACC`。
 - 已移除冻结运行时对 `whoami.exe`、`icacls.exe`、`taskkill.exe` 的依赖：
@@ -107,19 +107,18 @@ scripts\build_windows_installer.ps1
   重装、写入前锁目标拒绝、卸载、ACL、进程清理与原生 WebView2 产品冒烟。
   Setup、SHA-256 与便携 ZIP 通过严格内容校验并上传；本机同一提交 885 passed、
   7 skipped，ruff、format、mypy 全绿。该证据不替代 Windows 10/11 真机门禁。
-- 最新 Codex 同步/退出与额度保留修复候选为 `5f7966b`，hosted 全量运行
+- 最新 Codex 同步/退出与额度保留修复为 `5f7966b`，hosted 全量运行
   `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30436090922`
-  全绿；候选 Setup 已替换，SHA-256
+  全绿；正式 Setup SHA-256
   `139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`，
   同名 `.sha256` 已同步。
 - 额度最终布局：Codex 仅一行 `WEEK`；Kimi 为 `5H`、`WEEK`、`MONTH`，行内
   显示百分比、进度条和完整本地重置日期时间。Kimi 会员网页会话在 AACC 本地
   缓存到明确退出，并每五分钟一起刷新三窗口；真实 `0%` 不得显示为 `--`，
   临时刷新失败保留最后一次可验证值并标记过期；额度元数据查询不消耗模型 Token。
-- 发版仍被人工门禁阻塞：真实 Windows 10/11 标准用户完整清单、另一无特权账户
-  对配置/凭据/数据库/WAL/SHM/Edge 专用 profile 的拒读、真实 Kimi/Codex、
-  SmartScreen、托盘、聚焦/热键和长时间运行。完成并附证据前不得创建
-  `v1.4.2` tag 或正式 Release。已正式发布的 Latest 仍为 1.4.1。
+- 正式说明明确保留证据边界：托管 Windows Server 自动化不等于消费级
+  Windows 10/11 标准用户、另一无特权账户拒读、真实 Kimi/Codex、SmartScreen、
+  托盘、聚焦/热键与长时间运行的人工验证；这些项目未被虚构为已完成。
 
 ### 历史基线（2026-07-26）
 

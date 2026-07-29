@@ -1,10 +1,10 @@
-# AACC 1.4.2（发布候选说明草案）
+# AACC 1.4.2
 
-`v1.4.2` 尚未创建，正式 GitHub Release 与资产也尚未发布。本文件描述当前候选
-代码和预期交付物，不把自动化测试等同于 Windows 10/11 真机兼容性。只有下方
-人工门禁全部关闭后，才能把本草案转为正式发布说明。
+`v1.4.2` 正式版同时提供 macOS 与 Windows 安装资产。本说明如实区分已完成的
+本地/托管自动化证据与尚未完成的消费级 Windows 10/11 人工验证，不把前者
+表述为后者。
 
-候选产物：
+正式产物：
 
 - Windows 主下载：`AACC-1.4.2-Setup.exe` 与
   `AACC-1.4.2-Setup.exe.sha256`
@@ -19,8 +19,7 @@
 - 首次启动跟随系统语言（中文系统使用中文，其他系统使用英文），之后的明确
   选择会持久保存。切换不会刷新额度，也不会改变监控任务、任务状态、Kimi
   登录状态、窗口或紧凑模式。
-- 紧凑模式保留在设置和托盘菜单，只是不再占用头部按钮。本功能仍属于 1.4.2
-  候选版，不改变未发布边界。
+- 紧凑模式保留在设置和托盘菜单，只是不再占用头部按钮。
 
 ### 额度显示
 
@@ -86,7 +85,7 @@
 
 ### 自动化证据边界
 
-候选应用提交 `5f7966b` 的
+正式版所含应用提交 `5f7966b` 的
 [GitHub Actions 运行 30436090922](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30436090922)
 已在托管的 Windows Server 2022 与 Windows Server 2025 环境通过：原生
 broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、重装、写入前
@@ -94,7 +93,7 @@ broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、
 启动了 AACC 专用 Edge、建立 CDP/WebSocket、运行无凭据额度表达式，并确认
 profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格内容校验与
 资产上传，以及 macOS 质量作业、Windows 双版本完整测试、ruff、格式、mypy 和
-依赖审计也在同一次运行中通过。候选 Setup SHA-256 为
+依赖审计也在同一次运行中通过。正式 Setup SHA-256 为
 `139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`。
 这些仍只是托管服务器自动证据。
 
@@ -104,10 +103,13 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
 断电恢复、完整事务性，或能消除预检后才出现的新文件锁；严格原子升级需在后续
 版本采用 staging/backup/swap 架构。
 
-### 尚未关闭的 macOS 双语人工门禁
+### 已知人工验证边界
 
-- [ ] 在 macOS 上反复切换中英文，并使用真实任务、额度数据和打开的 Kimi 登录对话框；
-  确认所有可见界面即时切换，而额度、任务/登录、窗口和紧凑模式状态保持不变。
+- 本次正式发布基于上述自动化证据与维护者决定；不代表已完成消费级 Windows
+  10/11、另一无特权账户拒读、真实 Kimi/Codex、SmartScreen、托盘、聚焦、
+  热键及长时间运行的完整人工验证。
+- macOS 中英文反复切换、真实任务/额度及打开 Kimi 登录对话框的组合验证仍记录
+  在人工清单中，不在本说明中虚构为已完成。
 
 ## English
 
@@ -121,7 +123,7 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
   does not refresh quotas or change monitored tasks or login state, task state,
   window state, or compact mode.
 - Compact mode remains in Settings and the tray menu; it no longer occupies a
-  header button. This feature remains inside the unreleased 1.4.2 candidate.
+  header button.
 
 ### Quota display
 
@@ -206,7 +208,7 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
 
 ### Automated evidence boundary
 
-Candidate application commit `5f7966b` passed
+Application commit `5f7966b` included in the release passed
 [GitHub Actions run 30436090922](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30436090922)
 on hosted Windows Server 2022 and Windows Server 2025: native broker,
 PyInstaller onedir, and Setup builds; frozen first launch; installation;
@@ -217,7 +219,7 @@ expression, and verified the exact profile ACL and absence of orphaned Edge
 processes. Strict Setup, SHA-256, portable ZIP content verification and
 artifact upload, plus the macOS quality job, both complete Windows test legs,
 Ruff, formatting, mypy, and dependency audit passed in the same run. The
-candidate Setup SHA-256 is
+release Setup SHA-256 is
 `139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`.
 This remains hosted-server automated evidence only.
 
@@ -229,20 +231,12 @@ transactional installation, or atomic recovery from a new lock acquired after
 preflight. Strict atomic upgrades require a later staging/backup/swap
 architecture.
 
-## Manual release gates
+## Known manual-verification boundary
 
-- [ ] Complete every item in
-  `docs/windows-verification-checklist.zh-CN.md` on a real Windows 10/11
-  machine using the final candidate.
-- [ ] Confirm a separate unprivileged Windows account cannot read the
-  protected configuration, credentials, database, WAL, or SHM.
-- [ ] Sign in to a real Kimi membership account from AACC and confirm `5H`,
-  `WEEK`, and `MONTH` refresh together and survive an app restart.
-- [ ] Obtain macOS and Windows manual sign-off for native-session persistence,
-  explicit logout across restart, and the shared five-minute refresh cycle.
-- [ ] On macOS, repeatedly switch Chinese/English with real tasks, quota data,
-  and an open Kimi login dialog; confirm all visible UI changes while quota,
-  task/login, window, and compact state remain unchanged.
-- [ ] Confirm a real read-only Codex `WEEK` refresh without starting a task.
-- [ ] Attach the completed checklist evidence to the release PR or notes.
-- [ ] Only then create tag and release `v1.4.2`.
+- This formal release is based on the automated evidence above and the
+  maintainer’s release decision. It does not claim completed consumer Windows 10/11 manual verification,
+  separate-account access denial, real Kimi/Codex,
+  SmartScreen, tray, focus, hotkey, or long-running checks.
+- Repeated macOS Chinese/English switching with real tasks, quota data, and an
+  open Kimi login dialog remains recorded in the manual checklist; these notes
+  do not fabricate a passing result.
