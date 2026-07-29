@@ -27,6 +27,8 @@
 - Codex 只显示一行更大的 `WEEK`，数据优先来自本机已安装 Codex
   `app-server` 的只读 `account/rateLimits/read`，不可用时才回退到有界本地
   会话元数据。AACC 不启动任务、不发送提示词、不发起登录。
+- AACC 每 60 秒重新发现 Codex 实时来源，所以 ChatGPT/Codex 在 AACC 之后打开
+  或重启也会自动恢复同步；点击额度条仍会立即刷新。
 - Kimi 严格按 `5H`、`WEEK`、`MONTH` 三行显示。Windows 首次登录使用隔离的
   AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile`；它不读取
   日常 Edge 配置，并跨 AACC 和电脑重启保留，直到手动退出、Kimi 令会话失效
@@ -47,6 +49,8 @@
 
 ### Windows Setup 与安全加固
 
+- Windows 托盘图标左键只显示/隐藏面板，右键菜单保持打开并提供“退出 AACC”；
+  头部新增电源按钮，两个退出入口都会停止完整应用和后台服务。
 - Setup 仅安装给当前用户，不请求管理员提权，默认路径为
   `%LocalAppData%\Programs\AACC`。它始终创建开始菜单快捷方式，可选但默认不
   勾选桌面快捷方式，不添加开机启动。
@@ -124,6 +128,9 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
   app-server’s read-only `account/rateLimits/read` method and falls back to
   bounded local session metadata. It does not start a task, submit a prompt, or
   initiate login.
+- AACC rediscovers the live Codex source every 60 seconds, so ChatGPT/Codex
+  opened or restarted after AACC automatically resumes synchronization. Clicking
+  the quota strip still refreshes immediately.
 - Kimi renders `5H`, `WEEK`, and `MONTH` in that order. On Windows, first login
   uses an isolated AACC-owned Edge profile at
   `%LOCALAPPDATA%\AACC\kimi-edge-profile`; it never reads the normal Edge
@@ -149,6 +156,9 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
 
 ### Windows Setup and security
 
+- A normal left-click on the Windows tray icon only shows or hides the panel;
+  right-click leaves the menu open with **Quit AACC**. The new header power
+  button and the tray action both stop the complete app and background services.
 - `AACC-1.4.2-Setup.exe` is a per-user, non-elevated installer that defaults to
   `%LocalAppData%\Programs\AACC`. It creates a Start Menu shortcut, offers an
   unchecked desktop shortcut, and adds no login item.
