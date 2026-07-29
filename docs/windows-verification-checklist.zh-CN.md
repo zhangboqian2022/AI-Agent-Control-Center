@@ -32,7 +32,8 @@ Commit 与候选文件 SHA-256：
 - [ ] **WebView2 运行时配置——已安装**：在另一台真实 Windows 10 或 Windows 11
   标准用户机器上确认已安装 WebView2 运行时，以网络监控方式或下载后断网运行
   Setup。Setup 应识别运行时且不需要网络安装；第一次 Kimi 登录仍应创建可用原生
-  视图。
+  视图。确认可写的 WebView2 用户数据目录创建在
+  `%LOCALAPPDATA%\AACC\kimi-web-session`，而不是 `AACC.exe` 旁边。
 - [ ] **WebView2 诊断**：若 Kimi 登录原生视图不能产生加载事件，它会用固定的
   15 秒 WebView2/网络修复诊断和 Microsoft 修复页面操作替换空白界面。记录观察到
   的类别，不记录账户信息或页面 URL。

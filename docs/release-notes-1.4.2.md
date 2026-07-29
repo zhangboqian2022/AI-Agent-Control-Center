@@ -52,6 +52,9 @@
   运行时可用；仅在运行时不存在时才需要网络，已安装且可用的运行时会被复用。若
   Kimi 原生登录视图没有加载事件，对话框会用固定的 15 秒 WebView2/网络修复诊断
   和 Microsoft 修复链接替换空白界面。
+- Windows 会在 Qt 初始化前把可写的 WebView2 用户数据目录固定为
+  `%LOCALAPPDATA%\AACC\kimi-web-session`，并先按当前用户保护该目录，避免
+  WebView2 使用 `AACC.exe` 旁边对安装型程序不可靠的默认目录。
 - 优雅退出使用当前会话内、按目标 PID 命名的 Windows Event；Event 的 Owner
   固定为当前用户，DACL 仅允许当前用户、Local System 与 Administrators。
   控制端仍会核对精确窗口标题、PID 与完整 EXE 路径，并等待同一个进程句柄
@@ -146,6 +149,10 @@ mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务
   Runtime is absent; a usable installed Runtime is reused. If Kimi's native
   login view has no loading event, its dialog replaces the blank surface with a
   fixed 15-second WebView2/network repair diagnostic and Microsoft repair link.
+- Windows sets the writable WebView2 user data folder to
+  `%LOCALAPPDATA%\AACC\kimi-web-session` before Qt initializes and protects it
+  for the current user first. This avoids WebView2's installer-sensitive
+  default directory beside `AACC.exe`.
 - Graceful shutdown uses a per-target-PID Windows Event in the current session.
   Its owner is the current user and its protected DACL allows only that user,
   Local System, and Administrators. The controller still verifies the exact

@@ -37,6 +37,10 @@ AACC will keep Qt's native WebView2 backend and add two complementary controls:
    `QWebView`, load deterministic inline HTML, wait for `Succeeded`, execute
    JavaScript, and require the expected result. This is hosted Windows Server
    evidence; Windows 10/11 manual verification remains required.
+5. Before Qt initializes on Windows, AACC sets
+   `WEBVIEW2_USER_DATA_FOLDER` to the protected, writable
+   `%LOCALAPPDATA%\AACC\kimi-web-session` directory. The installed application
+   and CI smoke must not depend on WebView2's default UDF beside `AACC.exe`.
 
 ## Security and Packaging Constraints
 
