@@ -127,12 +127,7 @@ def find_codex_executable(
             candidates.extend(
                 (
                     local_base / "Programs" / "ChatGPT" / "resources" / "codex.exe",
-                    local_base
-                    / "Programs"
-                    / "OpenAI"
-                    / "ChatGPT"
-                    / "resources"
-                    / "codex.exe",
+                    local_base / "Programs" / "OpenAI" / "ChatGPT" / "resources" / "codex.exe",
                 )
             )
         program_files = environment.get("PROGRAMFILES")
