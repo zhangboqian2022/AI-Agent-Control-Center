@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCREENSHOT = ROOT / "docs" / "images" / "panel-overview.png"
+EN_SCREENSHOT = ROOT / "docs" / "images" / "panel-overview.en.png"
 
 
 def _read(name: str) -> str:
@@ -53,28 +54,31 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     normalized_script = lowered.replace("\\", "/")
     normalized_home = str(Path.home()).casefold().replace("\\", "/")
     assert normalized_home not in normalized_script
-    assert _png_size(SCREENSHOT) == (420, 577)
-    assert set(_png_chunk_types(SCREENSHOT)) <= {b"IHDR", b"pHYs", b"IDAT", b"IEND"}
+    for screenshot in (SCREENSHOT, EN_SCREENSHOT):
+        assert _png_size(screenshot) == (420, 577)
+        assert set(_png_chunk_types(screenshot)) <= {b"IHDR", b"pHYs", b"IDAT", b"IEND"}
 
 
 def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
     cases = (
         (
             "README.md",
+            "docs/images/panel-overview.en.png",
             "_Illustrative UI with synthetic demo data; no real account or task data._",
             ("per-user", "without administrator", "Start Menu", "SmartScreen"),
         ),
         (
             "README.zh-CN.md",
+            "docs/images/panel-overview.png",
             "_使用合成演示数据生成的界面示意图，不含真实账户或任务数据。_",
             ("当前用户", "无需管理员", "开始菜单", "SmartScreen"),
         ),
     )
 
-    for name, caption, required_terms in cases:
+    for name, image, caption, required_terms in cases:
         text = _read(name)
         assert re.search(
-            r"!\[[^\]]+\]\(docs/images/panel-overview\.png\)\n\n" + re.escape(caption),
+            r"!\[[^\]]+\]\(" + re.escape(image) + r"\)\n\n" + re.escape(caption),
             text,
         )
         assert "AACC-1.4.2-Setup.exe" in text
@@ -110,11 +114,11 @@ def test_each_bilingual_product_document_keeps_the_live_language_contract() -> N
             assert term.casefold() in text.casefold(), f"{name} must describe {term!r}"
 
 
-def test_screenshot_uses_explicit_synthetic_chinese_locale() -> None:
+def test_screenshot_uses_explicit_synthetic_locale() -> None:
     script = _read("scripts/capture_panel_screenshot.py")
 
-    assert "LanguageManager(ZH_CN" in script
-    assert "language_manager=language_manager" in script
+    assert 'os.environ.get("AACC_SCREENSHOT_LANG", ZH_CN)' in script
+    assert "LanguageManager(LANGUAGE, settings)" in script
     assert 'findChild(QPushButton, "languageButton")' in script
 
 
