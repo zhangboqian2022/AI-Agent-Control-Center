@@ -18,6 +18,7 @@ from aacc.codex_app_server import (
     WINDOWS_PROCESS_CREATION_FLAGS,
     CodexAppServerReader,
     find_codex_executable,
+    find_running_desktop_codex,
 )
 from aacc.codex_quota import (
     CodexQuotaStatus,
@@ -105,6 +106,55 @@ def test_find_codex_executable_checks_windows_npm_locations(tmp_path: Path) -> N
     )
 
     assert result == roaming_codex
+
+
+def test_find_running_desktop_codex_accepts_trusted_chatgpt_resource(
+    tmp_path: Path,
+) -> None:
+    codex = tmp_path / "OpenAI" / "ChatGPT" / "resources" / "codex.exe"
+    codex.parent.mkdir(parents=True)
+    codex.write_bytes(b"MZ")
+
+    class Process:
+        info = {"name": "codex.exe", "exe": str(codex)}
+
+    result = find_running_desktop_codex(
+        process_iter=lambda _attrs: [Process()],
+    )
+
+    assert result == codex
+
+
+def test_find_running_desktop_codex_rejects_untrusted_same_named_process(
+    tmp_path: Path,
+) -> None:
+    codex = tmp_path / "Temp" / "codex.exe"
+    codex.parent.mkdir()
+    codex.write_bytes(b"MZ")
+
+    class Process:
+        info = {"name": "codex.exe", "exe": str(codex)}
+
+    assert find_running_desktop_codex(process_iter=lambda _attrs: [Process()]) is None
+
+
+def test_find_codex_executable_checks_windows_chatgpt_resources_before_processes(
+    tmp_path: Path,
+) -> None:
+    local = tmp_path / "Local"
+    installed = local / "Programs" / "ChatGPT" / "resources" / "codex.exe"
+    running = local / "OpenAI" / "ChatGPT" / "resources" / "codex.exe"
+
+    result = find_codex_executable(
+        platform="win32",
+        home=tmp_path,
+        environ={"LOCALAPPDATA": str(local)},
+        which=lambda _name: None,
+        is_file={installed, running}.__contains__,
+        running_desktop_locator=lambda: running,
+    )
+
+    assert result == installed
 
 
 def test_find_codex_executable_rejects_non_files(tmp_path: Path) -> None:

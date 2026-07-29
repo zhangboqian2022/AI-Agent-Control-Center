@@ -9,11 +9,13 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import psutil
 
 from aacc import public_version
 from aacc.codex_quota import (
@@ -35,12 +37,48 @@ WhichExecutable = Callable[[str], str | None]
 IsRegularFile = Callable[[Path], bool]
 PopenFactory = Callable[..., subprocess.Popen[str]]
 ProcessCommandFactory = Callable[[Path], BrokerCommand]
+ProcessIterator = Callable[[tuple[str, ...]], Iterable[Any]]
+RunningDesktopLocator = Callable[[], Path | None]
 
 _logger = logging.getLogger("aacc.codex_quota")
 
 
 def _is_regular_file(path: Path) -> bool:
     return path.is_file()
+
+
+def find_running_desktop_codex(
+    *,
+    process_iter: ProcessIterator = psutil.process_iter,
+    is_file: IsRegularFile = _is_regular_file,
+) -> Path | None:
+    """Locate a running Codex binary only inside an OpenAI desktop install."""
+
+    try:
+        processes = process_iter(("name", "exe"))
+        for process in processes:
+            try:
+                info = process.info
+                name = info.get("name")
+                raw_executable = info.get("exe")
+            except (AttributeError, KeyError, psutil.Error, OSError):
+                continue
+            if not isinstance(name, str) or name.casefold() != "codex.exe":
+                continue
+            if not isinstance(raw_executable, str) or not raw_executable:
+                continue
+            executable = Path(raw_executable)
+            if not executable.is_absolute() or executable.name.casefold() != "codex.exe":
+                continue
+            trusted_component = any(
+                "chatgpt" in component.casefold() or "openai" in component.casefold()
+                for component in executable.parts[:-1]
+            )
+            if trusted_component and is_file(executable):
+                return executable
+    except (psutil.Error, OSError):
+        return None
+    return None
 
 
 def find_codex_executable(
@@ -50,6 +88,7 @@ def find_codex_executable(
     environ: Mapping[str, str] | None = None,
     which: WhichExecutable = shutil.which,
     is_file: IsRegularFile = _is_regular_file,
+    running_desktop_locator: RunningDesktopLocator = find_running_desktop_codex,
 ) -> Path | None:
     """Locate a Codex executable without launching a task or a shell."""
 
@@ -80,10 +119,37 @@ def find_codex_executable(
             base = environment.get(key)
             if base:
                 candidates.append(Path(base) / "npm" / "codex.cmd")
+        local_app_data = environment.get("LOCALAPPDATA")
+        if local_app_data:
+            local_base = Path(local_app_data)
+            candidates.extend(
+                (
+                    local_base / "Programs" / "ChatGPT" / "resources" / "codex.exe",
+                    local_base
+                    / "Programs"
+                    / "OpenAI"
+                    / "ChatGPT"
+                    / "resources"
+                    / "codex.exe",
+                )
+            )
+        program_files = environment.get("PROGRAMFILES")
+        if program_files:
+            program_base = Path(program_files)
+            candidates.extend(
+                (
+                    program_base / "ChatGPT" / "resources" / "codex.exe",
+                    program_base / "OpenAI" / "ChatGPT" / "resources" / "codex.exe",
+                )
+            )
 
     for candidate in candidates:
         if is_file(candidate):
             return candidate
+    if platform == "win32":
+        running = running_desktop_locator()
+        if running is not None and is_file(running):
+            return running
     return None
 
 
