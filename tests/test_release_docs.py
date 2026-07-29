@@ -236,7 +236,10 @@ def test_kimi_web_session_docs_describe_native_store_and_reuse_gate_honestly() -
 
     for text in (english, chinese):
         assert "%APPDATA%\\AACC" in text
+        assert "%LOCALAPPDATA%\\AACC\\kimi-web-session" in text
         assert "cookie" in text.casefold()
+    assert "writable WebView2 user data folder" in english
+    assert "可写的 WebView2 用户数据目录" in chinese
 
     for name in english_names:
         text = _read(name)

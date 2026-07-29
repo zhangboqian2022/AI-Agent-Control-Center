@@ -32,7 +32,8 @@ Commit 与候选文件 SHA-256：
 - [ ] **WebView2 运行时配置——已安装**：在另一台真实 Windows 10 或 Windows 11
   标准用户机器上确认已安装 WebView2 运行时，以网络监控方式或下载后断网运行
   Setup。Setup 应识别运行时且不需要网络安装；第一次 Kimi 登录仍应创建可用原生
-  视图。
+  视图。确认可写的 WebView2 用户数据目录创建在
+  `%LOCALAPPDATA%\AACC\kimi-web-session`，而不是 `AACC.exe` 旁边。
 - [ ] **WebView2 诊断**：若 Kimi 登录原生视图不能产生加载事件，它会用固定的
   15 秒 WebView2/网络修复诊断和 Microsoft 修复页面操作替换空白界面。记录观察到
   的类别，不记录账户信息或页面 URL。
@@ -60,11 +61,12 @@ Commit 与候选文件 SHA-256：
   开始刷新，元数据查询不消耗生成 Token。明确退出登录必须先同步关闭复用，
   再尝试有界的原生站点数据清理，并在立即重启 AACC 后仍保持登出。
 - [ ] **原生 DACL**：AACC 创建文件后检查 `config.yaml`、`aacc.db`、
-  存在时的 `aacc.db-wal`/`aacc.db-shm` 以及 `kimi-credentials.json`。
-  每个文件均关闭继承，并且当前用户、Local System、本机 Administrators 各有且
-  仅有一条完全控制 allow ACE；不存在其他 allow、deny 或继承 ACE。
+  存在时的 `aacc.db-wal`/`aacc.db-shm`、`kimi-credentials.json`，以及
+  `%LOCALAPPDATA%\AACC\kimi-web-session` 目录。每个目标均关闭继承，并且
+  当前用户、Local System、本机 Administrators 各有且仅有一条完全控制 allow
+  ACE；不存在其他 allow、deny 或继承 ACE。
 - [ ] **另一账户拒读**：登录另一个无特权本机账户，确认操作系统拒绝读取上述
-  全部敏感文件。
+  全部敏感文件及 Kimi WebView 会话目录。
 - [ ] **升级与优雅退出**：AACC 运行时再次执行同一个 Setup。安装器让 AACC
   优雅退出、原位升级并可正常重启，同时保留 `%APPDATA%\AACC` 中由 AACC
   管理的设置、历史、数据库、凭据与复用决定。把原生 WebView 会话保留作为

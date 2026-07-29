@@ -127,7 +127,7 @@ def _patch_application_shell(
             events.append("guidance-show")
 
     monkeypatch.setattr(app_module, "configure_logging", lambda *_args: None)  # type: ignore[attr-defined]
-    monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "initialize_native_webview", lambda _data_dir: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "_create_qapplication", Application)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: trusted)  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
@@ -491,20 +491,23 @@ def test_windows_shutdown_control_command_requires_exact_arguments(
         app_module.main()
 
 
-def test_windows_native_webview_smoke_runs_before_paths_or_guard(
+def test_windows_native_webview_smoke_uses_production_initialization_before_guard(
+    tmp_path: Path,
     monkeypatch: object,
 ) -> None:
-    calls: list[str] = []
+    calls: list[tuple[str, Path] | str] = []
     monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module.sys,
         "argv",
         ["AACC.exe", "--smoke-native-webview"],
     )
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setenv("AACC_CONFIG_PATH", str(config_path))  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module,
         "run_native_webview_smoke",
-        lambda: calls.append("smoke") or 7,
+        lambda data_dir: calls.append(("smoke", data_dir)) or 7,
     )
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module,
@@ -518,7 +521,7 @@ def test_windows_native_webview_smoke_runs_before_paths_or_guard(
     )
 
     assert app_module.main() == 7
-    assert calls == ["smoke"]
+    assert calls == [("smoke", tmp_path)]
 
 
 def test_windows_native_webview_smoke_requires_exact_arguments(
@@ -545,7 +548,7 @@ def test_security_failure_shows_sanitized_dialog_and_returns_nonzero(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     shown: list[tuple[str, str]] = []
-    monkeypatch.setattr(app_module, "initialize_native_webview", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(app_module, "initialize_native_webview", lambda _data_dir: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(app_module, "_create_qapplication", FakeApplication)  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module.QMessageBox,
@@ -564,6 +567,46 @@ def test_security_failure_shows_sanitized_dialog_and_returns_nonzero(
     assert shown
     assert "token" not in shown[0][1]
     assert str(tmp_path / "logs" / "app.log") in shown[0][1]
+
+
+def test_webview_user_data_protection_failure_stops_before_runtime(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    shown: list[tuple[str, str]] = []
+    events: list[str] = []
+    monkeypatch.setattr(app_module, "configure_logging", lambda *_args: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "initialize_native_webview",
+        lambda _data_dir: (_ for _ in ()).throw(FileProtectionError(r"token=C:\\secret")),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "_create_qapplication",
+        lambda: events.append("qapplication"),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module.QMessageBox,
+        "critical",
+        lambda _parent, title, text: shown.append((title, text)),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "build_runtime",
+        lambda *_args, **_kwargs: events.append("runtime"),
+    )
+
+    result = app_module._run_application(
+        tmp_path / "config.yaml",
+        tmp_path / "aacc.db",
+        tmp_path,
+    )
+
+    assert result == 1
+    assert events == ["qapplication"]
+    assert shown
+    assert "token" not in shown[0][1]
+    assert "STARTUP-ACL-FileProtectionError" in shown[0][1]
 
 
 def test_build_runtime_creates_default_config_database_and_four_tasks(tmp_path: Path) -> None:
