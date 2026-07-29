@@ -96,7 +96,8 @@ scripts\build_windows_installer.ps1
   无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面
   快捷方式可选、不添加启动项，升级/卸载保留 `%APPDATA%\AACC`。
   正式 DMG SHA-256 为
-  `aa60665e9808e3c0067b2db761893acb2911d1f2600085821cb46c1ef7e03822`；
+  `9aa8953d4d1445a3e95e4e2f6be36f5384e2a8a7c9cddca08b70fd02e29c624f`
+  （`d0f4930` 修复 mac 冻结包启动崩溃后原地替换的 1.4.2 DMG，版本号不变）；
   本机构建使用 ad-hoc 签名、未经过 Apple 公证。
   GitHub Release：
   `https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.2`
