@@ -101,6 +101,11 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
 `139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`。
 这些仍只是托管服务器自动证据。
 
+正式发布提交 `c0aaa07` 的
+[GitHub Actions 运行 30440258506](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30440258506)
+也已全绿；`v1.4.2` 为非草稿、非预发布的 Latest Release，四项安装资产均通过
+发布后名称、大小、摘要与下载 URL 校验。
+
 即使上述托管工作流全部通过，它也不能证明消费级 Windows 10 或 Windows 11、
 标准用户安装、另一账户拒读、SmartScreen 交互、真实 Kimi/Codex、托盘、聚焦、
 热键与长时间运行体验。相关项目必须在真机逐项勾选。1.4.2 也不声称安装具有
@@ -226,6 +231,12 @@ Ruff, formatting, mypy, and dependency audit passed in the same run. The
 release Setup SHA-256 is
 `139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`.
 This remains hosted-server automated evidence only.
+
+Final release commit `c0aaa07` also passed
+[GitHub Actions run 30440258506](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30440258506).
+Release `v1.4.2` is the non-draft, non-prerelease Latest release, and all four
+installer assets passed post-publication name, size, digest, and download-URL
+verification.
 
 Hosted Windows Server evidence is not the real Windows 10/11 consumer test. It
 does not replace standard-user installation, separate-account access denial,
