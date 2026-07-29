@@ -62,7 +62,7 @@ scripts\build_windows_installer.ps1
 
 ## 当前进度（2026-07-29）
 
-- `codex/windows-edge-kimi-session`：Windows Kimi 登录已从不稳定的内嵌
+- `main@4f1a7f2`：Windows Kimi 登录已从不稳定的内嵌
   WebView2 改为 AACC 管理的 Microsoft Edge 专用会话。配置目录固定为
   `%LOCALAPPDATA%\AACC\kimi-edge-profile`，使用原生精确受保护 DACL；正常退出
   AACC 或重启电脑均保留登录态，只有人工退出、Kimi 鉴权失效或安全故障才撤销
@@ -73,9 +73,15 @@ scripts\build_windows_installer.ps1
   不安全 profile fail-closed、原始会员文档越界、CDP target 启动竞态；并新增
   安装后 `AACC.exe --smoke-edge-cdp` 产品冒烟，验证真实 Edge/CDP/WebSocket、
   profile 精确 ACL 和无孤儿 Edge。macOS 继续使用原生 Qt WebView。当前本机
-  929 passed、7 skipped，ruff、format、mypy、`uv lock --check` 全绿；GitHub
-  hosted Windows 2022/2025 证据待本分支合并 `main` 后生成。
-- `codex/windows-edge-kimi-session`：**1.4.2 Windows Setup 候选正在收尾，
+  930 passed、7 skipped，ruff、format、mypy、`uv lock --check` 全绿。专家
+  终审无 Critical/Important，结论 APPROVED。
+- `main@4f1a7f2` 的 hosted 全量运行
+  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30424147975`
+  已在 macOS、Windows Server 2022/2025 全绿；包含 Windows 双版本完整 pytest、
+  依赖审计、冻结包与 Setup 构建、真实安装后 Edge/CDP/WebSocket、profile 精确
+  ACL、无孤儿 Edge、broker、重装、锁目标拒绝、卸载、进程清理及产物严格校验。
+- `main`：**1.4.2 Windows Setup 候选已生成，尚未正式发布**。主 Windows
+  候选产物为 `AACC-1.4.2-Setup.exe`，当前用户、
   尚未发布**。主 Windows 候选产物为 `AACC-1.4.2-Setup.exe`，当前用户、
   无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面
   快捷方式可选、不添加启动项，升级/卸载保留 `%APPDATA%\AACC`。
@@ -91,17 +97,14 @@ scripts\build_windows_installer.ps1
   重装、写入前锁目标拒绝、卸载、ACL、进程清理与原生 WebView2 产品冒烟。
   Setup、SHA-256 与便携 ZIP 通过严格内容校验并上传；本机同一提交 885 passed、
   7 skipped，ruff、format、mypy 全绿。该证据不替代 Windows 10/11 真机门禁。
-- 桌面旧候选产物（`b7be123`，待 Edge 版构建后替换）：Setup SHA-256
-  `e06dbe37f89d77517b0d9626b86b198430a2b4c5ae0bf61f4550eb3eb03fe9a3`，
-  Windows 便携 ZIP SHA-256
-  `d88f015d271ee52eb31ed554ef8dbcda229a278d5b67a81b22956d282c3c36f5`，
-  macOS DMG SHA-256
-  `df211bdd6301c8286dbc194cd7e50d10d549107b3758f579960e1c2d79a96f16`。
+- 桌面 Edge 版候选 Setup 已替换，SHA-256
+  `808e8b285e7268dceb649a6e03699cec43f86fd56513340e887a364584b294be`；
+  同名 `.sha256` 已同步。
 - 额度最终布局：Codex 仅一行 `WEEK`；Kimi 为 `5H`、`WEEK`、`MONTH`，行内
   显示百分比、进度条和完整本地重置日期时间。Kimi 会员网页会话在 AACC 本地
   缓存到明确退出，并每五分钟一起刷新三窗口；额度元数据查询不消耗模型 Token。
 - 发版仍被人工门禁阻塞：真实 Windows 10/11 标准用户完整清单、另一无特权账户
-  对配置/凭据/数据库/WAL/SHM/WebView2 UDF 的拒读、真实 Kimi/Codex、
+  对配置/凭据/数据库/WAL/SHM/Edge 专用 profile 的拒读、真实 Kimi/Codex、
   SmartScreen、托盘、聚焦/热键和长时间运行。完成并附证据前不得创建
   `v1.4.2` tag 或正式 Release。已正式发布的 Latest 仍为 1.4.1。
 
