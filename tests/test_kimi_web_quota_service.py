@@ -216,3 +216,38 @@ def test_lazy_web_session_receives_same_language_manager(
 
     assert created == [(tmp_path, service, language_manager)]
     service.stop()
+
+
+def test_windows_lazy_session_uses_managed_edge(
+    qapp, tmp_path: Path, monkeypatch: object
+) -> None:
+    del qapp
+    language_manager = LanguageManager(EN_US)
+    created: list[tuple[Path, object, LanguageManager]] = []
+
+    def create_edge_session(
+        config_dir: Path,
+        parent: object,
+        *,
+        language_manager: LanguageManager,
+    ) -> FakeSession:
+        created.append((config_dir, parent, language_manager))
+        return FakeSession()
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        web_quota_service.sys,
+        "platform",
+        "win32",
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        web_quota_service,
+        "KimiEdgeSession",
+        create_edge_session,
+        raising=False,
+    )
+    service = KimiWebQuotaService(tmp_path, language_manager=language_manager)
+
+    service.open_login()
+
+    assert created == [(tmp_path, service, language_manager)]
+    service.stop()

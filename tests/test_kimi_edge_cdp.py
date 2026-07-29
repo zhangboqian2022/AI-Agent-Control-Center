@@ -319,3 +319,28 @@ def test_managed_edge_operation_honors_cancellation_before_launch(tmp_path: Path
 
     with pytest.raises(EdgeCancelledError):
         operation.run(visible=True, cancel=cancelled)
+
+
+def test_clear_owned_profile_removes_only_exact_aacc_profile(tmp_path: Path) -> None:
+    from aacc.kimi_edge_cdp import clear_owned_profile, edge_profile_path
+
+    profile = edge_profile_path(tmp_path)
+    profile.mkdir(parents=True)
+    (profile / "Cookies").write_bytes(b"private")
+
+    clear_owned_profile(profile, tmp_path)
+
+    assert not profile.exists()
+    assert profile.parent.exists()
+
+
+def test_clear_owned_profile_refuses_path_outside_owned_root(tmp_path: Path) -> None:
+    from aacc.kimi_edge_cdp import EdgeSessionError, clear_owned_profile
+
+    personal = tmp_path / "personal-edge"
+    personal.mkdir()
+
+    with pytest.raises(EdgeSessionError):
+        clear_owned_profile(personal, tmp_path)
+
+    assert personal.exists()
