@@ -1196,7 +1196,8 @@ def test_default_codex_quota_factory_keeps_local_reader_without_executable(
     monkeypatch.setattr(app_module, "find_codex_executable", lambda **_kwargs: None)
 
     service = app_module._default_codex_quota_service_factory(
-        app_module.load_config(tmp_path / "config.yaml")
+        app_module.load_config(tmp_path / "config.yaml"),
+        platform="darwin",
     )
 
     assert service is not None
