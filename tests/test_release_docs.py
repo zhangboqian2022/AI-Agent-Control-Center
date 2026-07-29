@@ -124,12 +124,12 @@ def test_bilingual_manual_gates_cover_repeated_live_switching() -> None:
     notes = _read("docs/release-notes-1.4.2.md")
 
     assert re.search(
-        r"- \[ \].*repeated.*language.*real tasks.*quota.*open Kimi login dialog",
+        r"- \[ \].*repeated.*language.*real tasks.*quota.*before and after Kimi login",
         english_checklist,
         re.DOTALL | re.IGNORECASE,
     )
     assert re.search(
-        r"- \[ \].*反复.*语言.*真实任务.*额度.*打开的\s+Kimi 登录对话框",
+        r"- \[ \].*Kimi 登录前后.*反复.*语言.*真实任务.*额度",
         chinese_checklist,
         re.DOTALL,
     )
@@ -194,40 +194,41 @@ def test_bilingual_guides_make_desktop_controls_platform_specific() -> None:
         assert term in chinese
 
 
-def test_kimi_web_session_docs_describe_native_store_and_reuse_gate_honestly() -> None:
-    english_names = (
+def test_kimi_session_docs_describe_platform_store_and_reuse_gate_honestly() -> None:
+    windows_english_names = (
         "README.md",
         "docs/user-guide.en.md",
         "docs/release-notes-1.4.2.md",
         "docs/windows-verification-checklist.en.md",
-        "docs/superpowers/specs/2026-07-27-kimi-web-quota-readable-bars-design.md",
     )
-    chinese_names = (
+    windows_chinese_names = (
         "README.zh-CN.md",
         "docs/user-guide.md",
         "docs/release-notes-1.4.2.md",
         "docs/windows-verification-checklist.zh-CN.md",
     )
-    english = "\n".join(_read(name) for name in english_names)
-    chinese = "\n".join(_read(name) for name in chinese_names)
+    english = "\n".join(_read(name) for name in windows_english_names)
+    chinese = "\n".join(_read(name) for name in windows_chinese_names)
 
     for term in (
-        "native per-application WebView store",
+        "AACC-owned Edge profile",
+        "%LOCALAPPDATA%\\AACC\\kimi-edge-profile",
+        "normal Edge profile",
+        "until you sign out",
         "protected reuse decision",
-        "synchronously disables reuse",
-        "bounded native site-data cleanup",
-        "same five-minute cycle",
+        "five-minute",
         "no generation tokens",
         "trustworthy reset",
         "macOS and Windows manual sign-off",
     ):
         assert term in english
     for term in (
-        "原生的每应用 WebView 存储",
+        "AACC 专用 Edge 配置目录",
+        "%LOCALAPPDATA%\\AACC\\kimi-edge-profile",
+        "日常 Edge 配置",
+        "直到手动退出",
         "受保护的复用决定",
-        "同步关闭复用",
-        "有界的原生站点数据清理",
-        "同一个五分钟周期",
+        "五分钟",
         "不消耗生成 Token",
         "可信重置时间",
         "macOS 与 Windows 人工签字",
@@ -236,18 +237,20 @@ def test_kimi_web_session_docs_describe_native_store_and_reuse_gate_honestly() -
 
     for text in (english, chinese):
         assert "%APPDATA%\\AACC" in text
-        assert "%LOCALAPPDATA%\\AACC\\kimi-web-session" in text
         assert "cookie" in text.casefold()
-    assert "writable WebView2 user data folder" in english
-    assert "可写的 WebView2 用户数据目录" in chinese
 
-    for name in english_names:
+    mac_design = _read("docs/superpowers/specs/2026-07-27-kimi-web-quota-readable-bars-design.md")
+    assert "native per-application WebView store" in mac_design
+    assert "WebView2" not in english
+    assert "WebView2" not in chinese
+
+    for name in windows_english_names:
         text = _read(name)
-        assert "website bearer token" in text.casefold()
+        assert re.search(r"website\s+bearer token", text, re.IGNORECASE)
         assert "Kimi Code OAuth" in text
-    for name in chinese_names:
+    for name in windows_chinese_names:
         text = _read(name)
-        assert "网页 Bearer Token" in text
+        assert re.search(r"网页\s+Bearer Token", text)
         assert "Kimi Code OAuth" in text
 
     assert "including settings, history, and the cached Kimi web session" not in english
@@ -292,5 +295,5 @@ def test_superseded_kimi_plan_and_windows_setup_design_use_correct_session_bound
     assert "the cached Kimi login survive" not in normalized_design
 
     readme = _read("README.md")
-    assert "stored separately and are not part of this web reuse gate" in readme
+    assert "Kimi Code OAuth credentials are stored separately" in readme
     assert "Kimi Code OAuth credentials are unaffected" not in readme

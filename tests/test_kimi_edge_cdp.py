@@ -128,10 +128,7 @@ def test_devtools_endpoint_uses_active_port_and_loopback(tmp_path: Path) -> None
     endpoint = read_devtools_endpoint(tmp_path)
 
     assert endpoint.http_origin == "http://127.0.0.1:43127"
-    assert (
-        endpoint.browser_websocket
-        == "ws://127.0.0.1:43127/devtools/browser/browser-id"
-    )
+    assert endpoint.browser_websocket == "ws://127.0.0.1:43127/devtools/browser/browser-id"
 
 
 @pytest.mark.parametrize(

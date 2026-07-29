@@ -18,7 +18,7 @@ Codex 元数据连续读取失败时，顶部会出现黄色告警条，但不�
 
 Codex 额度条会优先启动本机已安装的 Codex `app-server`，使用 Codex 已配置账户仅调用只读 `account/rateLimits/read`；它不会提交提示词、启动任务或发起登录。该路径不可用时，AACC 才回退到近期本机会话文件有界尾部的结构化 `rate_limits`。AACC 只接受未来有效的 10080 分钟周窗口，并刻意忽略旧版较短窗口，因此没有 Codex 五小时字段。元数据缺失、过期或格式变化时会显示“数据不可用”，不会显示为零用量。点击额度条可立即刷新。
 
-Kimi 按 `5H`、`WEEK`、`MONTH` 显示。Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置。一个协调器让网页源和 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能为临时缺失的 `5H` 或 `WEEK` 补位，不能虚构 `MONTH`。额度查询不发送提示词，也不消耗生成 Token。
+Kimi 按 `5H`、`WEEK`、`MONTH` 显示。Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置；Kimi Code OAuth 凭据由 AACC 凭据保护另行保存。一个协调器让网页源和 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能为临时缺失的 `5H` 或 `WEEK` 补位，不能虚构 `MONTH`。额度查询不发送提示词，也不消耗生成 Token。
 
 ## macOS DMG
 
