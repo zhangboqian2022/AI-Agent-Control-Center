@@ -102,6 +102,31 @@ def test_profile_validation_rejects_reparse_point(tmp_path: Path, monkeypatch) -
     assert raised.value.category is KimiWebErrorCategory.PROFILE_UNSAFE
 
 
+def test_stale_active_port_reparse_point_is_profile_unsafe(tmp_path: Path) -> None:
+    from aacc.kimi_edge_cdp import (
+        EdgeSessionError,
+        ManagedEdgeOperation,
+        edge_profile_path,
+    )
+
+    profile = edge_profile_path(tmp_path)
+    profile.mkdir(parents=True)
+    external = tmp_path / "external-active-port"
+    external.write_text("43127\n/devtools/browser/id\n", encoding="ascii")
+    (profile / "DevToolsActivePort").symlink_to(external)
+    operation = ManagedEdgeOperation(
+        local_app_data=tmp_path,
+        executable=tmp_path / "msedge.exe",
+        protector=lambda _profile: None,
+    )
+
+    with pytest.raises(EdgeSessionError) as raised:
+        operation.run(visible=False, cancel=Event())
+
+    assert raised.value.category is KimiWebErrorCategory.PROFILE_UNSAFE
+    assert external.exists()
+
+
 def test_background_launch_uses_random_loopback_cdp_and_dedicated_profile(
     tmp_path: Path,
 ) -> None:
