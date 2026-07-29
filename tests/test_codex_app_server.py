@@ -141,6 +141,41 @@ def test_find_running_desktop_codex_rejects_untrusted_same_named_process(
     assert find_running_desktop_codex(process_iter=lambda _attrs: [Process()]) is None
 
 
+def test_find_running_desktop_codex_skips_unreadable_and_invalid_processes() -> None:
+    class Unreadable:
+        @property
+        def info(self) -> dict[str, object]:
+            raise OSError("access denied")
+
+    class WrongName:
+        info = {"name": "ChatGPT.exe", "exe": r"C:\OpenAI\codex.exe"}
+
+    class MissingExecutable:
+        info = {"name": "codex.exe", "exe": None}
+
+    class RelativeExecutable:
+        info = {"name": "codex.exe", "exe": "OpenAI/codex.exe"}
+
+    assert (
+        find_running_desktop_codex(
+            process_iter=lambda _attrs: [
+                Unreadable(),
+                WrongName(),
+                MissingExecutable(),
+                RelativeExecutable(),
+            ]
+        )
+        is None
+    )
+
+
+def test_find_running_desktop_codex_handles_iterator_failure() -> None:
+    def fail(_attrs: tuple[str, ...]) -> list[object]:
+        raise OSError("process snapshot unavailable")
+
+    assert find_running_desktop_codex(process_iter=fail) is None
+
+
 def test_find_codex_executable_checks_windows_chatgpt_resources_before_processes(
     tmp_path: Path,
 ) -> None:
@@ -158,6 +193,39 @@ def test_find_codex_executable_checks_windows_chatgpt_resources_before_processes
     )
 
     assert result == installed
+
+
+def test_find_codex_executable_checks_program_files_then_running_desktop(
+    tmp_path: Path,
+) -> None:
+    program_files = tmp_path / "Program Files"
+    installed = program_files / "OpenAI" / "ChatGPT" / "resources" / "codex.exe"
+    running = tmp_path / "OpenAI" / "running" / "codex.exe"
+    existing = {installed, running}
+
+    assert (
+        find_codex_executable(
+            platform="win32",
+            home=tmp_path,
+            environ={"PROGRAMFILES": str(program_files)},
+            which=lambda _name: None,
+            is_file=existing.__contains__,
+            running_desktop_locator=lambda: running,
+        )
+        == installed
+    )
+
+    assert (
+        find_codex_executable(
+            platform="win32",
+            home=tmp_path,
+            environ={},
+            which=lambda _name: None,
+            is_file=existing.__contains__,
+            running_desktop_locator=lambda: running,
+        )
+        == running
+    )
 
 
 def test_find_codex_executable_rejects_non_files(tmp_path: Path) -> None:
@@ -219,6 +287,17 @@ def test_rediscovering_reader_uses_replaced_executable_on_next_read(
     reader.read_latest()
 
     assert created == [first, second]
+
+
+def test_rediscovering_reader_converts_factory_failure_to_unknown(
+    tmp_path: Path,
+) -> None:
+    reader = RediscoveringCodexQuotaReader(
+        locator=lambda: tmp_path / "ChatGPT" / "codex.exe",
+        reader_factory=lambda _path: (_ for _ in ()).throw(ValueError("invalid broker")),
+    )
+
+    assert reader.read_latest().status is CodexQuotaStatus.UNKNOWN
 
 
 def _window(
