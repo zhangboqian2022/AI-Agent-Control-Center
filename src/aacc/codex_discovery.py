@@ -124,8 +124,9 @@ class CodexLocalDiscovery:
             pid = active_pids.get(conversation_id)
             signal = session_signals.get(conversation_id)
             updated_at = signal.observed_at if signal is not None else session["updated_at"]
-            if signal is not None and signal.status is TaskStatus.COMPLETED:
-                status = TaskStatus.COMPLETED
+            terminal_statuses = {TaskStatus.COMPLETED, TaskStatus.CANCELLED}
+            if signal is not None and signal.status in terminal_statuses:
+                status = signal.status
                 message = signal.message
                 confidence = 0.96
             elif signal is not None and signal.status in {
@@ -150,9 +151,10 @@ class CodexLocalDiscovery:
                 TaskStatus.WAITING_INPUT,
                 TaskStatus.WAITING_APPROVAL,
                 TaskStatus.COMPLETED,
+                TaskStatus.CANCELLED,
             }
             started_at = signal.started_at if signal is not None else None
-            if started_at is None and status in timed_statuses - {TaskStatus.COMPLETED}:
+            if started_at is None and status in timed_statuses - terminal_statuses:
                 started_at = updated_at
             discovered.append(
                 DiscoveredTask(
@@ -171,7 +173,7 @@ class CodexLocalDiscovery:
                         confidence=confidence,
                         started_at=started_at if status in timed_statuses else None,
                         updated_at=updated_at,
-                        finished_at=updated_at if status is TaskStatus.COMPLETED else None,
+                        finished_at=updated_at if status in terminal_statuses else None,
                         pid=pid,
                         session_id=conversation_id,
                         metadata={
@@ -280,7 +282,10 @@ class CodexLocalDiscovery:
             except OSError:
                 continue
             terminal_signal = self._read_session_signal(latest_path, latest_at)
-            if terminal_signal is not None and terminal_signal.status is TaskStatus.COMPLETED:
+            if terminal_signal is not None and terminal_signal.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.CANCELLED,
+            }:
                 signals[conversation_id] = terminal_signal
                 continue
             if terminal_signal is not None and self._is_recent(now, terminal_signal.observed_at):
@@ -290,6 +295,17 @@ class CodexLocalDiscovery:
                 signals[conversation_id] = SessionSignal(
                     TaskStatus.RUNNING, latest_at, "正在分析任务"
                 )
+                continue
+            stale_at = (
+                max(latest_at, terminal_signal.observed_at)
+                if terminal_signal is not None
+                else latest_at
+            )
+            signals[conversation_id] = SessionSignal(
+                TaskStatus.UNKNOWN,
+                stale_at,
+                "最近更新，未检测到运行进程",
+            )
         return signals
 
     def _session_paths(self, selected_ids: set[str]) -> dict[str, list[Path]]:
@@ -360,6 +376,8 @@ class CodexLocalDiscovery:
         latest_activity: tuple[TaskStatus, datetime, str] | None = None
         terminal_at: datetime | None = None
         terminal_started_at: datetime | None = None
+        terminal_status: TaskStatus | None = None
+        terminal_message = ""
         for line in reversed(lines):
             try:
                 item = json.loads(line)
@@ -372,12 +390,21 @@ class CodexLocalDiscovery:
                 continue
             event_type = payload.get("type")
             observed_at = self._parse_time(item.get("timestamp")) or fallback
-            if item.get("type") == "event_msg" and event_type == "task_complete":
+            terminal = (
+                {
+                    "task_complete": (TaskStatus.COMPLETED, "已完成"),
+                    "turn_aborted": (TaskStatus.CANCELLED, "已取消"),
+                }.get(event_type)
+                if isinstance(event_type, str)
+                else None
+            )
+            if item.get("type") == "event_msg" and terminal is not None:
                 if latest_activity is not None:
                     status, activity_at, message = latest_activity
                     return self._finalize_session_signal(
                         path, size, SessionSignal(status, activity_at, message), fallback
                     )
+                terminal_status, terminal_message = terminal
                 terminal_at = observed_at
                 terminal_started_at = self._parse_time(payload.get("started_at"))
                 if terminal_started_at is not None:
@@ -385,9 +412,9 @@ class CodexLocalDiscovery:
                         path,
                         size,
                         SessionSignal(
-                            TaskStatus.COMPLETED,
+                            terminal_status,
                             terminal_at,
-                            "已完成",
+                            terminal_message,
                             terminal_started_at,
                         ),
                         fallback,
@@ -396,10 +423,16 @@ class CodexLocalDiscovery:
             if item.get("type") == "event_msg" and event_type == "task_started":
                 started_at = self._parse_time(payload.get("started_at")) or observed_at
                 if terminal_at is not None:
+                    assert terminal_status is not None
                     return self._finalize_session_signal(
                         path,
                         size,
-                        SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", started_at),
+                        SessionSignal(
+                            terminal_status,
+                            terminal_at,
+                            terminal_message,
+                            started_at,
+                        ),
                         fallback,
                     )
                 if latest_activity is not None:
@@ -449,10 +482,16 @@ class CodexLocalDiscovery:
             }:
                 latest_activity = (TaskStatus.RUNNING, observed_at, "正在分析任务")
         if terminal_at is not None:
+            assert terminal_status is not None
             return self._finalize_session_signal(
                 path,
                 size,
-                SessionSignal(TaskStatus.COMPLETED, terminal_at, "已完成", terminal_started_at),
+                SessionSignal(
+                    terminal_status,
+                    terminal_at,
+                    terminal_message,
+                    terminal_started_at,
+                ),
                 fallback,
             )
         if latest_activity is not None:

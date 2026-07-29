@@ -36,7 +36,9 @@ Commit and candidate SHA-256:
   Windows 10 or 11 standard-user machine with an already-installed WebView2
   Runtime, run Setup with network monitoring or disconnected after download.
   Setup recognizes the Runtime and does not require a network installation;
-  the first Kimi login still creates a usable native view.
+  the first Kimi login still creates a usable native view. Confirm the writable
+  WebView2 user data folder is created at
+  `%LOCALAPPDATA%\AACC\kimi-web-session`, not beside `AACC.exe`.
 - [ ] **WebView2 diagnostic**: if a native Kimi login view cannot produce a
   loading event, it replaces the blank surface with the fixed 15-second
   WebView2/network repair diagnostic and Microsoft repair-page action. Record
@@ -73,12 +75,14 @@ Commit and candidate SHA-256:
   immediate AACC restart.
 - [ ] **Native DACL**: after AACC creates its files, inspect `config.yaml`,
   `aacc.db`, `aacc.db-wal`, `aacc.db-shm` when present, and
-  `kimi-credentials.json`. Each file has inheritance disabled and exactly one
-  full-control allow entry for the current user, Local System, and built-in
-  Administrators, with no other allow, deny, or inherited ACE.
+  `kimi-credentials.json`, plus the
+  `%LOCALAPPDATA%\AACC\kimi-web-session` directory. Each target has inheritance
+  disabled and exactly one full-control allow entry for the current user,
+  Local System, and built-in Administrators, with no other allow, deny, or
+  inherited ACE.
 - [ ] **Separate-user denial**: sign in as a separate unprivileged local
   account and confirm the operating system denies reading every sensitive file
-  above.
+  and the Kimi WebView session directory above.
 - [ ] **Upgrade and graceful shutdown**: while AACC is running, rerun the same
   Setup. It closes AACC gracefully, upgrades in place, restarts normally, and
   preserves AACC-owned settings, history, database, credentials, and reuse

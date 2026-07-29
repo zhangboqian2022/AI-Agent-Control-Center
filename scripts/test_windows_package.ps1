@@ -1836,15 +1836,22 @@ Assert-InstalledInternalMatchesManifest -EvidenceCategory "installed"
 Assert-InstalledRootPayloadHashes -EvidenceCategory "installed"
 $NativeWebViewBaseline = @(Get-ProductProcessBaseline -ProductRoot $InstallRoot)
 $NativeWebViewResultPath = Join-Path $SmokeRoot "installed\native-webview-result.txt"
+$NativeWebViewLocalAppData = Join-Path $SmokeRoot "installed\native-webview-local-app-data"
+$NativeWebViewUserDataPath = Join-Path $NativeWebViewLocalAppData "AACC\kimi-web-session"
 Remove-Item -LiteralPath $NativeWebViewResultPath -Force -ErrorAction SilentlyContinue
 $PreviousQtQpaPlatform = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
 $PreviousWebViewResultPath = [Environment]::GetEnvironmentVariable(
     "AACC_WEBVIEW_SMOKE_RESULT_PATH",
     "Process"
 )
+$PreviousLocalAppData = [Environment]::GetEnvironmentVariable(
+    "LOCALAPPDATA",
+    "Process"
+)
 try {
     $env:QT_QPA_PLATFORM = "windows"
     $env:AACC_WEBVIEW_SMOKE_RESULT_PATH = $NativeWebViewResultPath
+    $env:LOCALAPPDATA = $NativeWebViewLocalAppData
     try {
         $ExitCode = Invoke-ExternalDeadline -FilePath $InstalledAacc `
             -Arguments @("--smoke-native-webview") -TimeoutSeconds 40 `
@@ -1868,6 +1875,20 @@ try {
     Assert-True (
         $NativeWebViewResult -ceq "AACC_WEBVIEW_SMOKE category=success`n"
     ) "installed native WebView smoke result evidence is invalid"
+    Assert-True (
+        Test-Path -LiteralPath $NativeWebViewUserDataPath -PathType Container
+    ) "installed native WebView smoke did not create its writable user data folder"
+    Assert-ExactAcl -Path $NativeWebViewUserDataPath -Directory $true `
+        -EvidenceCategory "installed native WebView user data" `
+        -EvidenceName "kimi-web-session"
+    $NativeWebViewArtifacts = @(
+        Get-ChildItem -LiteralPath $NativeWebViewUserDataPath -Force -ErrorAction Stop
+    )
+    Assert-True ($NativeWebViewArtifacts.Count -gt 0) `
+        "installed native WebView smoke did not write through the production user data folder"
+    $DefaultWebViewUserDataPath = [string]::Concat($InstalledAacc, ".WebView2")
+    Assert-True (-not (Test-Path -LiteralPath $DefaultWebViewUserDataPath)) `
+        "installed native WebView smoke fell back to the executable-adjacent user data folder"
 }
 finally {
     if ($null -eq $PreviousQtQpaPlatform) {
@@ -1881,6 +1902,12 @@ finally {
     }
     else {
         $env:AACC_WEBVIEW_SMOKE_RESULT_PATH = $PreviousWebViewResultPath
+    }
+    if ($null -eq $PreviousLocalAppData) {
+        Remove-Item Env:LOCALAPPDATA -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:LOCALAPPDATA = $PreviousLocalAppData
     }
     Assert-ProductProcessBaseline -ProductRoot $InstallRoot -Expected $NativeWebViewBaseline `
         -Category "installed native WebView smoke"

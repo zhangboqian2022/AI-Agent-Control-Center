@@ -7,8 +7,11 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl
-from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
+from PySide6.QtWebView import QWebView, QWebViewLoadingInfo
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QWidget
+
+from aacc.file_security import FileProtectionError
+from aacc.kimi_web_session import initialize_native_webview
 
 SMOKE_TIMEOUT_MS = 30_000
 EXIT_SUCCESS = 0
@@ -22,6 +25,7 @@ SMOKE_RESULT_CATEGORIES = frozenset(
         "load-failed",
         "unexpected-javascript-result",
         "evidence-write-failed",
+        "storage-protection-failed",
         "invalid-category",
     }
 )
@@ -110,9 +114,15 @@ class NativeWebViewSmoke:
         self._app.quit()
 
 
-def run_native_webview_smoke() -> int:
+def run_native_webview_smoke(data_dir: Path) -> int:
     """Initialize the native backend before QApplication, then run the diagnostic."""
 
-    QtWebView.initialize()
+    try:
+        initialize_native_webview(data_dir)
+    except FileProtectionError:
+        category = "storage-protection-failed"
+        print(f"AACC_WEBVIEW_SMOKE category={category}", file=sys.stderr)
+        _record_result(category)
+        return EXIT_FAILURE
     app = QApplication(sys.argv)
     return NativeWebViewSmoke(app).run()
