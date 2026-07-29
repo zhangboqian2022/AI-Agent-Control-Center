@@ -39,6 +39,12 @@
   可信重置时间时，百分比仍显示，重置位置为 `--`；其他缺失值也诚实显示
   `--`，不会伪装为 `0%`。
 
+### Codex 任务状态
+
+- Codex 会话的 `turn_aborted` 现在作为“已取消”终态处理，不会再因为取消前的
+  工具活动而长期误报“执行中”。过期会话降级为“状态未知”时保留最新文件时间，
+  让状态机能够可靠接受这次降级。
+
 ### Windows Setup 与安全加固
 
 - Setup 仅安装给当前用户，不请求管理员提权，默认路径为
@@ -132,6 +138,13 @@ mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务
   date/time. A known percentage without a trustworthy reset remains visible
   while the reset displays `--`; other missing data also stays `--`, never
   fabricated `0%`.
+
+### Codex task status
+
+- A Codex `turn_aborted` event is now a terminal **Cancelled** state, so tool
+  activity that preceded an aborted turn can no longer leave a second task
+  permanently reported as running. A stale session downgrade also retains the
+  latest file timestamp so the state machine can accept it reliably.
 
 ### Windows Setup and security
 

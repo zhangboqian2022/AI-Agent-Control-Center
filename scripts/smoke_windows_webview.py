@@ -10,4 +10,5 @@ if sys.platform != "win32":
     raise SystemExit(2)
 
 webview_smoke = import_module("aacc.webview_smoke")
-raise SystemExit(webview_smoke.run_native_webview_smoke())
+constants = import_module("aacc.constants")
+raise SystemExit(webview_smoke.run_native_webview_smoke(constants.APP_SUPPORT_DIR))

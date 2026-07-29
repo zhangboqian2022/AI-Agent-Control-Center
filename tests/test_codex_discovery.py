@@ -531,6 +531,110 @@ def test_completed_session_event_overrides_recent_file_activity(tmp_path: Path) 
     assert tasks[0].state.finished_at == completed_at
 
 
+def test_aborted_session_event_is_terminal_and_not_auto_active(tmp_path: Path) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "aborted-session"
+    started_at = datetime(2026, 7, 29, 0, 10, tzinfo=UTC)
+    aborted_at = started_at + timedelta(seconds=20)
+    index.write_text(
+        json.dumps(
+            {
+                "id": conversation_id,
+                "thread_name": "已中断任务",
+                "updated_at": started_at.isoformat().replace("+00:00", "Z"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    processes = tmp_path / "chat_processes.json"
+    processes.write_text("[]", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                {
+                    "timestamp": started_at.isoformat().replace("+00:00", "Z"),
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                },
+                {
+                    "timestamp": (started_at + timedelta(seconds=10))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "type": "response_item",
+                    "payload": {"type": "custom_tool_call", "name": "exec"},
+                },
+                {
+                    "timestamp": aborted_at.isoformat().replace("+00:00", "Z"),
+                    "type": "event_msg",
+                    "payload": {"type": "turn_aborted"},
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+    discovery = CodexLocalDiscovery(
+        index,
+        processes,
+        session_directory=sessions,
+        now=lambda: aborted_at + timedelta(seconds=5),
+        session_modified_at=lambda _path: aborted_at,
+    )
+
+    task = discovery.discover({conversation_id})[0]
+
+    assert task.state.status is TaskStatus.CANCELLED
+    assert task.state.message == "已取消"
+    assert task.state.started_at == started_at
+    assert task.state.finished_at == aborted_at
+    assert discovery.active_session_ids() == set()
+
+
+def test_stale_session_fallback_keeps_latest_file_time_for_state_downgrade(
+    tmp_path: Path,
+) -> None:
+    index = tmp_path / "session_index.jsonl"
+    conversation_id = "stale-newer-file"
+    indexed_at = datetime(2026, 7, 29, 0, 10, tzinfo=UTC)
+    latest_file_at = indexed_at + timedelta(seconds=20)
+    index.write_text(
+        json.dumps(
+            {
+                "id": conversation_id,
+                "updated_at": indexed_at.isoformat().replace("+00:00", "Z"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    processes = tmp_path / "chat_processes.json"
+    processes.write_text("[]", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / f"rollout-{conversation_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": latest_file_at.isoformat().replace("+00:00", "Z"),
+                "type": "event_msg",
+                "payload": {"type": "task_started"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    task = CodexLocalDiscovery(
+        index,
+        processes,
+        session_directory=sessions,
+        now=lambda: latest_file_at + timedelta(minutes=10),
+        session_modified_at=lambda _path: latest_file_at,
+        activity_window_seconds=90,
+    ).discover({conversation_id})[0]
+
+    assert task.state.status is TaskStatus.UNKNOWN
+    assert task.state.updated_at == latest_file_at
+
+
 def test_completed_session_backfills_start_beyond_bounded_activity_tail(
     tmp_path: Path,
 ) -> None:

@@ -491,20 +491,23 @@ def test_windows_shutdown_control_command_requires_exact_arguments(
         app_module.main()
 
 
-def test_windows_native_webview_smoke_runs_before_paths_or_guard(
+def test_windows_native_webview_smoke_uses_production_initialization_before_guard(
+    tmp_path: Path,
     monkeypatch: object,
 ) -> None:
-    calls: list[str] = []
+    calls: list[tuple[str, Path] | str] = []
     monkeypatch.setattr(app_module.sys, "platform", "win32")  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module.sys,
         "argv",
         ["AACC.exe", "--smoke-native-webview"],
     )
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setenv("AACC_CONFIG_PATH", str(config_path))  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module,
         "run_native_webview_smoke",
-        lambda: calls.append("smoke") or 7,
+        lambda data_dir: calls.append(("smoke", data_dir)) or 7,
     )
     monkeypatch.setattr(  # type: ignore[attr-defined]
         app_module,
@@ -518,7 +521,7 @@ def test_windows_native_webview_smoke_runs_before_paths_or_guard(
     )
 
     assert app_module.main() == 7
-    assert calls == ["smoke"]
+    assert calls == [("smoke", tmp_path)]
 
 
 def test_windows_native_webview_smoke_requires_exact_arguments(
