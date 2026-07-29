@@ -60,21 +60,18 @@ scripts\build_windows_installer.ps1
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-27）
+## 当前进度（2026-07-29）
 
-- `codex/fix-windows-webview2-udf`：针对真实 Windows 机器“已安装 WebView2
-  Runtime，但 Kimi 会员登录仍白屏/启动失败”的修复正在进行，**尚未合并**。
-  高可信修复方向：AACC 此前没有在 `QtWebView.initialize()` 前设置 WebView2
-  用户数据目录；微软 Win32 部署文档明确建议安装型应用使用可写的自定义 UDF。
-  当前 TDD 改动会在 Windows 初始化前把
+- `main`：Windows Kimi 登录/WebView2 UDF 与重复“执行中”修复已合并
+  （merge `b7be123`）。高可信修复方向：AACC 此前没有在
+  `QtWebView.initialize()` 前设置 WebView2 用户数据目录；现在 Windows 会把
   `WEBVIEW2_USER_DATA_FOLDER` 强制设为
   `%LOCALAPPDATA%\AACC\kimi-web-session`，先走 AACC 原生 ACL 保护，再初始化
-  Qt；`KimiWebSession.storage_path` 同步指向同一目录。冻结包产品冒烟现通过
-  隔离 `LOCALAPPDATA` 调用同一生产初始化路径，并验证 JavaScript 往返、目录创建
-  与精确 DACL；目录创建/保护失败只输出固定脱敏诊断并安全退出。另修复 Codex
-  `turn_aborted` 未终结任务导致一个真实任务显示两个“执行中”的问题。聚焦测试
-  163 项通过；待全量 pytest/ruff/mypy 与终审后合并 `main`、推 CI，再生成并
-  真机验证新的 Windows Setup。
+  Qt；`KimiWebSession.storage_path` 使用同一目录。冻结包产品冒烟通过隔离
+  `LOCALAPPDATA` 调用同一生产初始化路径，验证 JavaScript 往返、WebView2
+  实际写入、安装目录旁无错误的 `AACC.exe.WebView2`、目录精确 DACL；目录创建/
+  保护失败只输出固定脱敏诊断并安全退出。另已把 Codex `turn_aborted` 识别为
+  `CANCELLED`，修复一个真实任务显示两个“执行中”的问题。
 - `codex/v1.4.2-quota-windows-hardening`：**1.4.2 Windows Setup 候选正在收尾，
   尚未发布**。主 Windows 候选产物为 `AACC-1.4.2-Setup.exe`，当前用户、
   无需提权，默认安装到 `%LocalAppData%\Programs\AACC`；开始菜单必建、桌面
@@ -85,19 +82,25 @@ scripts\build_windows_installer.ps1
   `aacc-spawn.exe` 与 Job Object 管理。SQLite database/WAL/SHM 也走同一保护
   门面。
 - Setup 在升级/卸载前使用 `--shutdown-for-update` 请求 20 秒内优雅退出；
-  候选 CI 已加入 Windows Server 2022/2025 的冻结包启动、broker、安装、重装、
-  写入前锁目标拒绝、卸载、ACL 与进程清理产品冒烟。候选提交 `0b2730f` 的
-  hosted 全量运行
-  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30319350661`
-  已全绿，Setup、SHA-256 与便携 ZIP 也通过严格内容校验并成功上传；该证据不
-  替代 Windows 10/11 真机门禁。
+  `main@b7be123` 的 hosted 全量运行
+  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30412622959`
+  已在 macOS、Windows Server 2022/2025 全绿，包括冻结包启动、broker、安装、
+  重装、写入前锁目标拒绝、卸载、ACL、进程清理与原生 WebView2 产品冒烟。
+  Setup、SHA-256 与便携 ZIP 通过严格内容校验并上传；本机同一提交 885 passed、
+  7 skipped，ruff、format、mypy 全绿。该证据不替代 Windows 10/11 真机门禁。
+- 桌面候选产物已更新：Setup SHA-256
+  `e06dbe37f89d77517b0d9626b86b198430a2b4c5ae0bf61f4550eb3eb03fe9a3`，
+  Windows 便携 ZIP SHA-256
+  `d88f015d271ee52eb31ed554ef8dbcda229a278d5b67a81b22956d282c3c36f5`，
+  macOS DMG SHA-256
+  `df211bdd6301c8286dbc194cd7e50d10d549107b3758f579960e1c2d79a96f16`。
 - 额度最终布局：Codex 仅一行 `WEEK`；Kimi 为 `5H`、`WEEK`、`MONTH`，行内
   显示百分比、进度条和完整本地重置日期时间。Kimi 会员网页会话在 AACC 本地
   缓存到明确退出，并每五分钟一起刷新三窗口；额度元数据查询不消耗模型 Token。
 - 发版仍被人工门禁阻塞：真实 Windows 10/11 标准用户完整清单、另一无特权账户
-  对配置/凭据/数据库/WAL/SHM 的拒读、真实 Kimi/Codex、SmartScreen、托盘、
-  聚焦/热键和长时间运行。完成并附证据前不得创建 `v1.4.2` tag 或正式 Release。
-- 1.4.2 macOS DMG 仍是候选产物。已正式发布的 Latest 仍为 1.4.1。
+  对配置/凭据/数据库/WAL/SHM/WebView2 UDF 的拒读、真实 Kimi/Codex、
+  SmartScreen、托盘、聚焦/热键和长时间运行。完成并附证据前不得创建
+  `v1.4.2` tag 或正式 Release。已正式发布的 Latest 仍为 1.4.1。
 
 ### 历史基线（2026-07-26）
 
