@@ -27,14 +27,17 @@
 - Codex 只显示一行更大的 `WEEK`，数据优先来自本机已安装 Codex
   `app-server` 的只读 `account/rateLimits/read`，不可用时才回退到有界本地
   会话元数据。AACC 不启动任务、不发送提示词、不发起登录。
+- AACC 每 60 秒重新发现 Codex 实时来源，所以 ChatGPT/Codex 在 AACC 之后打开
+  或重启也会自动恢复同步；点击额度条仍会立即刷新。
 - Kimi 严格按 `5H`、`WEEK`、`MONTH` 三行显示。Windows 首次登录使用隔离的
   AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile`；它不读取
   日常 Edge 配置，并跨 AACC 和电脑重启保留，直到手动退出、Kimi 令会话失效
   或安全检查失败。AACC 不保存 Cookie、密码或网页 Bearer Token；Kimi Code OAuth
   凭据由 AACC 凭据保护另行保存。
-- 网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能用
-  足够新的数据补临时缺失的 `5H`/`WEEK`，不能虚构 `MONTH`。额度查询只读取
-  元数据、不发送提示词，也不消耗生成 Token。
+- 网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；临时刷新失败时保留
+  最后一次可验证的 `5H`/`WEEK` 并标记“数据过期”，成功后自动替换，且绝不
+  用 Kimi Code 虚构 `MONTH`。真实 `0%` 显示为 `0%`，只有未知值显示 `--`。
+  额度查询只读取元数据、不发送提示词，也不消耗生成 Token。
 - 每行将百分比、进度条和完整本地重置日期时间分开排版。百分比已知但没有
   可信重置时间时，百分比仍显示，重置位置为 `--`；其他缺失值也诚实显示
   `--`，不会伪装为 `0%`。
@@ -47,6 +50,8 @@
 
 ### Windows Setup 与安全加固
 
+- Windows 托盘图标左键只显示/隐藏面板，右键菜单保持打开并提供“退出 AACC”；
+  头部新增电源按钮，两个退出入口都会停止完整应用和后台服务。
 - Setup 仅安装给当前用户，不请求管理员提权，默认路径为
   `%LocalAppData%\Programs\AACC`。它始终创建开始菜单快捷方式，可选但默认不
   勾选桌面快捷方式，不添加开机启动。
@@ -81,8 +86,8 @@
 
 ### 自动化证据边界
 
-候选应用提交 `4f1a7f2` 的
-[GitHub Actions 运行 30424147975](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30424147975)
+候选应用提交 `5f7966b` 的
+[GitHub Actions 运行 30436090922](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30436090922)
 已在托管的 Windows Server 2022 与 Windows Server 2025 环境通过：原生
 broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、重装、写入前
 锁定目标拒绝、卸载、ACL 与进程清理产品冒烟；安装后的 `AACC.exe` 还实际
@@ -90,7 +95,7 @@ broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、
 profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格内容校验与
 资产上传，以及 macOS 质量作业、Windows 双版本完整测试、ruff、格式、mypy 和
 依赖审计也在同一次运行中通过。候选 Setup SHA-256 为
-`808e8b285e7268dceb649a6e03699cec43f86fd56513340e887a364584b294be`。
+`139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`。
 这些仍只是托管服务器自动证据。
 
 即使上述托管工作流全部通过，它也不能证明消费级 Windows 10 或 Windows 11、
@@ -124,6 +129,9 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
   app-server’s read-only `account/rateLimits/read` method and falls back to
   bounded local session metadata. It does not start a task, submit a prompt, or
   initiate login.
+- AACC rediscovers the live Codex source every 60 seconds, so ChatGPT/Codex
+  opened or restarted after AACC automatically resumes synchronization. Clicking
+  the quota strip still refreshes immediately.
 - Kimi renders `5H`, `WEEK`, and `MONTH` in that order. On Windows, first login
   uses an isolated AACC-owned Edge profile at
   `%LOCALAPPDATA%\AACC\kimi-edge-profile`; it never reads the normal Edge
@@ -132,9 +140,10 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
   bearer token. Kimi Code OAuth credentials are stored separately under AACC
   credential protection.
 - The web source and Kimi Code fallback start in the same five-minute cycle.
-  Only sufficiently fresh Kimi Code data may fill a missing `5H` or `WEEK`;
-  it never supplies `MONTH`. Metadata-only lookups send no prompt and use no
-  generation tokens.
+  A temporary refresh failure retains the last verifiable `5H`/`WEEK` values
+  as stale and replaces them after the next successful poll; Kimi Code never
+  supplies `MONTH`. A real `0%` remains `0%`, and only unknown values use `--`.
+  Metadata-only lookups send no prompt and use no generation tokens.
 - Each available row separates percentage, progress, and complete local reset
   date/time. A known percentage without a trustworthy reset remains visible
   while the reset displays `--`; other missing data also stays `--`, never
@@ -149,6 +158,9 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
 
 ### Windows Setup and security
 
+- A normal left-click on the Windows tray icon only shows or hides the panel;
+  right-click leaves the menu open with **Quit AACC**. The new header power
+  button and the tray action both stop the complete app and background services.
 - `AACC-1.4.2-Setup.exe` is a per-user, non-elevated installer that defaults to
   `%LocalAppData%\Programs\AACC`. It creates a Start Menu shortcut, offers an
   unchecked desktop shortcut, and adds no login item.
@@ -194,8 +206,8 @@ profile 精确 ACL 与无孤儿 Edge。Setup、SHA-256 和便携 ZIP 的严格�
 
 ### Automated evidence boundary
 
-Candidate application commit `4f1a7f2` passed
-[GitHub Actions run 30424147975](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30424147975)
+Candidate application commit `5f7966b` passed
+[GitHub Actions run 30436090922](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30436090922)
 on hosted Windows Server 2022 and Windows Server 2025: native broker,
 PyInstaller onedir, and Setup builds; frozen first launch; installation;
 reinstall; pre-mutation locked-target refusal; uninstall; ACL and process
@@ -206,7 +218,7 @@ processes. Strict Setup, SHA-256, portable ZIP content verification and
 artifact upload, plus the macOS quality job, both complete Windows test legs,
 Ruff, formatting, mypy, and dependency audit passed in the same run. The
 candidate Setup SHA-256 is
-`808e8b285e7268dceb649a6e03699cec43f86fd56513340e887a364584b294be`.
+`139f45214362dd084aebe4b833d80dd344703491fbaf1f400482107759f4662a`.
 This remains hosted-server automated evidence only.
 
 Hosted Windows Server evidence is not the real Windows 10/11 consumer test. It
