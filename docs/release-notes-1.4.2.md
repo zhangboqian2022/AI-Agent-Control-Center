@@ -27,11 +27,10 @@
 - Codex 只显示一行更大的 `WEEK`，数据优先来自本机已安装 Codex
   `app-server` 的只读 `account/rateLimits/read`，不可用时才回退到有界本地
   会话元数据。AACC 不启动任务、不发送提示词、不发起登录。
-- Kimi 严格按 `5H`、`WEEK`、`MONTH` 三行显示。操作系统原生的每应用
-  WebView 存储保留 Kimi 第一方站点会话。对于原生网页会话复用，AACC 只保存
-  受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值
-  复制进该门禁；Kimi Code OAuth 凭据由现有凭据保护另行保存。明确退出登录
-  会先同步关闭复用，再尝试有界的原生站点数据清理。
+- Kimi 严格按 `5H`、`WEEK`、`MONTH` 三行显示。Windows 首次登录使用隔离的
+  AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile`；它不读取
+  日常 Edge 配置，并跨 AACC 和电脑重启保留，直到手动退出、Kimi 令会话失效
+  或安全检查失败。AACC 不保存 Cookie、密码或网页 Bearer Token。
 - 网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能用
   足够新的数据补临时缺失的 `5H`/`WEEK`，不能虚构 `MONTH`。额度查询只读取
   元数据、不发送提示词，也不消耗生成 Token。
@@ -52,15 +51,12 @@
   勾选桌面快捷方式，不添加开机启动。
 - 再次运行 Setup 会先请求 AACC 在 20 秒内优雅退出，再原位升级。卸载会移除
   程序、快捷方式与卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC` 中由
-  AACC 管理的设置、历史、数据库、凭据与复用决定。原生 WebView 存储由操作
-  系统另行管理，因此不声称 Setup 会保留或移除网页会话。
-- 在写入 AACC 文件前，Setup 会为当前用户确保 Microsoft Evergreen WebView2
-  运行时可用；仅在运行时不存在时才需要网络，已安装且可用的运行时会被复用。若
-  Kimi 原生登录视图没有加载事件，对话框会用固定的 15 秒 WebView2/网络修复诊断
-  和 Microsoft 修复链接替换空白界面。
-- Windows 会在 Qt 初始化前把可写的 WebView2 用户数据目录固定为
-  `%LOCALAPPDATA%\AACC\kimi-web-session`，并先按当前用户保护该目录，避免
-  WebView2 使用 `AACC.exe` 旁边对安装型程序不可靠的默认目录。
+  AACC 管理的设置、历史、数据库、凭据与复用决定。
+- Windows Kimi 登录使用系统已安装的 Microsoft Edge；Setup 不安装额外浏览器
+  运行时。首次在专用 Edge 窗口登录成功后，AACC 会关闭该窗口，并每五分钟用
+  同一独立会话在后台刷新三项额度，直到手动退出或 Kimi 令会话失效。
+- AACC 专用 Edge 配置目录受当前用户精确 DACL 保护；显式退出会先关闭复用，
+  再只清理该专用目录，绝不访问日常 Edge 数据。
 - 优雅退出使用当前会话内、按目标 PID 命名的 Windows Event；Event 的 Owner
   固定为当前用户，DACL 仅允许当前用户、Local System 与 Administrators。
   控制端仍会核对精确窗口标题、PID 与完整 EXE 路径，并等待同一个进程句柄
@@ -88,8 +84,8 @@
 [GitHub Actions 运行 30412622959](https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30412622959)
 已在托管的 Windows Server 2022 与 Windows Server 2025 环境通过：原生
 broker、PyInstaller onedir 与 Setup 构建，冻结包首次启动、安装、重装、写入前
-锁定目标拒绝、卸载、ACL 与进程清理产品冒烟；原生 WebView2 冒烟还确认生产
-UDF 内实际产生数据、精确 DACL 生效且安装目录旁没有回退目录。Setup、SHA-256
+锁定目标拒绝、卸载、ACL 与进程清理产品冒烟。该运行早于本次 Edge 登录替换，
+因此不作为新 Edge 路径的验证证据。Setup、SHA-256
 和便携 ZIP 的严格内容校验与资产上传，以及 macOS 质量作业、Windows 双版本
 测试、ruff、格式、mypy 和依赖审计也在同一次运行中通过。这些仍只是托管服务器
 自动证据。
@@ -125,13 +121,12 @@ UDF 内实际产生数据、精确 DACL 生效且安装目录旁没有回退目�
   app-server’s read-only `account/rateLimits/read` method and falls back to
   bounded local session metadata. It does not start a task, submit a prompt, or
   initiate login.
-- Kimi renders `5H`, `WEEK`, and `MONTH` in that order. The operating system's
-  native per-application WebView store retains the first-party Kimi session.
-  For native website-session reuse, AACC persists only a protected reuse
-  decision and does not copy cookies, passwords, a website bearer token,
-  account names, or quota values into that gate. Kimi Code OAuth credentials
-  remain separately protected. Explicit logout synchronously disables reuse,
-  then attempts bounded native site-data cleanup.
+- Kimi renders `5H`, `WEEK`, and `MONTH` in that order. On Windows, first login
+  uses an isolated AACC-owned Edge profile at
+  `%LOCALAPPDATA%\AACC\kimi-edge-profile`; it never reads the normal Edge
+  profile and survives AACC and PC restarts until you sign out, Kimi expires
+  it, or a security check fails. AACC stores no cookie, password, or website
+  bearer token.
 - The web source and Kimi Code fallback start in the same five-minute cycle.
   Only sufficiently fresh Kimi Code data may fill a missing `5H` or `WEEK`;
   it never supplies `MONTH`. Metadata-only lookups send no prompt and use no
@@ -156,18 +151,14 @@ UDF 内实际产生数据、精确 DACL 生效且安装目录旁没有回退目�
 - Rerunning Setup requests bounded graceful shutdown and upgrades in place.
   Uninstall removes the program, shortcuts, and registration. Upgrade and
   uninstall preserve AACC-owned settings, history, database, credentials, and
-  reuse decision under `%APPDATA%\AACC`. The operating system owns the native
-  WebView store separately, so this is not a claim that Setup preserves or
-  removes the website session.
-- Before AACC files are changed, Setup ensures Microsoft's Evergreen WebView2
-  Runtime is available for the current user. Network is required only if the
-  Runtime is absent; a usable installed Runtime is reused. If Kimi's native
-  login view has no loading event, its dialog replaces the blank surface with a
-  fixed 15-second WebView2/network repair diagnostic and Microsoft repair link.
-- Windows sets the writable WebView2 user data folder to
-  `%LOCALAPPDATA%\AACC\kimi-web-session` before Qt initializes and protects it
-  for the current user first. This avoids WebView2's installer-sensitive
-  default directory beside `AACC.exe`.
+  reuse decision under `%APPDATA%\AACC`.
+- Windows Kimi login uses the installed Microsoft Edge browser; Setup installs
+  no separate browser runtime. After first login succeeds in the dedicated
+  Edge window, AACC closes it and reuses the same isolated session for
+  five-minute background refreshes until you sign out or Kimi expires it.
+- The AACC-owned Edge profile has an exact current-user DACL. Explicit logout
+  disables reuse first and removes only that dedicated profile, never normal
+  Edge data.
 - Graceful shutdown uses a per-target-PID Windows Event in the current session.
   Its owner is the current user and its protected DACL allows only that user,
   Local System, and Administrators. The controller still verifies the exact
@@ -204,9 +195,8 @@ Candidate application commit `b7be123` passed
 on hosted Windows Server 2022 and Windows Server 2025: native broker,
 PyInstaller onedir, and Setup builds; frozen first launch; installation;
 reinstall; pre-mutation locked-target refusal; uninstall; ACL and process
-cleanup product smokes. The native WebView2 smoke also proved actual writes
-inside the production UDF, its exact DACL, and the absence of an
-executable-adjacent fallback directory. Strict Setup, SHA-256, portable ZIP
+cleanup product smokes. That run predates the Edge login replacement and is
+not evidence for the new Edge path. Strict Setup, SHA-256, portable ZIP
 content verification and artifact upload, plus the macOS quality job, both
 Windows test legs, Ruff, formatting, mypy, and dependency audit passed in the
 same run. This remains hosted-server automated evidence only.

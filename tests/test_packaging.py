@@ -353,7 +353,7 @@ def test_windows_2025_ci_runs_installed_product_without_native_webview_smoke() -
     assert "AACC_WEBVIEW_SMOKE_RESULT_PATH" not in package_smoke
 
 
-def test_windows_webview_docs_explain_runtime_provisioning_and_manual_coverage() -> None:
+def test_windows_edge_docs_explain_persistent_isolated_login() -> None:
     def normalized(name: str) -> str:
         return " ".join((ROOT / name).read_text(encoding="utf-8").split())
 
@@ -364,7 +364,10 @@ def test_windows_webview_docs_explain_runtime_provisioning_and_manual_coverage()
         "CHANGELOG.md",
     )
     for name in english_docs:
-        assert "Evergreen WebView2 Runtime" in normalized(name)
+        document = normalized(name)
+        assert "AACC-owned Edge profile" in document
+        assert "until you sign out" in document
+        assert "WebView2" not in document
 
     chinese_docs = (
         "README.zh-CN.md",
@@ -373,23 +376,20 @@ def test_windows_webview_docs_explain_runtime_provisioning_and_manual_coverage()
         "CHANGELOG.zh-CN.md",
     )
     for name in chinese_docs:
-        assert "Evergreen WebView2 运行时" in normalized(name)
-
-    english_readme = normalized("README.md")
-    assert "only if the Runtime is absent" in english_readme
-    assert "15-second diagnostic" in english_readme
-
-    chinese_readme = normalized("README.zh-CN.md")
-    assert "仅在运行时不存在时" in chinese_readme
-    assert "15 秒诊断" in chinese_readme
+        document = normalized(name)
+        assert "AACC 专用 Edge 配置目录" in document
+        assert "手动退出" in document
+        assert "WebView2" not in document
 
     english_checklist = normalized("docs/windows-verification-checklist.en.md")
-    assert "without the WebView2 Runtime" in english_checklist
-    assert "already-installed WebView2 Runtime" in english_checklist
+    assert "AACC-owned Edge profile" in english_checklist
+    assert "%LOCALAPPDATA%\\AACC\\kimi-edge-profile" in english_checklist
+    assert "WebView2" not in english_checklist
 
     chinese_checklist = normalized("docs/windows-verification-checklist.zh-CN.md")
-    assert "未安装 WebView2 运行时" in chinese_checklist
-    assert "已安装 WebView2 运行时" in chinese_checklist
+    assert "AACC 专用 Edge 配置目录" in chinese_checklist
+    assert "%LOCALAPPDATA%\\AACC\\kimi-edge-profile" in chinese_checklist
+    assert "WebView2" not in chinese_checklist
 
 
 def test_ci_enforces_locked_sync_audit_report_and_diff_coverage() -> None:
