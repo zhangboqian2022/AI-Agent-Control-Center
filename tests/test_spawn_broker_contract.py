@@ -143,6 +143,24 @@ def test_broker_dependency_check_is_an_explicit_allowlist() -> None:
     assert "A-Za-z0-9._-" not in script
 
 
+def test_windows_build_scripts_accept_prerelease_versions() -> None:
+    broker = (ROOT / "scripts" / "build_spawn_broker.ps1").read_text(encoding="utf-8")
+    # PEP 440 prerelease suffixes (a/b/rc N) are accepted; the numeric triplet
+    # feeds VERSIONINFO while the full string feeds display names.
+    assert r"^(\d+)\.(\d+)\.(\d+)((?:a|b|rc)\d+)?$" in broker
+    assert "$VersionComma = " in broker
+
+    installer_script = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "(?:a|b|rc)" in installer_script
+    assert '$VersionInfo = "$($Matches[1]).$($Matches[2]).$($Matches[3])"' in installer_script
+
+    iss = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
+    assert "#ifndef MyAppVersionInfo" in iss
+    assert "AppVersion={#MyAppVersion}" in iss
+
+
 def test_broker_source_is_fixed_to_codex_app_server() -> None:
     source = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.cpp").read_text(encoding="utf-8")
 
