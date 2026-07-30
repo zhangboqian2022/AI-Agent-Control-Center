@@ -19,8 +19,8 @@ $ResourceTemplatePath = Join-Path $Root "native\aacc_spawn\aacc_spawn.rc.in"
 New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
 
 $Version = ((& uv version --short | Select-Object -First 1) | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or $Version -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
-    throw "uv version --short did not return a three-part product version"
+if ($LASTEXITCODE -ne 0 -or $Version -notmatch '^(\d+)\.(\d+)\.(\d+)((?:a|b|rc)\d+)?$') {
+    throw "uv version --short did not return a valid product version"
 }
 $VersionComma = "$($Matches[1]),$($Matches[2]),$($Matches[3]),0"
 

@@ -96,7 +96,12 @@ scripts\build_windows_installer.ps1
   版本一致性测试 `test_release_version_is_consistent_across_project_and_
   build_scripts` 已解耦 1.4.2 设计文档，改为断言 `__version__` ==
   pyproject == 双语 CHANGELOG 最新段落标题（`public_version()`）==
-  release-notes 文件存在。
+  release-notes 文件存在。**rc 版本号暴露的 Windows 构建脚本缺陷已修**：
+  `build_spawn_broker.ps1` / `build_windows_installer.ps1` 原只接受
+  `X.Y.Z` 三段数字版本（1.4.0 rc 时代无 Windows 构建，校验从未见过 rc），
+  现接受 PEP 440 `a|b|rc` 后缀；Inno `VersionInfoVersion/ProductVersion`
+  改由新 define `MyAppVersionInfo`（数字三元组）提供，预发布后缀保留在
+  AppVersion 与产物文件名（`AACC-1.4.3rc1-Setup.exe`）。
 - 送审副本约定补充：HEAD 之后的未提交改动用 `git ls-files` 按工作区内容
   导出（见下），已提交的用 `git archive HEAD`；两者都剔除 `docs/superpowers`
   与 `tests/fixtures`。

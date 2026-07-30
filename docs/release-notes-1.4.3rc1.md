@@ -18,6 +18,10 @@ defenses were rejected with evidence.
 - **Diagnostics — Kimi Desktop discovery.** When none of the candidate daimon
   roots exists, one INFO log entry lists every probed path so the disabled
   discovery source is traceable.
+- **Build — prerelease versions on Windows.** The broker and installer build
+  scripts now accept PEP 440 prerelease versions (`a`/`b`/`rc` suffixes).
+  Numeric-only Inno/VERSIONINFO fields receive a dedicated `MyAppVersionInfo`
+  triplet; prerelease suffixes remain in display and artifact names.
 - **Docs — honesty boundaries.** KNOWN_LIMITATIONS (bilingual) now declares
   that hosted Windows Server CI does not equal consumer Windows 10/11
   verification, and a CI assertion keeps the bilingual entry counts aligned.
@@ -41,6 +45,10 @@ and is not claimed here.
   日志 sink，未在业务代码中插入调用点级 `redact()`。
 - **诊断 — Kimi Desktop 发现。** 所有候选 daimon 根目录都不存在时，记录
   一条列出全部探测路径的 INFO 日志，停用的发现源可追溯。
+- **构建 — Windows 接受预发布版本号。** broker 与安装器构建脚本现在接受
+  PEP 440 预发布版本（`a`/`b`/`rc` 后缀）。纯数字的 Inno/VERSIONINFO
+  字段改用独立的 `MyAppVersionInfo` 三元组；预发布后缀保留在显示名与
+  产物文件名中。
 - **文档 — 诚实边界。** KNOWN_LIMITATIONS（双语）新增声明：托管
   Windows Server CI 不等于消费级 Windows 10/11 验证；并新增 CI 断言强制
   中英条目数对齐。

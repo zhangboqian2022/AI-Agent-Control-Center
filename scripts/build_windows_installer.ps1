@@ -269,9 +269,12 @@ if ($VersionOutput.Count -ne 1) {
     throw "project version query returned unexpected output"
 }
 $Version = $VersionOutput[0].Trim()
-if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-    throw "project version is not a restricted numeric version"
+if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)((?:a|b|rc)(0|[1-9][0-9]*))?$') {
+    throw "project version is not a valid release version"
 }
+# Windows VERSIONINFO fields are numeric-only; prerelease suffixes stay in
+# display names (AppVersion, artifact filenames) via a separate define.
+$VersionInfo = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
 
 if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
     throw "LOCALAPPDATA is unavailable"
@@ -378,7 +381,7 @@ try {
         Remove-Item -LiteralPath $ChecksumPath -Force
     }
 
-    & $IsccPath "/DMyAppVersion=$Version" $IssPath
+    & $IsccPath "/DMyAppVersion=$Version" "/DMyAppVersionInfo=$VersionInfo" $IssPath
     if ($LASTEXITCODE -ne 0) {
         throw "Inno Setup compilation failed"
     }

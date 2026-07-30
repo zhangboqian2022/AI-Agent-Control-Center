@@ -1,13 +1,16 @@
 #ifndef MyAppVersion
   #error MyAppVersion must be supplied by ISCC
 #endif
+#ifndef MyAppVersionInfo
+  #error MyAppVersionInfo must be supplied by ISCC
+#endif
 
 [Setup]
 AppId={{C174E242-E193-5863-8A46-F16152875173}
 AppName=AACC
 AppVersion={#MyAppVersion}
-VersionInfoVersion={#MyAppVersion}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersionInfo}
+VersionInfoProductVersion={#MyAppVersionInfo}
 AppPublisher=AACC
 AppPublisherURL=https://github.com/zhangboqian2022/AI-Agent-Control-Center
 DefaultDirName={localappdata}\Programs\AACC
