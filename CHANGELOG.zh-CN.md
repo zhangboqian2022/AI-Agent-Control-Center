@@ -8,6 +8,7 @@
 - [安全] 日志 sink 级统一脱敏扩展覆盖 `device_code`、`user_code`、`api_key`、`apikey` 字段（纵深防御），全局 `RedactingFormatter` 仍是唯一脱敏点。
 - [诊断] 所有 Kimi Desktop daimon 候选路径都不存在时记录一条含候选路径列表的 INFO 日志，静默停用的发现源变得可追溯。
 - [文档] KNOWN_LIMITATIONS 双语声明托管 Windows Server CI 不等于消费级 Windows 10/11 验证，并新增中英条目数对齐的 CI 断言。
+- [构建] Windows broker 与安装器构建脚本接受 PEP 440 预发布版本号（`a`/`b`/`rc` 后缀）；纯数字 VERSIONINFO 字段改用独立的 `MyAppVersionInfo` 三元组，预发布后缀保留在显示名与产物文件名中。
 
 ## 1.4.2 — 2026-07-29
 

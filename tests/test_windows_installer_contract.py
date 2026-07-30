@@ -21,8 +21,8 @@ def test_inno_setup_is_per_user_and_upgrade_stable() -> None:
     assert "AppId={{C174E242-E193-5863-8A46-F16152875173}" in setup
     assert "PrivilegesRequired=lowest" in setup_lines
     assert "PrivilegesRequiredOverridesAllowed=" in setup_lines
-    assert "VersionInfoVersion={#MyAppVersion}" in setup
-    assert "VersionInfoProductVersion={#MyAppVersion}" in setup
+    assert "VersionInfoVersion={#MyAppVersionInfo}" in setup
+    assert "VersionInfoProductVersion={#MyAppVersionInfo}" in setup
     assert "DefaultDirName={localappdata}\\Programs\\AACC" in setup
     assert "UsePreviousAppDir=yes" in setup
     assert "UninstallLogMode=append" in setup
@@ -523,7 +523,8 @@ def test_windows_installer_build_validates_inputs_and_fresh_output() -> None:
     text = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
 
     assert "uv version --short" in text
-    assert "'^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$'" in text
+    assert "(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)" in text
+    assert "((?:a|b|rc)(0|[1-9][0-9]*))?$'" in text
     assert "Compare-Object" in text
     assert "AACC.exe" in text
     assert "aacc-spawn.exe" in text
@@ -535,6 +536,7 @@ def test_windows_installer_build_validates_inputs_and_fresh_output() -> None:
     assert "Invoke-Expression" not in text
     assert "$LASTEXITCODE" in text
     assert '"/DMyAppVersion=$Version"' in text
+    assert '"/DMyAppVersionInfo=$VersionInfo"' in text
     assert "$IssPath" in text
     assert "Length -lt" in text
     assert "internal-manifest-v1.txt" in text
