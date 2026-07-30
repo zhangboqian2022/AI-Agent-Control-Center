@@ -2,6 +2,15 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.3-rc.1 — 2026-07-30
+
+[Bilingual release notes](docs/release-notes-1.4.3rc1.md)
+
+- [Fix] On Windows, launching a second copy now finds the existing panel by its real window title (`AI Agent Control Center`, via the shared `AACC_WINDOW_TITLE` constant) and brings it to the foreground; the previous `"AACC"` substring never matched.
+- [Security] Extend sink-level log redaction to cover `device_code`, `user_code`, `api_key`, and `apikey` fields as defense in depth; the global `RedactingFormatter` remains the single redaction point.
+- [Diagnostics] Log one INFO entry listing every probed candidate path when no Kimi Desktop daimon root exists, so the silently disabled discovery source becomes traceable.
+- [Docs] Declare in KNOWN_LIMITATIONS (bilingual) that hosted Windows Server CI does not equal consumer Windows 10/11 verification, and add a CI assertion keeping the bilingual entry counts aligned.
+
 ## 1.4.2 — 2026-07-29
 
 [Bilingual release notes](docs/release-notes-1.4.2.md)

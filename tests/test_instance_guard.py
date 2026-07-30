@@ -73,15 +73,23 @@ def test_acquire_windows_conflict_returns_false(tmp_path, monkeypatch) -> None:
 
 def test_activate_existing_instance_windows(tmp_path, monkeypatch) -> None:
     import aacc.instance_guard as guard_mod
+    from aacc.shutdown_windows import AACC_WINDOW_TITLE
 
     monkeypatch.setattr(sys, "platform", "win32")
     focused: list[int] = []
+    searched: list[str] = []
+
+    def fake_find(title: str) -> int | None:
+        searched.append(title)
+        return 42 if title == AACC_WINDOW_TITLE else None
+
     fake_win32 = types.SimpleNamespace(
-        find_window_by_title=lambda title: 42 if title == "AACC" else None,
+        find_window_by_title=fake_find,
         focus_window=lambda hwnd: focused.append(hwnd) or True,
     )
     # aacc.win32 is importable off-Windows now, so ``from aacc import win32``
     # resolves via the cached package attribute; patch that attribute.
     monkeypatch.setattr("aacc.win32", fake_win32, raising=False)
     guard_mod.activate_existing_instance()
+    assert searched == ["AI Agent Control Center"]
     assert focused == [42]

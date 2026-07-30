@@ -13,4 +13,5 @@
 - `SetForegroundWindow` is subject to the Windows foreground lock; AACC degrades and logs when activation is denied.
 - The Kimi Desktop daimon path on Windows is a best-effort candidate path and has not been verified on real hardware.
 - The Windows build is unsigned; first launch shows a SmartScreen prompt.
+- Windows CI runs on hosted Windows Server SKUs; consumer Windows 10/11 behaviors (SmartScreen, tray, window focus/hotkeys, long-running sessions) are covered by a manual verification checklist, not by automation.
 - F13–F20 hotkeys require an Fn-layer mapping on most Windows keyboards.

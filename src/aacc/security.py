@@ -2,7 +2,8 @@ import re
 
 SECRET_PATTERNS = (
     re.compile(
-        r"(?i)([\"']?(?:token|password|secret)[\"']?\s*[=:]\s*)([\"']?)"
+        r"(?i)([\"']?(?:token|password|secret|device_code|user_code|api_key|apikey)"
+        r"[\"']?\s*[=:]\s*)([\"']?)"
         r"([^\"'\s,;}\]]+)([\"']?)"
     ),
     re.compile(

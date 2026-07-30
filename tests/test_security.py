@@ -15,6 +15,26 @@ def test_redact_hides_common_secret_formats() -> None:
 
 def test_redact_leaves_normal_status_text() -> None:
     assert redact("task-1 completed in 12 seconds") == "task-1 completed in 12 seconds"
+    assert redact("request failed error_code=500 code=200") == (
+        "request failed error_code=500 code=200"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "secret"),
+    [
+        ('"device_code": "dev-abc-123456"', "dev-abc-123456"),
+        ("user_code=ABCD-EFGH", "ABCD-EFGH"),
+        ('"user_code": "WXYZ-1234"', "WXYZ-1234"),
+        ("api_key=plainkey-no-sk-prefix", "plainkey-no-sk-prefix"),
+        ('"apikey": "another-key-value"', "another-key-value"),
+        ("redirect_uri=https://example.com/cb?device_code=dev-777", "dev-777"),
+    ],
+)
+def test_redacts_oauth_and_api_key_fields(value: str, secret: str) -> None:
+    cleaned = redact(value)
+    assert "[REDACTED]" in cleaned
+    assert secret not in cleaned
 
 
 @pytest.mark.parametrize(
