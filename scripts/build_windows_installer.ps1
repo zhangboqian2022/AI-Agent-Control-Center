@@ -419,7 +419,7 @@ try {
     $StrictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
     $ChecksumText = $StrictUtf8.GetString($ChecksumBytes)
     if ($ChecksumText -cne "$Digest  $SetupLeaf`n" -or
-        $ChecksumText -notmatch '^[0-9a-f]{64}  AACC-\d+\.\d+\.\d+-Setup\.exe\n$') {
+        $ChecksumText -notmatch '^[0-9a-f]{64}  AACC-\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?-Setup\.exe\n$') {
         throw "Windows Setup checksum file is malformed"
     }
     $VerifiedDigest = (

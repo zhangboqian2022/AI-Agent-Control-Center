@@ -827,6 +827,41 @@ def test_windows_artifact_verifier_accepts_exact_tree_and_rejects_case_collision
     assert subprocess.run(command, check=False, capture_output=True).returncode != 0
 
 
+def test_windows_artifact_verifier_accepts_prerelease_setup_name(tmp_path: Path) -> None:
+    built_root = tmp_path / "dist" / "AACC"
+    internal = built_root / "_internal"
+    internal.mkdir(parents=True)
+    (built_root / "AACC.exe").write_bytes(b"gui")
+    (built_root / "aacc-spawn.exe").write_bytes(b"broker")
+    (internal / "runtime.bin").write_bytes(b"runtime")
+    setup = tmp_path / "AACC-1.4.3rc1-Setup.exe"
+    setup.write_bytes(b"s" * (1024 * 1024 + 1))
+    checksum = tmp_path / f"{setup.name}.sha256"
+    checksum.write_bytes(
+        f"{hashlib.sha256(setup.read_bytes()).hexdigest()}  {setup.name}\n".encode()
+    )
+    portable = tmp_path / "portable.zip"
+    with zipfile.ZipFile(portable, "w") as archive:
+        archive.writestr("AACC/_internal/", b"")
+        archive.writestr("AACC/AACC.exe", b"gui")
+        archive.writestr("AACC/aacc-spawn.exe", b"broker")
+        archive.writestr("AACC/_internal/runtime.bin", b"runtime")
+
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "verify_windows_artifacts.py"),
+        "--setup",
+        str(setup),
+        "--checksum",
+        str(checksum),
+        "--portable",
+        str(portable),
+        "--built-root",
+        str(built_root),
+    ]
+    assert subprocess.run(command, check=False).returncode == 0
+
+
 def test_windows_spec_includes_broker_python_module_but_not_native_binary() -> None:
     spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
     hidden_imports = spec.split("hiddenimports=", 1)[1].split("]", 1)[0]

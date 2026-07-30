@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 CHECKSUM_PATTERN = re.compile(
-    rb"(?P<digest>[0-9a-f]{64})  (?P<name>AACC-\d+\.\d+\.\d+-Setup\.exe)\n"
+    rb"(?P<digest>[0-9a-f]{64})  (?P<name>AACC-\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?-Setup\.exe)\n"
 )
 EXPECTED_ROOT = {"AACC.exe", "aacc-spawn.exe", "_internal"}
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
