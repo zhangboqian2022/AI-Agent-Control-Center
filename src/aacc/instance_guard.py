@@ -94,8 +94,9 @@ def activate_existing_instance() -> None:
     if sys.platform == "win32":
         try:
             from aacc import win32
+            from aacc.shutdown_windows import AACC_WINDOW_TITLE
 
-            hwnd = win32.find_window_by_title("AACC")
+            hwnd = win32.find_window_by_title(AACC_WINDOW_TITLE)
             if hwnd is not None:
                 win32.focus_window(hwnd)
         except Exception:

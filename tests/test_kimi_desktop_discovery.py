@@ -300,6 +300,28 @@ def test_daimon_roots_darwin_unchanged(monkeypatch) -> None:
     ]
 
 
+def test_default_daimon_root_logs_when_no_candidate_exists(monkeypatch, tmp_path, caplog) -> None:
+    missing = tmp_path / "missing-daimon"
+    monkeypatch.setattr(kimi_desktop_module, "_default_daimon_roots", lambda: [missing])
+    with caplog.at_level("INFO", logger="aacc.kimi_desktop"):
+        root = kimi_desktop_module._default_daimon_root()
+    assert root == missing
+    assert any(
+        record.levelname == "INFO" and "daimon root not found" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_default_daimon_root_silent_when_candidate_exists(monkeypatch, tmp_path, caplog) -> None:
+    existing = tmp_path / "daimon"
+    existing.mkdir()
+    monkeypatch.setattr(kimi_desktop_module, "_default_daimon_roots", lambda: [existing])
+    with caplog.at_level("INFO", logger="aacc.kimi_desktop"):
+        root = kimi_desktop_module._default_daimon_root()
+    assert root == existing
+    assert not caplog.records
+
+
 def test_app_process_match_windows(monkeypatch) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
     from aacc.kimi_desktop_discovery import _default_app_process_match
