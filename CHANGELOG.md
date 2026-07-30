@@ -10,6 +10,7 @@
 - [Security] Extend sink-level log redaction to cover `device_code`, `user_code`, `api_key`, and `apikey` fields as defense in depth; the global `RedactingFormatter` remains the single redaction point.
 - [Diagnostics] Log one INFO entry listing every probed candidate path when no Kimi Desktop daimon root exists, so the silently disabled discovery source becomes traceable.
 - [Docs] Declare in KNOWN_LIMITATIONS (bilingual) that hosted Windows Server CI does not equal consumer Windows 10/11 verification, and add a CI assertion keeping the bilingual entry counts aligned.
+- [Build] Accept PEP 440 prerelease versions (`a`/`b`/`rc` suffixes) in the Windows broker and installer build scripts; numeric-only VERSIONINFO fields now receive a dedicated `MyAppVersionInfo` triplet while prerelease suffixes remain in display and artifact names.
 
 ## 1.4.2 — 2026-07-29
 
