@@ -155,6 +155,11 @@ def test_windows_build_scripts_accept_prerelease_versions() -> None:
     )
     assert "(?:a|b|rc)" in installer_script
     assert '$VersionInfo = "$($Matches[1]).$($Matches[2]).$($Matches[3])"' in installer_script
+    # The embedded checksum contract accepts prerelease Setup filenames.
+    assert r"AACC-\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?-Setup\.exe" in installer_script
+
+    verifier = (ROOT / "scripts" / "verify_windows_artifacts.py").read_text(encoding="utf-8")
+    assert r"AACC-\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?-Setup\.exe" in verifier
 
     iss = (ROOT / "installer" / "AACC.iss").read_text(encoding="utf-8")
     assert "#ifndef MyAppVersionInfo" in iss
