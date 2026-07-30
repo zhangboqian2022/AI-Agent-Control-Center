@@ -105,6 +105,17 @@ scripts\build_windows_installer.ps1
 - 送审副本约定补充：HEAD 之后的未提交改动用 `git ls-files` 按工作区内容
   导出（见下），已提交的用 `git archive HEAD`；两者都剔除 `docs/superpowers`
   与 `tests/fixtures`。
+- **1.4.3-rc.1 双平台构建证据**：hosted 全量运行
+  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30512043379`
+  （merge `39970a9`）在 macOS、Windows Server 2022/2025 全绿，含冻结包、
+  broker、Setup、安装/重装/卸载与产物严格校验。mac 本机构建
+  `~/Desktop/AACC-1.4.3-rc.1.dmg`（52MB），SHA-256
+  `6c29ffa09687c76af7126fea84fcd9865b7d1c1141819bcf195e2ac0de002b5b`，
+  codesign --verify --deep --strict 通过、ad-hoc 签名未公证；Windows
+  `AACC-1.4.3rc1-Setup.exe`（42MB，CI 产物，已拷至 ~/Desktop）SHA-256
+  `3c846f80251478c89f8273b7b673490dbc802d0415f171e9fc77cc8b03713fa4`
+  （与随附 .sha256 逐字一致）。未打 tag、未建 GitHub Prerelease；消费级
+  Windows 10/11 真机验证仍不宣称。
 
 ## 历史进度（2026-07-29）
 
