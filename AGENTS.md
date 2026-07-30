@@ -116,6 +116,14 @@ scripts\build_windows_installer.ps1
   `3c846f80251478c89f8273b7b673490dbc802d0415f171e9fc77cc8b03713fa4`
   （与随附 .sha256 逐字一致）。未打 tag、未建 GitHub Prerelease；消费级
   Windows 10/11 真机验证仍不宣称。
+- **1.4.3-rc.1 已发布为 GitHub Prerelease**（tag `v1.4.3-rc.1`，非 Latest、
+  非草稿）：`https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.3-rc.1`。
+  四项资产（DMG + Setup + 两个 .sha256）大小与本地一致，两个校验文件
+  下载回环逐字比对通过。注意：`scripts/verify_release.sh` 只服务正式版
+  （显式拒绝 prerelease，且 Setup 资产名按 `AACC-<dash版>-Setup.exe`
+  约定，而 CI 产物为 PEP440 `AACC-1.4.3rc1-Setup.exe`），rc 验收用
+  `gh release view` + 下载回环手动完成。消费级 Windows 10/11 真机验证
+  仍不宣称。
 
 ## 历史进度（2026-07-29）
 
