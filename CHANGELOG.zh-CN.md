@@ -1,5 +1,14 @@
 # 更新日志
 
+## 1.4.3-rc.1 — 2026-07-30
+
+[中英文发布说明](docs/release-notes-1.4.3rc1.md)
+
+- [修复] Windows 二次启动现在按真实窗口标题（经共享常量 `AACC_WINDOW_TITLE` 的 `AI Agent Control Center`）找到已有面板并提到前台；旧的 `"AACC"` 子串永不命中。
+- [安全] 日志 sink 级统一脱敏扩展覆盖 `device_code`、`user_code`、`api_key`、`apikey` 字段（纵深防御），全局 `RedactingFormatter` 仍是唯一脱敏点。
+- [诊断] 所有 Kimi Desktop daimon 候选路径都不存在时记录一条含候选路径列表的 INFO 日志，静默停用的发现源变得可追溯。
+- [文档] KNOWN_LIMITATIONS 双语声明托管 Windows Server CI 不等于消费级 Windows 10/11 验证，并新增中英条目数对齐的 CI 断言。
+
 ## 1.4.2 — 2026-07-29
 
 [中英文发布说明](docs/release-notes-1.4.2.md)

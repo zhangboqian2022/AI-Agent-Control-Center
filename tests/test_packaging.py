@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from aacc import __version__
+from aacc import __version__, public_version
 from aacc.gui import load_stylesheet
 from aacc.models import AppConfig
 
@@ -75,6 +75,17 @@ def test_rc2_documentation_has_one_discovery_cadence_and_current_limit_titles() 
     )
 
 
+def test_known_limitations_bilingual_entry_counts_match() -> None:
+    def bullet_count(name: str) -> int:
+        content = (ROOT / name).read_text(encoding="utf-8")
+        return sum(1 for line in content.splitlines() if line.startswith("- "))
+
+    english = bullet_count("KNOWN_LIMITATIONS.md")
+    chinese = bullet_count("KNOWN_LIMITATIONS.zh-CN.md")
+    assert english > 0
+    assert english == chinese
+
+
 def test_console_entry_points_are_registered() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'aacc = "aacc.cli:main"' in pyproject
@@ -107,16 +118,10 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert __version__ == project["project"]["version"]
-    design = (
-        ROOT
-        / "docs"
-        / "superpowers"
-        / "specs"
-        / "2026-07-27-v1.4.2-quota-and-windows-hardening-design.md"
-    ).read_text(encoding="utf-8")
-    target = re.search(r"\*\*Target release:\*\* (\d+\.\d+\.\d+)", design)
-    assert target is not None
-    assert __version__ == target.group(1)
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## {public_version()} — " in changelog
+    changelog_zh = (ROOT / "CHANGELOG.zh-CN.md").read_text(encoding="utf-8")
+    assert f"## {public_version()} — " in changelog_zh
     assert (ROOT / "docs" / f"release-notes-{__version__}.md").exists()
     for name in ("build_app.sh", "build_dmg.sh"):
         script = (ROOT / "scripts" / name).read_text(encoding="utf-8")

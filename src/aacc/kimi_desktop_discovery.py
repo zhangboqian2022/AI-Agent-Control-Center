@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import sys
@@ -27,6 +28,8 @@ FROM conversations
 """
 _NAME_MAX_LENGTH = 20
 
+_logger = logging.getLogger("aacc.kimi_desktop")
+
 
 def _default_daimon_roots() -> list[Path]:
     """Candidate daimon data roots, per platform.
@@ -50,6 +53,10 @@ def _default_daimon_root() -> Path:
     for root in roots:
         if root.exists():
             return root
+    _logger.info(
+        "Kimi Desktop daimon root not found; discovery source inactive candidates=%s",
+        [str(root) for root in roots],
+    )
     return roots[0] if roots else _DAIMON_ROOT
 
 

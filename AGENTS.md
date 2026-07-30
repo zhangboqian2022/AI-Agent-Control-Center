@@ -60,7 +60,48 @@ scripts\build_windows_installer.ps1
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-29）
+## 当前进度（2026-07-30）
+
+- **1.4.3-rc.1（候选版）**：外部联合评审（Gemini × DeepSeek，3 轮 9 步，
+  结论无 P0）14 项已逐条对照代码核实，**4 项部分接受已修**：
+  ① `security.py` SECRET_PATTERNS 字段名列表补 `device_code|user_code|api_key|apikey`
+  （`logging_setup.py` 全局 RedactingFormatter 属 sink 级统一脱敏，本次为纵深防御；
+  评审"日志点手动 redact"建议因与现有架构冲突被驳回）；② `test_packaging.py`
+  新增 KNOWN_LIMITATIONS 中英 bullet 条目数对齐测试（当前 14/14）；③
+  `kimi_desktop_discovery._default_daimon_root` 候选路径全不存在时记一条 INFO
+  （含候选列表，该发现源停用不再无声；注册表动态发现驳回——exe 安装位置推不出
+  用户 profile 数据目录）；④ 修复评审之外发现的真 bug：
+  `instance_guard.activate_existing_instance` Windows 二次启动按标题 `"AACC"`
+  搜索永不命中（主窗口标题为 `"AI Agent Control Center"`），改用
+  `shutdown_windows.AACC_WINDOW_TITLE` 常量，原测试固化了错误标题已一并修正。
+  **驳回 8 项**：P1-6 DLL 劫持（/MT 静态链接只依赖 KERNEL32 KnownDLL + dumpbin
+  白名单 + `SetDllDirectoryW(nullptr)` 已就位）、P1-8 托盘丢失（Qt 6.9+ 内建
+  TaskbarCreated 恢复；macOS NSStatusItem 系统自恢复且无重建回调公开 API）、
+  P2-1（CI 三腿 offscreen pytest 早已存在）、P2-3（task-4 无重复，不属实）、
+  P2-7（NOTICE 2026 年份已联网与上游 LICENSE 逐字核对一致）、P2-8（C++/Python
+  路径校验是信任边界刻意双边校验）、P2-2（i18n 双语 key 全等已有 CI 测试）、
+  P1-2 动态发现部分。**维持已声明限制**：P1-1（Inno 内建 Restart Manager 刻意
+  关闭，写入前独占预检 fail-closed 有 CI 实证；staging/swap 属既定路线）、
+  P1-3（aacc-run 孤儿语义上是保留用户任务，prctl 平台不适用）。P1-4 签名与
+  P2-9 消费级 CI 需证书/自建 runner，本机无法完成。核实后本机 957 passed、
+  7 skipped，ruff check / ruff format / mypy 全绿。
+- 第二轮 HubChat 评审与上述处置完全收敛（其 P1-5/P1-7/P1-2/P2-4 即本轮
+  已修四项，架构维持部分与驳回理由一致）；唯一增量：KNOWN_LIMITATIONS
+  双语补一条"托管 Windows Server CI ≠ 消费级 Windows 10/11 验证，人工
+  清单覆盖"声明（15/15 条，对齐测试通过）。P1-5 的真机双击验证仍需
+  Windows 真机执行，本机未验。
+- 版本提升为 **1.4.3rc1**（`public_version()` 用户态 `1.4.3-rc.1`）：
+  `__init__.py` / `pyproject.toml` 同步，CHANGELOG 双语新增 1.4.3-rc.1
+  段落，`docs/release-notes-1.4.3rc1.md` 双语发布说明（含证据边界）。
+  版本一致性测试 `test_release_version_is_consistent_across_project_and_
+  build_scripts` 已解耦 1.4.2 设计文档，改为断言 `__version__` ==
+  pyproject == 双语 CHANGELOG 最新段落标题（`public_version()`）==
+  release-notes 文件存在。
+- 送审副本约定补充：HEAD 之后的未提交改动用 `git ls-files` 按工作区内容
+  导出（见下），已提交的用 `git archive HEAD`；两者都剔除 `docs/superpowers`
+  与 `tests/fixtures`。
+
+## 历史进度（2026-07-29）
 
 - `codex/codex-dynamic-quota-tray-exit@5f7966b`：Windows Codex 实时额度源
   改为每次 60 秒轮询或点击额度条时重新发现；AACC 先启动、之后再打开或重启

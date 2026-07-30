@@ -13,4 +13,5 @@
 - `SetForegroundWindow` 受 Windows 前景锁限制，激活被拒时降级处理并记录日志。
 - Kimi Desktop daimon 的 Windows 路径为候选路径 best-effort，未在真机验证。
 - Windows 版无代码签名，首次运行有 SmartScreen 提示。
+- Windows CI 运行于托管 Windows Server SKU；消费级 Windows 10/11 行为（SmartScreen、托盘、窗口聚焦/热键、长时间运行）以人工验证清单覆盖，非自动化门禁。
 - F13–F20 热键在多数 Windows 键盘需要 Fn 层映射。
