@@ -1041,7 +1041,9 @@ def test_window_starts_with_no_codex_cards_until_tasks_are_selected(
 ) -> None:
     window, manager = build_window(tmp_path, qtbot)
     assert len(window.findChildren(TaskCard)) == 0
-    assert "未选择 Codex / Kimi Code / Kimi Desktop 任务" in window.empty_tasks_label.text()
+    assert (
+        "未选择 Codex / Kimi Code / Kimi Desktop / OpenCode 任务" in window.empty_tasks_label.text()
+    )
     manager.close()
 
 
@@ -1453,6 +1455,7 @@ def test_window_declares_persisted_setting_keys(tmp_path: Path, qtbot: object) -
         "opacity",
         "visible_agents",
         "agent_visibility_migrated_v2",
+        "agent_visibility_migrated_v3",
     }
     assert QApplication.instance() is not None
     manager.close()
@@ -2482,6 +2485,58 @@ def test_empty_tasks_label_mentions_kimi_desktop(tmp_path: Path, qtbot: object) 
     window, manager = build_window(tmp_path, qtbot)
     assert "Kimi Desktop" in window.empty_tasks_label.text()
     manager.close()
+
+
+def test_opencode_health_warning_merges_all_brands(tmp_path: Path, qtbot: object) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    window.show()
+    assert not window.discovery_warning.isVisible()
+    window.opencode_discovery_health_received.emit(
+        DiscoveryHealth(degraded=True, summary="index unreadable", brand="OpenCode")
+    )
+    assert window.discovery_warning.isVisible()
+    assert "OpenCode" in window.discovery_warning_label.text()
+    window.opencode_discovery_health_received.emit(DiscoveryHealth(brand="OpenCode"))
+    assert not window.discovery_warning.isVisible()
+    manager.close()
+
+
+def test_visibility_migration_seeds_opencode_for_existing_installs(
+    tmp_path: Path, qtbot: object
+) -> None:
+    settings = QSettings(str(tmp_path / "gui-vis.ini"), QSettings.Format.IniFormat)
+    settings.setValue("agent_visibility_migrated_v2", True)
+    settings.setValue("visible_agents", ["codex_cli", "kimi_code", "kimi_desktop"])
+    config = default_config()
+    store = StateStore(tmp_path / "gui-vis.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    assert "opencode_cli" in window.visible_agent_types
+    assert settings.value("agent_visibility_migrated_v3", False, type=bool) is True
+    manager.close()
+    reloaded_settings = QSettings(str(tmp_path / "gui-vis.ini"), QSettings.Format.IniFormat)
+    store2 = StateStore(tmp_path / "gui-vis2.db")
+    store2.initialize(config.tasks)
+    manager2 = TaskManager(config, store2)
+    reloaded = MainWindow(
+        manager2,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=reloaded_settings,
+    )
+    qtbot.addWidget(reloaded)  # type: ignore[attr-defined]
+    assert "opencode_cli" in reloaded.visible_agent_types
+    assert reloaded_settings.value("agent_visibility_migrated_v3", False, type=bool) is True
+    manager2.close()
 
 
 def test_opencode_agent_visible_by_default() -> None:

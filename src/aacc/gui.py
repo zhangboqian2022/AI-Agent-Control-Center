@@ -1387,6 +1387,7 @@ class MainWindow(QWidget):
         "opacity",
         "visible_agents",
         "agent_visibility_migrated_v2",
+        "agent_visibility_migrated_v3",
     }
 
     def __init__(
@@ -1498,6 +1499,7 @@ class MainWindow(QWidget):
             (discovery_health or DiscoveryHealth)(),
             (kimi_discovery_health or (lambda: DiscoveryHealth(brand="Kimi")))(),
             (kimi_desktop_discovery_health or (lambda: DiscoveryHealth(brand="Kimi Desktop")))(),
+            (opencode_discovery_health or (lambda: DiscoveryHealth(brand="OpenCode")))(),
         ):
             self._discovery_healths[health.brand] = health
         self._discovery_log_path = discovery_log_path
@@ -1646,6 +1648,10 @@ class MainWindow(QWidget):
             self.visible_agent_types.add("kimi_desktop")
             self._settings.setValue("agent_visibility_migrated_v2", True)
             self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
+        if not self._settings.value("agent_visibility_migrated_v3", False, type=bool):
+            self.visible_agent_types.add("opencode_cli")
+            self._settings.setValue("agent_visibility_migrated_v3", True)
+            self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
@@ -1653,6 +1659,7 @@ class MainWindow(QWidget):
         self.discovery_health_received.connect(self._apply_discovery_health)
         self.kimi_discovery_health_received.connect(self._apply_discovery_health)
         self.kimi_desktop_discovery_health_received.connect(self._apply_discovery_health)
+        self.opencode_discovery_health_received.connect(self._apply_discovery_health)
 
         saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
         self.always_on_top = bool(saved_top)
@@ -1860,9 +1867,12 @@ class MainWindow(QWidget):
         )
         self.clear_retained_button.setText(self.language_manager.text("group.clear_all"))
         self.empty_tasks_label.setText(
-            "未选择 Codex / Kimi Code / Kimi Desktop 任务 · 点击 ⚙ 选择监控任务"
+            "未选择 Codex / Kimi Code / Kimi Desktop / OpenCode 任务 · 点击 ⚙ 选择监控任务"
             if self.language_manager.language == ZH_CN
-            else ("No Codex / Kimi Code / Kimi Desktop tasks selected · Click ⚙ to select tasks")
+            else (
+                "No Codex / Kimi Code / Kimi Desktop / OpenCode tasks selected "
+                "· Click ⚙ to select tasks"
+            )
         )
         self.copy_diagnostics_button.setText(
             "复制详情" if self.language_manager.language == ZH_CN else "Copy details"
