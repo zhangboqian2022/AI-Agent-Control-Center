@@ -58,6 +58,60 @@ def test_bar_retranslate_switches_language(qapp: object) -> None:
     assert bar.summary_label.text() == "OpenCode usage"
 
 
+def test_bar_pending_state(qtbot) -> None:
+    bar = OpenCodeQuotaBar()
+    bar.show_pending()
+    assert "授权中" in bar.summary_label.text()
+    assert "授权中" in bar.toolTip()
+
+
+def test_bar_unknown_quota_shows_unavailable_and_unknown_resets(qtbot) -> None:
+    bar = OpenCodeQuotaBar()
+    bar.show_quota(OpenCodeQuota(None, None, None, QuotaStatus.UNKNOWN, fetched_at=None))
+    assert "数据不可用" in bar.summary_label.text()
+    assert "未知" in bar.toolTip()
+    assert bar.percent_labels() == ["--", "--", "--"]
+
+
+def test_bar_partial_quota_shows_partial(qtbot) -> None:
+    bar = OpenCodeQuotaBar()
+    bar.show_quota(OpenCodeQuota(None, None, None, QuotaStatus.PARTIAL, fetched_at=None))
+    assert "部分数据" in bar.summary_label.text()
+
+
+def test_bar_stale_quota_shows_stale(qtbot) -> None:
+    bar = OpenCodeQuotaBar()
+    bar.show_quota(OpenCodeQuota(None, None, None, QuotaStatus.STALE, fetched_at=None))
+    assert "额度信息已过期" in bar.summary_label.text()
+
+
+def test_bar_show_quota_preserves_last_error(qtbot) -> None:
+    bar = OpenCodeQuotaBar()
+    bar.show_error("refresh_timeout")
+    bar.show_quota(_quota(), preserve_errors=True)
+    assert bar._display_state == "error"
+    assert "点击重试" in bar.toolTip()
+
+
+def test_bar_error_without_prior_quota_shows_unavailable(qtbot) -> None:
+    bar = OpenCodeQuotaBar()
+    bar.show_error("refresh_timeout")
+    assert "数据不可用" in bar.summary_label.text()
+    assert "点击重试" in bar.toolTip()
+
+
+def test_bar_retranslate_pending_and_error_states(qtbot) -> None:
+    bar = OpenCodeQuotaBar(LanguageManager(ZH_CN))
+    bar.show_pending()
+    bar.language_manager = LanguageManager(EN_US)
+    bar.retranslate_ui()
+    assert "Authorizing" in bar.summary_label.text()
+
+    bar.show_error("refresh_timeout")
+    bar.retranslate_ui()
+    assert "Click to retry" in bar.toolTip()
+
+
 def test_bar_click_emits_signal(qtbot) -> None:
     bar = OpenCodeQuotaBar()
     from PySide6.QtCore import QEvent, QPointF, Qt
