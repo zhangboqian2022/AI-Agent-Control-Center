@@ -125,3 +125,28 @@ def test_service_logout_clears_snapshot(qapp, tmp_path: Path) -> None:
     service.logout()
     assert session.logouts == 1
     assert service.last_quota is None
+
+
+def test_service_open_login_delegates_to_session(qapp, tmp_path: Path) -> None:
+    session = FakeSession()
+    service = OpenCodeWebQuotaService(tmp_path, session=session)
+    service.open_login()
+    assert session.logins == 1
+
+
+def test_service_stop_is_idempotent(qapp, tmp_path: Path) -> None:
+    session = FakeSession()
+    service = OpenCodeWebQuotaService(tmp_path, session=session)
+    service.start()
+    service.stop()
+    service.stop()
+    assert session.closed == 1
+
+
+def test_service_creates_native_session_on_demand(qapp, tmp_path: Path) -> None:
+    service = OpenCodeWebQuotaService(tmp_path)
+    assert service._session is None
+    session = service._ensure_session()
+    assert service._session is session
+    assert session.storage_path == tmp_path / "opencode-web-session"
+    service.stop()

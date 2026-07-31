@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QPushButton
 
 from aacc.i18n import EN_US, ZH_CN, LanguageManager
 from aacc.kimi_web_quota_service import KimiWebQuotaService
@@ -714,3 +715,102 @@ def test_opencode_quota_bar_wired_and_signals_flow(qtbot, tmp_path):
     window.opencode_logout()
     assert service.logouts == 1
     assert window.opencode_quota_bar.rolling_label.text() == "--"
+
+
+def test_opencode_login_state_signal_controls_bar(qtbot, tmp_path):
+    service = FakeOpenCodeWebQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        opencode_web_quota_service=service,
+    )
+    window._on_opencode_login_state(True)
+    assert window._opencode_authorized is True
+    window._on_opencode_login_state(False)
+    assert window._opencode_authorized is False
+    assert window._latest_opencode_quota is None
+    assert window.opencode_quota_bar is not None
+    assert "点击授权" in window.opencode_quota_bar.summary_label.text()
+
+
+def test_opencode_bar_click_without_service_is_noop(qtbot, tmp_path):
+    window, _, _ = make_window(qtbot, tmp_path, with_service=False)
+    window._on_opencode_quota_bar_clicked()
+
+
+def test_opencode_quota_updated_ignores_foreign_payload(qtbot, tmp_path):
+    service = FakeOpenCodeWebQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        opencode_web_quota_service=service,
+    )
+    service.quota_updated.emit({"not": "a quota"})
+    assert window._latest_opencode_quota is None
+
+
+def test_opencode_web_login_and_logout_handlers(qtbot, tmp_path):
+    service = FakeOpenCodeWebQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        opencode_web_quota_service=service,
+    )
+    window.open_opencode_web_login()
+    assert service.logins == 1
+    window.opencode_logout()
+    assert service.logouts == 1
+    assert window._opencode_authorized is False
+    assert window.opencode_quota_bar is not None
+    assert "点击授权" in window.opencode_quota_bar.summary_label.text()
+
+
+def test_opencode_logout_without_service_is_noop(qtbot, tmp_path):
+    window, _, _ = make_window(qtbot, tmp_path, with_service=False)
+    window.opencode_logout()
+
+
+def test_window_restore_refreshes_opencode_quota(qtbot, tmp_path):
+    service = FakeOpenCodeWebQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        opencode_web_quota_service=service,
+    )
+
+    window.show()
+    assert service.refreshes == 1
+
+    window.hide()
+    window.show()
+    assert service.refreshes == 1  # throttled within the restore interval
+
+    window._last_restore_quota_refresh -= 61.0
+    window.hide()
+    window.show()
+    assert service.refreshes == 2
+
+
+def test_settings_dialog_opencode_login_logout_buttons(qtbot, tmp_path):
+    from aacc.gui import SettingsDialog
+
+    service = FakeOpenCodeWebQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        opencode_web_quota_service=service,
+    )
+    dialog = SettingsDialog(window)
+    qtbot.addWidget(dialog)
+    buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+    login = buttons["登录 OpenCode（同步 5H / WEEK / MONTH）"]
+    logout = buttons["退出 OpenCode"]
+    login.click()
+    assert service.logins == 1
+    logout.click()
+    assert service.logouts == 1

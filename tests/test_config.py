@@ -356,6 +356,18 @@ def test_opencode_workspace_url_rejects_non_workspace_path() -> None:
         AppConfig(opencode_workspace_url="https://opencode.ai/zen")
 
 
+def test_opencode_workspace_url_rejects_urlparse_failure(monkeypatch) -> None:
+    import aacc.models as models
+
+    def broken_parse(value: str) -> None:
+        del value
+        raise ValueError("malformed URL")
+
+    monkeypatch.setattr(models, "urlparse", broken_parse)
+    with pytest.raises(ValidationError):
+        AppConfig(opencode_workspace_url="https://opencode.ai/workspace/wrk_1")
+
+
 def test_opencode_workspace_url_round_trips_through_config_file(tmp_path) -> None:
     path = tmp_path / "config.yaml"
     config = default_config()
