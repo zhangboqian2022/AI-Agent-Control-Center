@@ -92,6 +92,26 @@ def test_catalog_contains_all_shared_keys() -> None:
     assert required_keys <= catalog_keys(ZH_CN)
 
 
+def test_opencode_web_keys_exist_in_both_catalogs() -> None:
+    from aacc.i18n import CATALOGS, EN_US, ZH_CN
+
+    keys = [
+        "opencode.web_title",
+        "opencode.web_starting",
+        "opencode.web_need_config",
+        "opencode.web_unauthorized",
+        "opencode.web_refresh_timeout",
+        "opencode.web_refresh_failed",
+        "opencode.web_parse_failed",
+        "opencode.quota",
+        "settings.opencode_web_login",
+        "settings.opencode_logout",
+    ]
+    for language in (ZH_CN, EN_US):
+        for key in keys:
+            assert key in CATALOGS[language], f"{key} missing in {language}"
+
+
 @pytest.mark.parametrize("language", [ZH_CN, EN_US])
 def test_quota_period_literals_are_identical_in_both_catalogs(language: str) -> None:
     manager = LanguageManager(language)  # type: ignore[arg-type]
