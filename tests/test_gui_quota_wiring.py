@@ -64,6 +64,7 @@ def make_window(
     with_service=True,
     codex_quota_service=None,
     web_quota_service=None,
+    opencode_web_quota_service=None,
     language_manager=None,
 ):
     from aacc.automation import MacAutomation
@@ -96,6 +97,7 @@ def make_window(
         quota_service=service,
         kimi_web_quota_service=web_quota_service,
         codex_quota_service=codex_quota_service,
+        opencode_web_quota_service=opencode_web_quota_service,
         language_manager=language_manager,
         open_url=opened.append,
     )
@@ -652,3 +654,63 @@ def test_quota_rows_fit_inside_exact_420_pixel_main_window(qtbot, tmp_path):
                 reset_label.fontMetrics().horizontalAdvance(reset_label.text())
                 <= reset_label.contentsRect().width()
             )
+
+
+class FakeOpenCodeWebQuotaService(QObject):
+    quota_updated = Signal(object)
+    login_state_changed = Signal(bool)
+    error_occurred = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refreshes = 0
+        self.logins = 0
+        self.logouts = 0
+
+    def refresh_now(self) -> None:
+        self.refreshes += 1
+
+    def open_login(self, parent=None) -> None:
+        del parent
+        self.logins += 1
+
+    def logout(self) -> None:
+        self.logouts += 1
+
+
+def test_opencode_quota_bar_wired_and_signals_flow(qtbot, tmp_path):
+    from aacc.opencode_web_quota import OpenCodeQuota, OpenCodeUsage
+
+    service = FakeOpenCodeWebQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        opencode_web_quota_service=service,
+    )
+    assert window.opencode_quota_bar is not None
+    assert window.opencode_quota_bar.metric_row_count() == 3
+
+    window.opencode_quota_bar.clicked.emit()
+    assert service.logins == 1
+
+    now = datetime.now(UTC)
+    quota = OpenCodeQuota(
+        rolling=OpenCodeUsage(10, 3600, now),
+        weekly=OpenCodeUsage(20, 3600, now),
+        monthly=OpenCodeUsage(30, 3600, now),
+        status=__import__("aacc.kimi_quota", fromlist=["QuotaStatus"]).QuotaStatus.OK,
+        fetched_at=now,
+    )
+    service.quota_updated.emit(quota)
+    assert window.opencode_quota_bar.rolling_label.text() == "10%"
+
+    window.opencode_quota_bar.clicked.emit()
+    assert service.refreshes == 1
+
+    service.error_occurred.emit("refresh_timeout")
+    assert "点击重试" in window.opencode_quota_bar.toolTip()
+
+    window.opencode_logout()
+    assert service.logouts == 1
+    assert window.opencode_quota_bar.rolling_label.text() == "--"
