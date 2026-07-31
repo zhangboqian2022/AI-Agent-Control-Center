@@ -335,6 +335,46 @@ def test_manual_web_refresh_uses_only_the_coordinated_web_cycle(qtbot, tmp_path)
     assert code_refreshes == []
 
 
+def test_window_restore_triggers_throttled_web_quota_refresh(qtbot, tmp_path):
+    web = FakeWebQuotaService()
+    window, _, _ = make_window(qtbot, tmp_path, with_service=False, web_quota_service=web)
+
+    window.show()
+    assert web.refreshes == 1
+
+    window.hide()
+    window.show()
+    assert web.refreshes == 1  # throttled within the restore interval
+
+    window._last_restore_quota_refresh -= 61.0
+    window.hide()
+    window.show()
+    assert web.refreshes == 2
+
+
+def test_window_unminimize_triggers_web_quota_refresh(qtbot, tmp_path):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QWindowStateChangeEvent
+
+    web = FakeWebQuotaService()
+    window, _, _ = make_window(qtbot, tmp_path, with_service=False, web_quota_service=web)
+    window.show()
+    assert web.refreshes == 1
+
+    window._last_restore_quota_refresh -= 61.0
+    window.changeEvent(QWindowStateChangeEvent(Qt.WindowState.WindowMinimized))
+
+    assert web.refreshes == 2
+
+
+def test_window_restore_without_web_service_does_not_refresh(qtbot, tmp_path):
+    window, _, _ = make_window(qtbot, tmp_path, with_service=False)
+
+    window.show()
+    window.hide()
+    window.show()  # must not raise without a web quota service
+
+
 def test_web_quota_controls_all_rows_and_code_only_fills_missing_week(qtbot, tmp_path):
     from aacc.kimi_quota import KimiQuota, QuotaDetail, QuotaStatus
 
