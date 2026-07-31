@@ -214,6 +214,7 @@ class OpenCodeWebSession(QObject):
             layout.addWidget(explanation)
             container = QWidget.createWindowContainer(self.view, dialog)
             layout.addWidget(container, 1)
+            dialog.finished.connect(self._login_dialog_closed)
             self._login_dialog = dialog
             self._login_container = container
             self._login_explanation_label = explanation
@@ -366,6 +367,12 @@ class OpenCodeWebSession(QObject):
         self._login_dialog_open = False
         if self._login_dialog is not None:
             self._login_dialog.close()
+
+    def _login_dialog_closed(self, _result: object) -> None:
+        if not self._login_dialog_open:
+            return
+        self._login_dialog_open = False
+        self._invalidate_refresh()
 
     def _run_logout_cleanup(self) -> None:
         self.view.runJavaScript(
