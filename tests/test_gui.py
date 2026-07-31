@@ -2548,7 +2548,6 @@ def test_opencode_agent_visible_by_default() -> None:
 
 def test_settings_dialog_shows_opencode_selector(qtbot, tmp_path) -> None:
     from aacc.gui import SettingsDialog
-    from tests.test_gui import build_window
 
     window, manager = build_window(tmp_path, qtbot)
     window.opencode_sessions = lambda: []  # type: ignore[method-assign]
