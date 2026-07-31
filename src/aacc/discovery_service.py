@@ -21,6 +21,11 @@ from aacc.kimi_desktop_discovery import (
     KimiDesktopSession,
 )
 from aacc.kimi_discovery import KimiDiscoveryError, KimiLocalDiscovery, KimiSession
+from aacc.opencode_discovery import (
+    OpenCodeDiscoveryError,
+    OpenCodeLocalDiscovery,
+    OpenCodeSession,
+)
 from aacc.security import redact
 from aacc.task_manager import TaskManager
 
@@ -303,4 +308,24 @@ class KimiDesktopDiscoveryService(LocalDiscoveryService[KimiDesktopSession]):
             thread_name="aacc-kimi-desktop-discovery",
             error_type=KimiDesktopDiscoveryError,
             brand="Kimi Desktop",
+        )
+
+
+class OpenCodeDiscoveryService(LocalDiscoveryService[OpenCodeSession]):
+    """Polls local opencode metadata outside the Qt event loop."""
+
+    def __init__(
+        self,
+        manager: TaskManager,
+        *,
+        discovery: OpenCodeLocalDiscovery | None = None,
+        interval_seconds: float = 5.0,
+    ) -> None:
+        super().__init__(
+            manager,
+            discovery=discovery or OpenCodeLocalDiscovery(),
+            interval_seconds=interval_seconds,
+            thread_name="aacc-opencode-discovery",
+            error_type=OpenCodeDiscoveryError,
+            brand="OpenCode",
         )
