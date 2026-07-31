@@ -688,9 +688,10 @@ def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
     session.error_occurred.connect(errors.append)
 
     session.refresh()
+    assert session.view.url().toString() == WORKSPACE_URL
+    session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "_server" in session.view.scripts[-1]
-    assert session.view.url().toString() == WORKSPACE_URL
 
 
 def test_session_bridge_delivers_quota_payload(qapp, tmp_path: Path) -> None:
@@ -934,7 +935,6 @@ class OpenCodeWebSession(QObject):
         self.view.loadingChanged.connect(self._on_loading_changed)
         self.view.titleChanged.connect(self._on_title_changed)
         self._refreshing = False
-        self._refresh_after_load = False
         self._refresh_generation = 0
         self._active_refresh_generation: int | None = None
         self._refresh_watchdog = QTimer(self)
@@ -945,16 +945,30 @@ class OpenCodeWebSession(QObject):
         self._logout_cleanup_watchdog.setSingleShot(True)
         self._logout_cleanup_watchdog.timeout.connect(self._logout_cleanup_watchdog_timeout)
         self._login_dialog: QDialog | None = None
-        self._login_status_label: QLabel | None = None
+        self._login_container: QWidget | None = None
+        self._login_explanation_label: QLabel | None = None
+        self._login_dialog_open = False
         self._login_status_key = "opencode.web_starting"
 
     def set_workspace_url(self, url: str) -> None:
         self.workspace_url = url.strip()
 
+    def _is_opencode_origin(self) -> bool:
+        if not self.workspace_url:
+            return False
+        expected = QUrl(self.workspace_url).host()
+        return bool(expected) and self.view.url().host() == expected
+
     def refresh(self) -> None:
+        if not self.workspace_url:
+            return
         self._refreshing = True
         self._start_refresh_generation()
-        if self._login_dialog is not None or self.view.url().isEmpty():
+        if (
+            self._login_dialog_open
+            or self.view.url().isEmpty()
+            or not self._is_opencode_origin()
+        ):
             self._load_workspace_url()
             return
         self._run_fetch_script()
@@ -969,20 +983,26 @@ class OpenCodeWebSession(QObject):
                 )
             return
         if self._login_dialog is None:
-            self._login_dialog = QDialog(parent)
-            self._login_dialog.setWindowTitle(self.language_manager.text("opencode.web_title"))
-            layout = QVBoxLayout(self._login_dialog)
-            self._login_status_label = QLabel(
-                self.language_manager.text("opencode.web_starting")
-            )
-            layout.addWidget(self._login_status_label)
-            self._login_dialog.resize(480, 640)
-        self._login_status_label.setText(self.language_manager.text("opencode.web_starting"))
+            dialog = QDialog(parent)
+            dialog.resize(960, 720)
+            layout = QVBoxLayout(dialog)
+            explanation = QLabel(self.language_manager.text("opencode.web_starting"))
+            explanation.setWordWrap(True)
+            layout.addWidget(explanation)
+            container = QWidget.createWindowContainer(self.view, dialog)
+            layout.addWidget(container, 1)
+            self._login_dialog = dialog
+            self._login_container = container
+            self._login_explanation_label = explanation
+        self._login_explanation_label.setText(
+            self.language_manager.text("opencode.web_starting")
+        )
+        self._login_dialog_open = True
         self._login_dialog.show()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
-        self._load_workspace_url()
         self._start_refresh_generation()
+        self._load_workspace_url()
 
     def logout(self) -> bool:
         if not self.workspace_url:
@@ -997,17 +1017,20 @@ class OpenCodeWebSession(QObject):
         self._refreshing = False
         self._refresh_watchdog.stop()
         self._logout_cleanup_watchdog.stop()
+        self._login_dialog_open = False
         if self._login_dialog is not None:
             self._login_dialog.close()
             self._login_dialog.deleteLater()
             self._login_dialog = None
-        self._login_status_label = None
+        self._login_container = None
+        self._login_explanation_label = None
         self.view.deleteLater()
 
     def retranslate_ui(self) -> None:
-        if self._login_dialog is not None and self._login_status_label is not None:
-            self._login_dialog.setWindowTitle(self.language_manager.text("opencode.web_title"))
-            self._login_status_label.setText(self.language_manager.text(self._login_status_key))
+        if self._login_explanation_label is not None:
+            self._login_explanation_label.setText(
+                self.language_manager.text(self._login_status_key)
+            )
 
     def _load_workspace_url(self) -> None:
         if not self.workspace_url:
@@ -1045,6 +1068,8 @@ class OpenCodeWebSession(QObject):
             self._logout_cleanup_watchdog.stop()
             self._run_logout_cleanup()
             return
+        if not self._is_opencode_origin():
+            return
         self._run_fetch_script()
 
     def _on_title_changed(self, title: str) -> None:
@@ -1075,7 +1100,7 @@ class OpenCodeWebSession(QObject):
             self._refreshing = False
             self._refresh_watchdog.stop()
             self.quota_received.emit(payload.get("raw"))
-            if self._login_dialog is not None:
+            if self._login_dialog_open:
                 self._close_login_dialog()
                 self.login_state_changed.emit(True)
             return
@@ -1088,11 +1113,9 @@ class OpenCodeWebSession(QObject):
         self._finish_refresh_with_error("refresh_failed")
 
     def _close_login_dialog(self) -> None:
+        self._login_dialog_open = False
         if self._login_dialog is not None:
             self._login_dialog.close()
-            self._login_dialog.deleteLater()
-            self._login_dialog = None
-        self._login_status_label = None
 
     def _run_logout_cleanup(self) -> None:
         self.view.runJavaScript(
@@ -1505,14 +1528,18 @@ def test_bar_retranslate_switches_language() -> None:
 
 def test_bar_click_emits_signal(qtbot) -> None:
     bar = OpenCodeQuotaBar()
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(0, 0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
     with qtbot.waitSignal(bar.clicked, timeout=1000):
-        bar.mouseReleaseEvent(
-            _FakeMouseEvent()
-        )
-
-
-class _FakeMouseEvent:
-    button = lambda self: __import__("PySide6.QtCore", fromlist=["Qt"]).Qt.MouseButton.LeftButton
+        bar.mouseReleaseEvent(event)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
