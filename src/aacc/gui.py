@@ -1621,7 +1621,6 @@ class MainWindow(QWidget):
             self.opencode_muted_ids = {str(value) for value in saved_opencode_muted}
         else:
             self.opencode_muted_ids = set()
-        self.opencode_selected_ids = set(self.opencode_manual_ids)
         self._apply_opencode_monitoring_preferences()
         saved_custom_names = self._settings.value("custom_task_names")
         try:
@@ -2016,6 +2015,15 @@ class MainWindow(QWidget):
                 and task.id.removeprefix("kimi_desktop:") in self.kimi_desktop_selected_ids
             )
         ]
+        tasks = [
+            task
+            for task in tasks
+            if task.agent.type != "opencode_cli"
+            or (
+                task.id.startswith("opencode:")
+                and task.id.removeprefix("opencode:") in self.opencode_selected_ids
+            )
+        ]
         return tasks
 
     @property
@@ -2093,7 +2101,10 @@ class MainWindow(QWidget):
         self.retained_header.setVisible(bool(terminal_tasks))
         self.retained_cards_widget.setVisible(bool(terminal_tasks))
         self.clear_retained_button.setVisible(
-            any(task.id.startswith(("codex:", "kimi:", "kimi_desktop:")) for task in terminal_tasks)
+            any(
+                task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:"))
+                for task in terminal_tasks
+            )
         )
         self._schedule_adaptive_resize()
 
@@ -2440,7 +2451,6 @@ class MainWindow(QWidget):
         self.opencode_manual_ids = set(manual_ids)
         self.opencode_retained_ids = set(retained_ids) - self.opencode_manual_ids
         self.opencode_muted_ids = set(muted_ids) - self.opencode_manual_ids
-        self.opencode_selected_ids = set(self.opencode_manual_ids)
         self._settings.setValue("opencode_manual_tasks", sorted(self.opencode_manual_ids))
         self._settings.setValue("opencode_retained_tasks", sorted(self.opencode_retained_ids))
         self._settings.setValue("opencode_muted_tasks", sorted(self.opencode_muted_ids))
@@ -2469,6 +2479,12 @@ class MainWindow(QWidget):
     def opencode_auto_active_ids(self) -> set[str]:
         return set(self._opencode_auto_active_ids())
 
+    @property
+    def opencode_selected_ids(self) -> set[str]:
+        return (
+            self.opencode_manual_ids | self.opencode_retained_ids | self.opencode_auto_active_ids()
+        ) - self.opencode_muted_ids
+
     def _remove_task_requested(self, task_id: str) -> None:
         # Single funnel for card removal: a card whose task id matches no
         # known brand would otherwise be ignored silently by every
@@ -2479,9 +2495,24 @@ class MainWindow(QWidget):
             self.remove_kimi_task(task_id)
         elif task_id.startswith("kimi_desktop:"):
             self.remove_kimi_desktop_task(task_id)
+        elif task_id.startswith("opencode:"):
+            self.remove_opencode_task(task_id)
         else:
             _logger.error("Unknown brand dispatch: %s", task_id)
             self._set_subtitle_presentation("feedback.operation_failed", uppercase=False)
+
+    def remove_opencode_task(self, task_id: str) -> None:
+        if not task_id.startswith("opencode:"):
+            return
+        session_id = task_id.removeprefix("opencode:")
+        self.opencode_manual_ids.discard(session_id)
+        self.opencode_retained_ids.discard(session_id)
+        self.opencode_muted_ids.add(session_id)
+        self._settings.setValue("opencode_manual_tasks", sorted(self.opencode_manual_ids))
+        self._settings.setValue("opencode_retained_tasks", sorted(self.opencode_retained_ids))
+        self._settings.setValue("opencode_muted_tasks", sorted(self.opencode_muted_ids))
+        self._apply_opencode_monitoring_preferences()
+        self.sync_cards()
 
     def remove_kimi_desktop_task(self, task_id: str) -> None:
         if not task_id.startswith("kimi_desktop:"):
@@ -2512,7 +2543,7 @@ class MainWindow(QWidget):
         self.sync_cards()
 
     def rename_task(self, task_id: str) -> None:
-        if not task_id.startswith(("codex:", "kimi:", "kimi_desktop:")):
+        if not task_id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:")):
             return
         try:
             task = self.manager.task_config(task_id)
@@ -2555,7 +2586,7 @@ class MainWindow(QWidget):
         task_ids = [
             task_id
             for task_id in self._card_order_ids
-            if task_id.startswith(("codex:", "kimi:", "kimi_desktop:"))
+            if task_id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:"))
             and self._is_terminal(self.manager.get(task_id))
         ]
         if not task_ids:
@@ -2582,6 +2613,8 @@ class MainWindow(QWidget):
                 self.remove_codex_task(task_id)
             elif task_id.startswith("kimi_desktop:"):
                 self.remove_kimi_desktop_task(task_id)
+            elif task_id.startswith("opencode:"):
+                self.remove_opencode_task(task_id)
             else:
                 self.remove_kimi_task(task_id)
 
@@ -2943,4 +2976,5 @@ class MainWindow(QWidget):
         self._unsubscribe_discovery_health()
         self._unsubscribe_kimi_discovery_health()
         self._unsubscribe_kimi_desktop_discovery_health()
+        self._unsubscribe_opencode_discovery_health()
         event.accept()
