@@ -2536,7 +2536,7 @@ def test_opencode_preferences_persist_and_apply(tmp_path: Path, qtbot: object) -
     assert applied[-1] == ({"oc-1"}, set(), set())
     window.set_opencode_monitoring_preferences({"oc-1"}, {"oc-2"}, {"oc-3"})
     assert applied[-1] == ({"oc-1"}, {"oc-2"}, {"oc-3"})
-    assert window.opencode_selected_ids == {"oc-1"}
+    assert window.opencode_selected_ids == {"oc-1", "oc-2"}
     assert window.opencode_manual_ids == {"oc-1"}
     assert window.opencode_retained_ids == {"oc-2"}
     assert window.opencode_muted_ids == {"oc-3"}
@@ -2667,4 +2667,272 @@ def test_opencode_restore_accepts_plain_string_values(tmp_path: Path, qtbot: obj
     assert window.opencode_manual_ids == {"oc-1"}
     assert window.opencode_retained_ids == {"oc-2"}
     assert window.opencode_muted_ids == {"oc-3"}
+    manager.close()
+
+
+def test_remove_opencode_task_request_mutes_and_hides(tmp_path: Path, qtbot: object) -> None:
+    window, manager, applied = build_opencode_window(tmp_path, qtbot)
+    window.set_opencode_monitoring_preferences({"oc-1"}, set(), set())
+    manager.register(
+        TaskConfig(
+            id="opencode:oc-1",
+            slot=1,
+            name="OpenCode 任务",
+            agent=AgentConfig(type="opencode_cli", display_name="OpenCode"),
+            terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+        ),
+        TaskState.new("opencode:oc-1", "RUNNING"),
+    )
+    window.sync_cards()
+    assert "opencode:oc-1" in window.cards
+    window._remove_task_requested("opencode:oc-1")
+    assert applied[-1] == (set(), set(), {"oc-1"})
+    assert "opencode:oc-1" not in window.cards
+    assert "操作失败" not in window.subtitle.text()
+    assert window._settings.value("opencode_manual_tasks", []) == []
+    assert window._settings.value("opencode_muted_tasks") == ["oc-1"]
+    manager.close()
+
+
+def test_rename_opencode_task_updates_card_and_persists(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager, _ = build_opencode_window(tmp_path, qtbot)
+    window.set_opencode_monitoring_preferences({"oc-1"}, set(), set())
+    manager.register(
+        TaskConfig(
+            id="opencode:oc-1",
+            slot=1,
+            name="原始 OpenCode 标题",
+            agent=AgentConfig(type="opencode_cli", display_name="OpenCode"),
+            terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+        ),
+        TaskState.new("opencode:oc-1", "RUNNING"),
+    )
+    window.sync_cards()
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog,
+        "exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QInputDialog,
+        "textValue",
+        lambda _dialog: "我的 OpenCode",
+    )
+    window.rename_task("opencode:oc-1")
+    assert window.cards["opencode:oc-1"].display_name == "我的 OpenCode"
+    assert window.custom_task_names == {"opencode:oc-1": "我的 OpenCode"}
+    manager.close()
+
+
+def test_muted_opencode_task_hidden_by_visibility_filter(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_opencode_window(tmp_path, qtbot)
+    manager.register(
+        TaskConfig(
+            id="opencode:oc-9",
+            slot=1,
+            name="已静音任务",
+            agent=AgentConfig(type="opencode_cli", display_name="OpenCode"),
+            terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+        ),
+        TaskState.new("opencode:oc-9", "RUNNING"),
+    )
+    window.set_opencode_monitoring_preferences(set(), {"oc-9"}, {"oc-9"})
+    window.sync_cards()
+    assert "opencode:oc-9" not in window.cards
+    window.set_opencode_monitoring_preferences({"oc-9"}, set(), set())
+    window.sync_cards()
+    assert "opencode:oc-9" in window.cards
+    manager.close()
+
+
+def test_clear_retained_tasks_removes_terminal_opencode_cards(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager, applied = build_opencode_window(tmp_path, qtbot)
+    window.set_opencode_monitoring_preferences(set(), {"oc-done"}, set())
+    task = TaskConfig(
+        id="opencode:oc-done",
+        slot=1,
+        name="已完成 OpenCode",
+        agent=AgentConfig(type="opencode_cli", display_name="OpenCode"),
+        terminal=TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal"),
+    )
+    manager.register(task, TaskState.new(task.id, "completed", source="opencode_local"))
+    window.sync_cards()
+    assert "opencode:oc-done" in window.cards
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        QMessageBox,
+        "exec",
+        lambda _box: QMessageBox.StandardButton.Yes,
+    )
+    window.clear_retained_tasks()
+    assert "opencode:oc-done" not in window.cards
+    assert applied[-1] == (set(), set(), {"oc-done"})
+    manager.close()
+
+
+def test_opencode_selected_ids_includes_auto_active_sessions(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_opencode_window(tmp_path, qtbot)
+    window.set_opencode_monitoring_preferences({"oc-1"}, {"oc-2"}, set())
+    window.opencode_auto_active_ids = lambda: {"oc-3"}  # type: ignore[method-assign]
+    assert window.opencode_selected_ids == {"oc-1", "oc-2", "oc-3"}
+    manager.close()
+
+
+def test_opencode_dialog_checks_auto_active_sessions(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_opencode_window(tmp_path, qtbot)
+    sessions = [
+        OpenCodeSession(
+            session_id="oc-1",
+            title="会话一",
+            work_dir=None,
+            agent=None,
+            model=None,
+            updated_at=datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+        ),
+        OpenCodeSession(
+            session_id="oc-2",
+            title="会话二",
+            work_dir=None,
+            agent=None,
+            model=None,
+            updated_at=datetime(2026, 7, 21, 10, 1, tzinfo=UTC),
+        ),
+    ]
+    dialog = OpenCodeTaskSelectionDialog(sessions, {"oc-2"}, {"oc-2"}, window)
+    assert dialog.tasks.item(0).checkState() is Qt.CheckState.Unchecked
+    assert dialog.tasks.item(1).checkState() is Qt.CheckState.Checked
+    manager.close()
+
+
+def test_opencode_selector_accept_defaults_keeps_auto_active_unmuted(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager, applied = build_opencode_window(tmp_path, qtbot)
+
+    class AcceptedDialog:
+        def __init__(self, sessions, selected_ids, auto_active_ids, parent):
+            self._selected = set(selected_ids)
+            self._auto_active = set(auto_active_ids)
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_ids(self) -> set[str]:
+            return set(self._selected)
+
+        def restore_auto_requested(self) -> bool:
+            return False
+
+    monkeypatch.setattr("aacc.gui.OpenCodeTaskSelectionDialog", AcceptedDialog)  # type: ignore[attr-defined]
+    window.opencode_auto_active_ids = lambda: {"oc-2"}  # type: ignore[method-assign]
+    window.open_opencode_task_selector()
+    assert applied[-1] == (set(), set(), set())
+    assert window.opencode_selected_ids == {"oc-2"}
+    manager.close()
+
+
+def test_close_event_unsubscribes_opencode_health(tmp_path: Path, qtbot: object) -> None:
+    unsubscribed: list[bool] = []
+    window, manager = build_window(tmp_path, qtbot)
+    window._unsubscribe_opencode_discovery_health = lambda: unsubscribed.append(  # type: ignore[method-assign]
+        True
+    )
+    window.close()
+    assert unsubscribed == [True]
+    manager.close()
+
+
+def test_remove_opencode_task_ignores_other_brands(tmp_path: Path, qtbot: object) -> None:
+    window, manager, applied = build_opencode_window(tmp_path, qtbot)
+    window.set_opencode_monitoring_preferences({"oc-1"}, set(), set())
+    before = list(applied)
+    window.remove_opencode_task("codex:oc-1")
+    assert applied == before
+    assert window.opencode_selected_ids == {"oc-1"}
+    manager.close()
+
+
+def test_kimi_desktop_refresh_syncs_retained_and_muted(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_kimi_desktop_window(tmp_path, qtbot)
+    window.kimi_desktop_retained_ids = {"r-1"}
+    window.kimi_desktop_muted_ids = {"m-1"}
+    window.refresh()
+    assert window.kimi_desktop_retained_ids == set()
+    assert window.kimi_desktop_muted_ids == set()
+    manager.close()
+
+
+def test_kimi_selector_accept_applies_preferences(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    preferences: list[tuple[set[str], set[str], set[str]]] = []
+    settings = QSettings(str(tmp_path / "gui-settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        kimi_auto_active_ids=lambda: {"auto-now"},
+        set_kimi_monitoring_preferences=lambda manual, retained, muted: preferences.append(
+            (set(manual), set(retained), set(muted))
+        ),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    class AcceptedDialog:
+        restore = False
+
+        def __init__(self, sessions, selected_ids, auto_active_ids, parent):
+            self._selected = set(selected_ids)
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_ids(self) -> set[str]:
+            return set(self._selected)
+
+        def restore_auto_requested(self) -> bool:
+            return self.restore
+
+    monkeypatch.setattr("aacc.gui.KimiTaskSelectionDialog", AcceptedDialog)  # type: ignore[attr-defined]
+    window.open_kimi_task_selector()
+    assert preferences[-1] == (set(), set(), set())
+    AcceptedDialog.restore = True
+    window.open_kimi_task_selector()
+    assert preferences[-1] == (set(), set(), set())
+    assert window.kimi_selected_ids == {"auto-now"}
+    manager.close()
+
+
+def test_kimi_desktop_selector_accept_applies_preferences(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager, applied = build_kimi_desktop_window(tmp_path, qtbot)
+    window.kimi_desktop_auto_active_ids = lambda: {"conv-2"}  # type: ignore[method-assign]
+
+    class AcceptedDialog:
+        def __init__(self, sessions, selected_ids, auto_active_ids, parent):
+            self._selected = set(selected_ids)
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_ids(self) -> set[str]:
+            return set(self._selected)
+
+        def restore_auto_requested(self) -> bool:
+            return False
+
+    monkeypatch.setattr("aacc.gui.KimiDesktopTaskSelectionDialog", AcceptedDialog)  # type: ignore[attr-defined]
+    window.open_kimi_desktop_task_selector()
+    assert applied[-1] == (set(), set(), set())
+    assert window.kimi_desktop_selected_ids == {"conv-2"}
     manager.close()
