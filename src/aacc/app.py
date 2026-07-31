@@ -533,6 +533,37 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
                 return
             _logger.info("Application startup completed stage=kimi-web-quota")
 
+    def start_opencode_web_quota() -> None:
+        if cleaned or runtime.opencode_web_quota_service is None:
+            return
+        opencode_web_quota_service = runtime.opencode_web_quota_service
+        if not opencode_web_quota_service.workspace_url:
+            return
+
+        def stop_after_shutdown() -> None:
+            try:
+                opencode_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - shutdown must keep unwinding
+                _logger.error("Application post-shutdown cleanup failed stage=opencode-web-quota")
+
+        _logger.info("Application startup beginning stage=opencode-web-quota")
+        try:
+            opencode_web_quota_service.start()
+        except Exception:  # noqa: BLE001 - optional web quota must not block the app
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.error("Application startup failed stage=opencode-web-quota")
+            try:
+                opencode_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - app startup must still continue
+                _logger.error("Application startup rollback failed stage=opencode-web-quota")
+        else:
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.info("Application startup completed stage=opencode-web-quota")
+
     def show_accessibility_guidance() -> None:
         if not cleaned:
             window.show_accessibility_guidance()
@@ -604,6 +635,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         _logger.info("Application event-loop startup completed")
         if runtime.kimi_web_quota_service is not None:
             QTimer.singleShot(0, start_kimi_web_quota)
+        if runtime.opencode_web_quota_service is not None:
+            QTimer.singleShot(0, start_opencode_web_quota)
         if not trusted:
             QTimer.singleShot(0, show_accessibility_guidance)
 

@@ -74,7 +74,7 @@ def opencode_usage_fetch_script(url: str, generation: int) -> str:
   }};
   const findSubscription = (node, depth) => {{
     if (!node || typeof node !== 'object' || depth > 6) return null;
-    if (node.rollingUsage && node.weeklyUsage && node.monthlyUsage) return node;
+    if (node.rollingUsage || node.weeklyUsage || node.monthlyUsage) return node;
     for (const key in node) {{
       if (Object.prototype.hasOwnProperty.call(node, key)) {{
         const found = findSubscription(node[key], depth + 1);
@@ -169,6 +169,10 @@ class OpenCodeWebSession(QObject):
         self._login_explanation_label: QLabel | None = None
         self._login_dialog_open = False
         self._login_status_key = "opencode.web_starting"
+        self._unsubscribe_language = self.language_manager.subscribe(
+            self.retranslate_ui,
+            component="opencode_web_session",
+        )
 
     def set_workspace_url(self, url: str) -> None:
         self.workspace_url = url.strip()
@@ -182,8 +186,11 @@ class OpenCodeWebSession(QObject):
     def refresh(self) -> None:
         if not self.workspace_url:
             return
+        if self._refreshing:
+            return
         self._refreshing = True
         self._start_refresh_generation()
+        self._start_refresh_watchdog()
         if self._login_dialog_open or self.view.url().isEmpty() or not self._is_opencode_origin():
             self._load_workspace_url()
             return
@@ -215,10 +222,12 @@ class OpenCodeWebSession(QObject):
                 self.language_manager.text("opencode.web_starting")
             )
         self._login_dialog_open = True
+        self._refreshing = True
         self._login_dialog.show()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
         self._start_refresh_generation()
+        self._start_refresh_watchdog()
         self._load_workspace_url()
 
     def logout(self) -> bool:
@@ -242,6 +251,7 @@ class OpenCodeWebSession(QObject):
             self._login_dialog = None
         self._login_container = None
         self._login_explanation_label = None
+        self._unsubscribe_language()
         self.view.deleteLater()
 
     def retranslate_ui(self) -> None:

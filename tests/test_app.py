@@ -340,6 +340,169 @@ def test_deferred_kimi_web_start_failure_stops_partial_service(
     assert events.count("kimi-web-stop") == 1
 
 
+def test_deferred_opencode_web_start_runs_after_event_loop(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+    runtime.opencode_web_quota_service = SimpleNamespace(
+        start=lambda: events.append("opencode-web-start"),
+        workspace_url="https://opencode.ai/workspace/wrk_1/go",
+    )
+    _patch_application_shell(monkeypatch, events, runtime)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("exec") < events.index("opencode-web-start")
+    assert events.count("opencode-web-start") == 1
+
+
+def test_deferred_opencode_web_start_skips_empty_workspace_url(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+    runtime.opencode_web_quota_service = SimpleNamespace(
+        start=lambda: events.append("opencode-web-start"),
+        workspace_url="",
+    )
+    _patch_application_shell(monkeypatch, events, runtime)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert "opencode-web-start" not in events
+
+
+def test_opencode_web_start_shutdown_stops_after_cleanup(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    class QuittingWebService:
+        def start(self) -> None:
+            events.append("opencode-web-start")
+            runtime.qt_app.exit(0)
+            events.append("opencode-web-return")
+
+        def stop(self) -> None:
+            events.append("opencode-web-stop")
+            raise RuntimeError("private opencode stop failure")
+
+    web_service = QuittingWebService()
+    runtime.opencode_web_quota_service = SimpleNamespace(
+        start=web_service.start,
+        stop=web_service.stop,
+        workspace_url="https://opencode.ai/workspace/wrk_1/go",
+    )
+    runtime.close = lambda: web_service.stop()
+    _patch_application_shell(monkeypatch, events, runtime, trusted=False)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("opencode-web-start") < events.index("opencode-web-return")
+    assert events.count("opencode-web-stop") == 2
+    assert "guidance-show" not in events
+
+
+def test_opencode_web_start_skipped_after_shutdown(tmp_path: Path, monkeypatch: object) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    class QuittingWebService:
+        def start(self) -> None:
+            events.append("kimi-web-start")
+            runtime.qt_app.exit(0)
+            events.append("kimi-web-return")
+
+        def stop(self) -> None:
+            events.append("kimi-web-stop")
+
+    runtime.kimi_web_quota_service = QuittingWebService()
+    runtime.opencode_web_quota_service = SimpleNamespace(
+        start=lambda: events.append("opencode-web-start"),
+        stop=lambda: events.append("opencode-web-stop"),
+        workspace_url="https://opencode.ai/workspace/wrk_1/go",
+    )
+    runtime.close = lambda: (runtime.kimi_web_quota_service.stop(), events.append("runtime-close"))
+    _patch_application_shell(monkeypatch, events, runtime, trusted=False)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert "kimi-web-start" in events
+    assert "opencode-web-start" not in events
+
+
+def test_deferred_opencode_web_start_failure_stops_partial_service(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    class FailingWebService:
+        def start(self) -> None:
+            events.append("opencode-web-start")
+            raise RuntimeError("partial opencode web start")
+
+        def stop(self) -> None:
+            events.append("opencode-web-stop")
+            raise RuntimeError("private opencode rollback failure")
+
+    web_service = FailingWebService()
+    runtime.opencode_web_quota_service = SimpleNamespace(
+        start=web_service.start,
+        stop=web_service.stop,
+        workspace_url="https://opencode.ai/workspace/wrk_1/go",
+    )
+    _patch_application_shell(monkeypatch, events, runtime)
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("exec") < events.index("opencode-web-start")
+    assert events.count("opencode-web-stop") == 1
+
+
+def test_opencode_web_start_failure_after_shutdown_stops_partial_service(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    class QuittingFailingWebService:
+        def start(self) -> None:
+            events.append("opencode-web-start")
+            runtime.qt_app.exit(0)
+            raise RuntimeError("opencode web start failed during shutdown")
+
+        def stop(self) -> None:
+            events.append("opencode-web-stop")
+
+    web_service = QuittingFailingWebService()
+    runtime.opencode_web_quota_service = SimpleNamespace(
+        start=web_service.start,
+        stop=web_service.stop,
+        workspace_url="https://opencode.ai/workspace/wrk_1/go",
+    )
+    runtime.close = lambda: web_service.stop()
+    _patch_application_shell(monkeypatch, events, runtime, trusted=False)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.count("opencode-web-stop") == 2
+    assert "guidance-show" not in events
+
+
 def test_event_loop_startup_failure_cleans_up_and_exits_nonzero(
     tmp_path: Path, monkeypatch: object
 ) -> None:

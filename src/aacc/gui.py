@@ -2430,7 +2430,7 @@ class MainWindow(QWidget):
         if not isinstance(quota, OpenCodeQuota):
             return
         self._latest_opencode_quota = quota
-        self._opencode_authorized = True
+        self._opencode_authorized = quota.status is not QuotaStatus.UNKNOWN
         if self.opencode_quota_bar is not None:
             self.opencode_quota_bar.show_quota(quota)
 

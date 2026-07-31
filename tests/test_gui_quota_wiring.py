@@ -751,6 +751,32 @@ def test_opencode_quota_updated_ignores_foreign_payload(qtbot, tmp_path):
     assert window._latest_opencode_quota is None
 
 
+def test_opencode_unknown_quota_keeps_login_click_behavior(qtbot, tmp_path):
+    from aacc.kimi_quota import QuotaStatus
+    from aacc.opencode_web_quota import OpenCodeQuota, OpenCodeUsage
+
+    service = FakeOpenCodeWebQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        opencode_web_quota_service=service,
+    )
+    now = datetime.now(UTC)
+    service.quota_updated.emit(
+        OpenCodeQuota(
+            rolling=OpenCodeUsage(10, 3600, now),
+            weekly=OpenCodeUsage(20, 3600, now),
+            monthly=OpenCodeUsage(30, 3600, now),
+            status=QuotaStatus.UNKNOWN,
+            fetched_at=now,
+        )
+    )
+    window.opencode_quota_bar.clicked.emit()
+    assert service.logins == 1
+    assert service.refreshes == 0
+
+
 def test_opencode_web_login_and_logout_handlers(qtbot, tmp_path):
     service = FakeOpenCodeWebQuotaService()
     window, _, _ = make_window(
