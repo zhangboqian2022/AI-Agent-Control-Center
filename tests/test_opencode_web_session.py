@@ -10,6 +10,7 @@ from PySide6.QtWebView import QWebViewLoadingInfo
 from PySide6.QtWidgets import QWidget
 
 from aacc.file_security import FileProtectionError
+from aacc.i18n import EN_US, ZH_CN, LanguageManager
 from aacc.opencode_web_session import (
     BRIDGE_PAYLOAD_KEY,
     BRIDGE_PREFIX,
@@ -107,6 +108,7 @@ def test_fetch_script_embeds_workspace_id_and_server_hash() -> None:
     assert "rollingUsage" in script
     assert BRIDGE_PAYLOAD_KEY in script
     assert "AACC_OPENCODE_QUOTA:" in script
+    assert "node.rollingUsage || node.weeklyUsage || node.monthlyUsage" in script
     assert opencode_usage_fetch_script("https://opencode.ai/zen", 1) == ""
 
 
@@ -448,3 +450,77 @@ def test_bridge_read_deletes_payload_key(qapp, tmp_path: Path) -> None:
     assert session.view.scripts
     read_script = session.view.scripts[-1]
     assert "delete window[" in read_script
+
+
+def test_refresh_navigation_path_arms_watchdog(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.refresh()
+    assert session.view.url().toString() == WORKSPACE_URL
+    assert session._refresh_watchdog.isActive()
+
+
+def test_open_login_arms_watchdog(monkeypatch, qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.opencode_web_session as module
+
+    container = QWidget()
+    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
+    session = make_session(tmp_path)
+    session.open_login()
+    assert session._refresh_watchdog.isActive()
+    session.close()
+
+
+def test_refresh_re_entry_is_inert_while_in_flight(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.view._url = QUrl(WORKSPACE_URL)
+    session.refresh()
+    assert session._refreshing is True
+    assert session.view.scripts
+    session.view.scripts = []
+    session.refresh()
+    assert session.view.scripts == []
+    assert session.view.url().toString() == WORKSPACE_URL
+
+
+def test_refresh_during_login_progress_does_not_navigate(monkeypatch, qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.opencode_web_session as module
+
+    container = QWidget()
+    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
+    session = make_session(tmp_path)
+    session.open_login()
+    assert session._refreshing is True
+    assert session.view.url().toString() == WORKSPACE_URL
+    session._close_login_dialog()
+    session.view.scripts = []
+    session.refresh()
+    assert session.view.scripts == []
+    assert session.view.url().toString() == WORKSPACE_URL
+    session.close()
+
+
+def test_language_switch_retranslates_login_dialog_via_subscription(
+    monkeypatch, qapp, tmp_path: Path
+) -> None:
+    del qapp
+    import aacc.opencode_web_session as module
+
+    container = QWidget()
+    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
+    language_manager = LanguageManager(ZH_CN)
+    session = OpenCodeWebSession(tmp_path, language_manager=language_manager)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url(WORKSPACE_URL)
+    session.open_login()
+    label = session._login_explanation_label
+    assert label is not None
+    assert label.text() == "正在启动 OpenCode 登录页面，请稍候…"
+    language_manager.set_language(EN_US)
+    assert label.text() == "Starting the OpenCode login page. Please wait…"
+    session.close()
+    language_manager.set_language(ZH_CN)
+    assert language_manager._subscribers == []
