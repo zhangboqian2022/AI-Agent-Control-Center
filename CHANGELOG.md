@@ -2,6 +2,14 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.3-rc.2 — 2026-07-31
+
+[Bilingual release notes](docs/release-notes-1.4.3rc2.md)
+
+- [Fix] On Windows, a single 401 from an expired Kimi access token no longer permanently disables background quota refresh: headless Edge refreshes now retry inside a bounded 60-second grace window, giving kimi.com's own token renewal time to recover; a session that stays unauthorized for the whole window still requires a new login.
+- [UX] Restoring the panel (unhide / un-minimize) now triggers an immediate Kimi quota catch-up refresh, throttled to once per 60 seconds, on both platforms.
+- [Delivery] Windows-only version increment; the macOS build remains at 1.4.3-rc.1 and no new macOS artifact is published for rc.2.
+
 ## 1.4.3-rc.1 — 2026-07-30
 
 [Bilingual release notes](docs/release-notes-1.4.3rc1.md)
