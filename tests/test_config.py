@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 import aacc.config as config_module
 from aacc.config import (
@@ -16,6 +17,7 @@ from aacc.config import (
     save_config,
 )
 from aacc.file_security import FileProtectionError
+from aacc.models import AppConfig
 
 
 @pytest.mark.skipif(
@@ -325,3 +327,39 @@ def test_load_config_repairs_existing_windows_file_in_place(
 
     assert loaded.app.api.token == config.app.api.token
     assert protected == [(path, "win32")]
+
+
+def test_opencode_workspace_url_accepts_valid_workspace_page() -> None:
+    config = default_config()
+    config.opencode_workspace_url = (
+        "https://opencode.ai/workspace/wrk_01KYVH7EJDHAAE4TZ51J3TX5CS/go"
+    )
+    assert config.opencode_workspace_url.endswith("/go")
+
+
+def test_opencode_workspace_url_defaults_empty() -> None:
+    assert AppConfig().opencode_workspace_url == ""
+
+
+def test_opencode_workspace_url_rejects_foreign_host() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(opencode_workspace_url="https://example.com/workspace/wrk_1")
+
+
+def test_opencode_workspace_url_rejects_http_scheme() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(opencode_workspace_url="http://opencode.ai/workspace/wrk_1")
+
+
+def test_opencode_workspace_url_rejects_non_workspace_path() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(opencode_workspace_url="https://opencode.ai/zen")
+
+
+def test_opencode_workspace_url_round_trips_through_config_file(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    config = default_config()
+    config.opencode_workspace_url = "https://opencode.ai/workspace/wrk_123/go"
+    save_config(path, config)
+    loaded = load_config(path)
+    assert loaded.opencode_workspace_url == config.opencode_workspace_url
