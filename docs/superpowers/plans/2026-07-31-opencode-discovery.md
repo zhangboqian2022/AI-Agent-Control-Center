@@ -202,7 +202,7 @@ ORDER BY time_updated DESC
 LIMIT 50
 """
 _LATEST_PART_QUERY = """
-SELECT data FROM part
+SELECT data, time_updated FROM part
 WHERE session_id = ?
 ORDER BY time_updated DESC, id DESC
 LIMIT 1
@@ -297,55 +297,8 @@ Expected: PASS（10 passed）
 - [ ] **Step 5: Write the failing discovery tests**
 
 ```python
-# tests/test_opencode_discovery.py（追加）
+# tests/test_opencode_discovery.py（追加；文件头已有 datetime/UTC/timedelta/pytest/Path imports，勿重复）
 import sqlite3
-import time
-from datetime import UTC, datetime, timedelta
-
-
-def _build_db(path: Path, sessions: list[dict[str, Any]]) -> None:
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute(
-            "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
-            "title TEXT NOT NULL, directory TEXT, agent TEXT, model TEXT, "
-            "parent_id TEXT, time_archived INTEGER, time_created INTEGER NOT NULL, "
-            "time_updated INTEGER NOT NULL)"
-        )
-        connection.execute(
-            "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, "
-            "session_id TEXT NOT NULL, time_created INTEGER NOT NULL, "
-            "time_updated INTEGER NOT NULL, data TEXT NOT NULL)"
-        )
-        for session in sessions:
-            connection.execute(
-                "INSERT INTO session (id, project_id, title, directory, agent, model, "
-                "parent_id, time_archived, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (
-                    session["id"],
-                    "p1",
-                    session.get("title", ""),
-                    session.get("directory"),
-                    session.get("agent", "build"),
-                    session.get("model"),
-                    session.get("parent_id"),
-                    session.get("time_archived"),
-                    int(time.time() * 1000),
-                    int(session["updated"].timestamp() * 1000),
-                ),
-            )
-        for part in sessions.get("parts", []):
-            pass
-        connection.commit()
-    finally:
-        connection.close()
-
-
-def _insert_part(connection: sqlite3.Connection, session_id: str, part_id: str, updated: datetime, data: str) -> None:
-    connection.execute(
-        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)",
-        (part_id, f"msg_{part_id}", session_id, int(updated.timestamp() * 1000), int(updated.timestamp() * 1000), data),
-    )
 
 
 def _make_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
@@ -745,7 +698,13 @@ class OpenCodeLocalDiscovery:
                     ).fetchone()
                     if row is None:
                         continue
-                    snapshots[session_id] = self._parse_part_snapshot(row[0])
+                    parsed = self._parse_part_snapshot(row[0])
+                    if parsed is not None:
+                        snapshots[session_id] = OpenCodePartSnapshot(
+                            part_type=parsed.part_type,
+                            state_status=parsed.state_status,
+                            time_updated=_epoch_ms_to_datetime(row[1]),
+                        )
             finally:
                 connection.close()
         except sqlite3.Error as error:
@@ -780,31 +739,7 @@ class OpenCodeLocalDiscovery:
         )
 ```
 
-注意：`_parse_part_snapshot` 只提取 type/state.status——`time_updated` 由 SQL 的 `time_updated` 列提供（不解析 data 内时间）。因此 `_latest_part_snapshots` 需要列值：将 `_LATEST_PART_QUERY` 改为 `SELECT data, time_updated FROM part ...` 并在循环里用 `_epoch_ms_to_datetime(row[1])` 构造快照：
-
-```python
-_LATEST_PART_QUERY = """
-SELECT data, time_updated FROM part
-WHERE session_id = ?
-ORDER BY time_updated DESC, id DESC
-LIMIT 1
-"""
-```
-
-`_latest_part_snapshots` 内改为：
-
-```python
-                    row = connection.execute(_LATEST_PART_QUERY, (session_id,)).fetchone()
-                    if row is None:
-                        continue
-                    snapshot = self._parse_part_snapshot(row[0])
-                    if snapshot is not None:
-                        snapshots[session_id] = OpenCodePartSnapshot(
-                            part_type=snapshot.part_type,
-                            state_status=snapshot.state_status,
-                            time_updated=_epoch_ms_to_datetime(row[1]),
-                        )
-```
+注意：`_parse_part_snapshot` 只提取 `type`/`state.status`（`time_updated` 由 SQL 的 `time_updated` 列提供，见上方两列查询）。
 
 - [ ] **Step 8: Run tests to verify they pass**
 
@@ -1010,7 +945,6 @@ def test_runtime_wires_opencode_discovery(tmp_path) -> None:
         quota_service_factory=lambda config_dir: None,
         kimi_web_quota_service_factory=lambda config_dir: None,
         codex_quota_service_factory=lambda: None,
-        opencode_web_quota_service_factory=lambda config_dir: None,
     )
     assert runtime.opencode_discovery is not None
     runtime.close()
@@ -1056,6 +990,26 @@ en catalog 对应：
 
 ```python
             "opencode_cli": "OpenCode",
+```
+
+- `KimiDesktopTaskSelectionDialog`（L1329）之前加 `OpenCodeTaskSelectionDialog`：
+
+```python
+class OpenCodeTaskSelectionDialog(TaskSelectionDialog):
+    def __init__(
+        self,
+        sessions: list[OpenCodeSession],
+        selected_ids: set[str],
+        auto_active_ids: set[str],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(
+            [(session.session_id, session.title, session.updated_at) for session in sessions],
+            selected_ids,
+            auto_active_ids,
+            parent,
+            window_title_key="settings.select_opencode",
+        )
 ```
 
 - 设置对话框（L1171 `kimi_desktop_tasks` 块之后）加：
@@ -1105,7 +1059,6 @@ en catalog 对应：
         self._set_opencode_monitoring_preferences = (
             set_opencode_monitoring_preferences or (lambda _m, _r, _u: None)
         )
-        self.opencode_selected_ids: set[str] = set()
         self._unsubscribe_opencode_discovery_health = (
             subscribe_opencode_discovery_health(
                 self.opencode_discovery_health_received.emit
@@ -1115,22 +1068,110 @@ en catalog 对应：
         )
 ```
 
-- 打开选择器方法（`open_kimi_desktop_task_selector` 附近）加：
+- QSettings 恢复块（kimi_desktop 恢复块 L1528-1549 之后，`self._apply_kimi_desktop_monitoring_preferences()` 之后）加：
+
+```python
+        saved_opencode_tasks = self._settings.value("opencode_manual_tasks")
+        if isinstance(saved_opencode_tasks, str):
+            self.opencode_manual_ids = {saved_opencode_tasks}
+        elif isinstance(saved_opencode_tasks, list):
+            self.opencode_manual_ids = {str(value) for value in saved_opencode_tasks}
+        else:
+            self.opencode_manual_ids = set()
+        saved_opencode_retained = self._settings.value("opencode_retained_tasks")
+        if isinstance(saved_opencode_retained, str):
+            self.opencode_retained_ids = {saved_opencode_retained}
+        elif isinstance(saved_opencode_retained, list):
+            self.opencode_retained_ids = {str(value) for value in saved_opencode_retained}
+        else:
+            self.opencode_retained_ids = set()
+        saved_opencode_muted = self._settings.value("opencode_muted_tasks")
+        if isinstance(saved_opencode_muted, str):
+            self.opencode_muted_ids = {saved_opencode_muted}
+        elif isinstance(saved_opencode_muted, list):
+            self.opencode_muted_ids = {str(value) for value in saved_opencode_muted}
+        else:
+            self.opencode_muted_ids = set()
+        self.opencode_selected_ids = set(self.opencode_manual_ids)
+        self._apply_opencode_monitoring_preferences()
+```
+
+- 偏好应用/同步方法（`_sync_kimi_desktop_muted_ids` 之后）加：
+
+```python
+    def set_opencode_selected_ids(self, selected_ids: set[str]) -> None:
+        self.set_opencode_monitoring_preferences(selected_ids, set(), set())
+
+    def set_opencode_monitoring_preferences(
+        self, manual_ids: set[str], retained_ids: set[str], muted_ids: set[str]
+    ) -> None:
+        self.opencode_manual_ids = set(manual_ids)
+        self.opencode_retained_ids = set(retained_ids) - self.opencode_manual_ids
+        self.opencode_muted_ids = set(muted_ids) - self.opencode_manual_ids
+        self.opencode_selected_ids = set(self.opencode_manual_ids)
+        self._settings.setValue("opencode_manual_tasks", sorted(self.opencode_manual_ids))
+        self._settings.setValue(
+            "opencode_retained_tasks", sorted(self.opencode_retained_ids)
+        )
+        self._settings.setValue("opencode_muted_tasks", sorted(self.opencode_muted_ids))
+        self._apply_opencode_monitoring_preferences()
+        self.sync_cards()
+
+    def _apply_opencode_monitoring_preferences(self) -> None:
+        self._set_opencode_monitoring_preferences(
+            self.opencode_manual_ids,
+            self.opencode_retained_ids,
+            self.opencode_muted_ids,
+        )
+
+    def _sync_opencode_retained_ids(self) -> None:
+        retained_ids = self._opencode_retained_ids()
+        if retained_ids != self.opencode_retained_ids:
+            self.opencode_retained_ids = set(retained_ids)
+            self._settings.setValue(
+                "opencode_retained_tasks", sorted(self.opencode_retained_ids)
+            )
+
+    def _sync_opencode_muted_ids(self) -> None:
+        muted_ids = self._opencode_muted_ids()
+        if muted_ids != self.opencode_muted_ids:
+            self.opencode_muted_ids = set(muted_ids)
+            self._settings.setValue(
+                "opencode_muted_tasks", sorted(self.opencode_muted_ids)
+            )
+```
+
+- refresh 流程（L1902-1903 `_sync_kimi_desktop_*` 之后）加：
+
+```python
+        self._sync_opencode_retained_ids()
+        self._sync_opencode_muted_ids()
+```
+
+- 打开选择器方法（`open_kimi_desktop_task_selector` 之后）加：
 
 ```python
     def open_opencode_task_selector(self) -> None:
-        self.open_task_selector(
-            self._opencode_sessions,
-            self._opencode_auto_active_ids,
-            self._opencode_retained_ids,
-            self._opencode_muted_ids,
-            self._set_opencode_monitoring_preferences,
-            window_title_key="settings.select_opencode",
-            selected_ids=self.opencode_selected_ids,
+        auto_active_ids = self._opencode_auto_active_ids()
+        dialog = OpenCodeTaskSelectionDialog(
+            self._opencode_sessions(),
+            self.opencode_selected_ids,
+            auto_active_ids,
+            self,
         )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_ids = dialog.selected_ids()
+            retained_ids = self.opencode_retained_ids & selected_ids
+            manual_ids = (self.opencode_manual_ids & selected_ids) | (
+                selected_ids - auto_active_ids - retained_ids
+            )
+            muted_ids = (
+                self.opencode_muted_ids | (auto_active_ids - selected_ids)
+            ) - selected_ids
+            if dialog.restore_auto_requested():
+                muted_ids -= auto_active_ids
+            self.set_opencode_monitoring_preferences(manual_ids, retained_ids, muted_ids)
 ```
-
-（`open_kimi_desktop_task_selector` 现有签名与 `open_task_selector` 的调用形态请以现有代码为准——若现签名不同，按同型对齐。）
 
 - `_request_quota_refresh_on_restore` 或 discovery 相关无需改（discovery 由 app 层启动）。
 
