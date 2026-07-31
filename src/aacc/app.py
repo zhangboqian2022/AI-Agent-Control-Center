@@ -35,6 +35,7 @@ from aacc.discovery_service import (
     CodexDiscoveryService,
     KimiDesktopDiscoveryService,
     KimiDiscoveryService,
+    OpenCodeDiscoveryService,
 )
 from aacc.file_security import FileProtectionError
 from aacc.gui import MainWindow
@@ -64,6 +65,7 @@ class Runtime:
     discovery: CodexDiscoveryService
     kimi_discovery: KimiDiscoveryService
     kimi_desktop_discovery: KimiDesktopDiscoveryService
+    opencode_discovery: OpenCodeDiscoveryService
     codex_quota_service: CodexQuotaService | None = None
     quota_service: QuotaService | None = None
     kimi_web_quota_service: KimiWebQuotaService | None = None
@@ -86,6 +88,7 @@ class Runtime:
                 if self.kimi_web_quota_service is not None
                 else lambda: None,
             ),
+            ("opencode-discovery", self.opencode_discovery.stop),
             ("kimi-desktop-discovery", self.kimi_desktop_discovery.stop),
             ("kimi-discovery", self.kimi_discovery.stop),
             ("discovery", self.discovery.stop),
@@ -245,6 +248,7 @@ def build_runtime(
         discovery=CodexDiscoveryService(manager),
         kimi_discovery=KimiDiscoveryService(manager),
         kimi_desktop_discovery=KimiDesktopDiscoveryService(manager),
+        opencode_discovery=OpenCodeDiscoveryService(manager),
         codex_quota_service=codex_quota_factory(),
         quota_service=quota_service,
         kimi_web_quota_service=kimi_web_quota_service,
@@ -418,6 +422,13 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         subscribe_kimi_discovery_health=runtime.kimi_discovery.subscribe_health,
         kimi_desktop_discovery_health=runtime.kimi_desktop_discovery.health,
         subscribe_kimi_desktop_discovery_health=runtime.kimi_desktop_discovery.subscribe_health,
+        opencode_sessions=runtime.opencode_discovery.catalog,
+        opencode_auto_active_ids=runtime.opencode_discovery.auto_active_ids,
+        opencode_retained_ids=runtime.opencode_discovery.retained_ids,
+        opencode_muted_ids=runtime.opencode_discovery.muted_ids,
+        set_opencode_monitoring_preferences=runtime.opencode_discovery.set_monitoring_preferences,
+        opencode_discovery_health=runtime.opencode_discovery.health,
+        subscribe_opencode_discovery_health=runtime.opencode_discovery.subscribe_health,
         discovery_log_path=str(data_dir / "logs" / "app.log"),
         accessibility_trusted=trusted,
         open_accessibility_settings_callback=open_accessibility_settings,
@@ -514,6 +525,9 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
             if cleaned:
                 return
             runtime.kimi_desktop_discovery.start()
+            if cleaned:
+                return
+            runtime.opencode_discovery.start()
             if cleaned:
                 return
             if runtime.quota_service is not None:
