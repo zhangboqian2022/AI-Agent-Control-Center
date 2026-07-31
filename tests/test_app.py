@@ -46,6 +46,7 @@ def _runtime_for_application_test(events: list[str]) -> SimpleNamespace:
         quota_service=None,
         kimi_web_quota_service=None,
         codex_quota_service=None,
+        opencode_web_quota_service=None,
         config=SimpleNamespace(
             tasks=[],
             hotkeys={},
@@ -1227,3 +1228,27 @@ def test_default_codex_quota_factory_rediscovers_executable_after_startup(
     assert primary is not None
     assert primary._locator() is None
     assert primary._locator() == codex
+
+
+def test_default_opencode_factory_skips_windows(monkeypatch) -> None:
+    import aacc.app as app_module
+    from aacc.config import default_config
+
+    monkeypatch.setattr(app_module.sys, "platform", "win32")
+    service = app_module._default_opencode_web_quota_service_factory(Path("."), default_config())
+    assert service is None
+
+
+def test_default_opencode_factory_uses_configured_url(monkeypatch) -> None:
+    import aacc.app as app_module
+    from aacc.config import default_config
+
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+    config = default_config()
+    config.opencode_workspace_url = (
+        "https://opencode.ai/workspace/wrk_01KYVH7EJDHAAE4TZ51J3TX5CS/go"
+    )
+    service = app_module._default_opencode_web_quota_service_factory(Path("."), config)
+    assert service is not None
+    assert service.workspace_url == config.opencode_workspace_url
+    service.stop()

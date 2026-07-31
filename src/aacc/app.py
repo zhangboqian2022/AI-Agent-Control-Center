@@ -45,6 +45,7 @@ from aacc.kimi_edge_smoke import run_edge_cdp_smoke
 from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
+from aacc.opencode_web_quota_service import OpenCodeWebQuotaService
 from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
 from aacc.shutdown_windows import WindowsShutdownListener, request_shutdown_for_update
@@ -67,6 +68,7 @@ class Runtime:
     codex_quota_service: CodexQuotaService | None = None
     quota_service: QuotaService | None = None
     kimi_web_quota_service: KimiWebQuotaService | None = None
+    opencode_web_quota_service: OpenCodeWebQuotaService | None = None
 
     def close(self) -> None:
         operations: tuple[tuple[str, Callable[[], None]], ...] = (
@@ -84,6 +86,12 @@ class Runtime:
                 "kimi-web-quota",
                 self.kimi_web_quota_service.stop
                 if self.kimi_web_quota_service is not None
+                else lambda: None,
+            ),
+            (
+                "opencode-web-quota",
+                self.opencode_web_quota_service.stop
+                if self.opencode_web_quota_service is not None
                 else lambda: None,
             ),
             ("kimi-desktop-discovery", self.kimi_desktop_discovery.stop),
@@ -119,6 +127,21 @@ def _default_kimi_web_quota_service_factory(
         config_dir,
         language_manager=language_manager,
     )
+
+
+def _default_opencode_web_quota_service_factory(
+    config_dir: Path,
+    config: AppConfig,
+    language_manager: LanguageManager | None = None,
+) -> OpenCodeWebQuotaService | None:
+    if sys.platform == "win32":
+        return None
+    service = OpenCodeWebQuotaService(
+        config_dir,
+        language_manager=language_manager,
+    )
+    service.set_workspace_url(config.opencode_workspace_url)
+    return service
 
 
 def _default_codex_quota_service_factory(
@@ -211,6 +234,9 @@ def build_runtime(
     quota_service_factory: Callable[[Path], QuotaService | None] | None = None,
     kimi_web_quota_service_factory: (Callable[[Path], KimiWebQuotaService | None] | None) = None,
     codex_quota_service_factory: Callable[[], CodexQuotaService | None] | None = None,
+    opencode_web_quota_service_factory: (
+        Callable[[Path], OpenCodeWebQuotaService | None] | None
+    ) = None,
     language_manager: LanguageManager | None = None,
 ) -> Runtime:
     config = load_config(config_path)
@@ -231,8 +257,16 @@ def build_runtime(
             language_manager,
         )
     )
+    opencode_web_quota_factory = opencode_web_quota_service_factory or (
+        lambda config_dir: _default_opencode_web_quota_service_factory(
+            config_dir,
+            config,
+            language_manager,
+        )
+    )
     quota_service = factory(config_path.parent)
     kimi_web_quota_service = kimi_web_quota_factory(config_path.parent)
+    opencode_web_quota_service = opencode_web_quota_factory(config_path.parent)
     if quota_service is not None and kimi_web_quota_service is not None:
         quota_service.set_externally_scheduled(True)
         kimi_web_quota_service.set_fallback_refresh(quota_service.refresh_now)
@@ -248,6 +282,7 @@ def build_runtime(
         codex_quota_service=codex_quota_factory(),
         quota_service=quota_service,
         kimi_web_quota_service=kimi_web_quota_service,
+        opencode_web_quota_service=opencode_web_quota_service,
     )
 
 
@@ -412,6 +447,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         quota_service=runtime.quota_service,
         kimi_web_quota_service=runtime.kimi_web_quota_service,
         codex_quota_service=runtime.codex_quota_service,
+        opencode_web_quota_service=runtime.opencode_web_quota_service,
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
         kimi_discovery_health=runtime.kimi_discovery.health,
