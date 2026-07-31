@@ -35,21 +35,27 @@ opencode.ai 无公开的用量查询 API。经逆向其前端 JS 包确认：
 |---|---|
 | `opencode_web_quota.py` | 纯函数解析：_server 响应 → 归一化 `OpenCodeQuota`（复用 `QuotaDetail`/`QuotaStatus` 通用模型）+ OK/PARTIAL/UNKNOWN 判定 |
 | `opencode_web_error.py` | 错误归一化：UNAUTHORIZED / REFRESH_TIMEOUT / REFRESH_FAILED / PARSE_FAILED |
-| `opencode_web_session.py` | macOS QtWebView 会话：OpenAuth 登录、cookie 持久化、DocumentCreation 注入 fetch hook、title-bridge 上抛 |
+| `opencode_web_session.py` | macOS QtWebView 会话：OpenAuth 登录、cookie 持久化、页面内直接 fetch `/_server` 取数、title-bridge 上抛 |
 | `opencode_web_quota_service.py` | QTimer 300s 轮询、状态机、信号（quota_updated / login_state_changed / error_occurred） |
 | `gui.py` 扩展 | `OpenCodeQuotaBar`（复用 `QuotaBar` 三行布局）+ 设置对话框「登录/退出 OpenCode」按钮 |
 | `models.py` / `config.py` | `opencode_workspace_url` 配置项（host 必须是 opencode.ai） |
 
 ## 数据流
 
-1. WebView 加载 `{opencode_workspace_url}/go`（工作区页）。
-2. **DocumentCreation 注入 fetch hook**：钩住应用自身的 `/_server` POST
-   （识别 `X-Server-Id` 请求头），`response.clone().text()` 读取响应体。
-3. 页面内解析响应（seroval 流表达式或 JSON，均在页面上下文用 `eval`/`JSON.parse`
-   解析——响应来自 opencode.ai 自有服务器，可信），提取
-   `subscription.rollingUsage/weeklyUsage/monthlyUsage` 的 `usagePercent` + `resetInSec`。
+1. WebView 加载 `{opencode_workspace_url}`（工作区 /go 用量页）。
+2. **页面内直接 fetch**（与 Kimi `membership_fetch_script` 同构，非 hook 拦截）：
+   refresh 时 `runJavaScript` 一段 IIFE，在页面上下文同源 `POST /_server`
+   （cookie 自动带上），请求体/头用实测抓包格式：
+   `X-Server-Id: 7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4`、
+   `X-Server-Instance: server-fn:1`、body `{"t":{"t":15,"l":1,"c":"Array","a":[{"t":2,"s":"<workspace_id>"}]},"f":31,"m":[]}`。
+   理由：QtWebView（WKWebView）没有 QWebEngine 的 DocumentCreation 注入点，
+   且直接 fetch 无注入时序竞争。workspace_id 从配置 URL 提取。
+3. 页面内解析响应（JSON 或 seroval 文本表达式 `$$$a=...`，均用
+   `JSON.parse`/`eval`——响应来自 opencode.ai 自有服务器，可信），递归查找
+   含 `rollingUsage+weeklyUsage+monthlyUsage` 的节点，提取三组
+   `usagePercent` + `resetInSec`。
 4. 经 title-bridge（`window[payloadKey]` + `document.title` 前缀变化，同 Kimi 模式）
-   上抛 `{kind:'quota', generation, rolling:{percent,resetSec}, weekly:..., monthly:...}`。
+   上抛 `{kind:'quota', generation, raw:{subscription:{rollingUsage:{usagePercent,resetInSec},...}}}`。
 5. Python 归一化 → `OpenCodeQuota` → 信号 → `OpenCodeQuotaBar` 渲染。
 
 语义映射：rolling(5h) → 5H 行、weekly(7d) → WEEK 行、monthly(30d) → MONTH 行；
@@ -58,7 +64,8 @@ opencode.ai 无公开的用量查询 API。经逆向其前端 JS 包确认：
 ## 登录与会话
 
 - 会话目录：`{config_dir}/opencode-web-session/`（macOS，与 kimi-web-session 并列）。
-- 首次：额度条显示「OpenCode 额度/点击授权」→ 弹 QtWebView 登录窗口 →
+- 工作区 URL 示例（用户确认）：`https://opencode.ai/workspace/wrk_01KYVH7EJDHAAE4TZ51J3TX5CS/go`。
+- 首次：额度条显示「OpenCode 用量/点击授权」→ 弹 QtWebView 登录窗口 →
   OpenAuth 页选 GitHub/Google → 重定向回工作区页 → 捕获数据成功 → 登录窗口自动关闭。
 - 设置对话框新增「登录 OpenCode」「退出 OpenCode」按钮（同 `settings.kimi_web_login` 模式）。
 - 会话过期：工作区页被重定向到 OpenAuth 登录页（URL 检测 + 捕获不到数据）→
