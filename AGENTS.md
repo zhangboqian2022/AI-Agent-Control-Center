@@ -72,6 +72,16 @@ scripts\build_windows_installer.ps1
   立即补刷 Kimi 额度，60 秒节流，双平台生效。macOS 经本机日志确认不受
   影响（WebView 页面常驻，五分钟节奏无缺口）。版本 1.4.3rc2，macOS 保持
   1.4.3-rc.1 不发新产物；本机 964 passed、ruff、format、mypy 全绿。
+- **1.4.3-rc.2 已发布为 GitHub Prerelease**（tag `v1.4.3-rc.2`，非 Latest、
+  非草稿，仅 Windows 两项资产 Setup + .sha256）：
+  `https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.3-rc.2`。
+  CI `https://github.com/zhangboqian2022/AI-Agent-Control-Center/actions/runs/30602518961`
+  （commit `4389952`）macOS、Windows Server 2022/2025 全绿，含冻结包、
+  安装/重装/卸载冒烟与产物严格校验。Setup（42MB）SHA-256
+  `1ae5f11ea656134c8b3b7a7c22be341ef8ae3513143232b85a17166c580ab0e7`，
+  下载回环 `shasum -c` 通过，已拷至 ~/Desktop。教训：版本号改动后必须
+  `uv lock` 同步锁文件（本次漏跑致首轮 CI 三腿全红）。消费级 Windows
+  10/11 真机验证（60 秒宽限重试对真实 token 续期）仍不宣称。
 
 ## 历史进度（2026-07-30）
 
