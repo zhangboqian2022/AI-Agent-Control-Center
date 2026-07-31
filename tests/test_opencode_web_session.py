@@ -460,6 +460,73 @@ def test_refresh_navigation_path_arms_watchdog(qapp, tmp_path: Path) -> None:
     assert session._refresh_watchdog.isActive()
 
 
+def test_manual_login_dialog_dismissal_resets_state(monkeypatch, qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.opencode_web_session as module
+
+    container = QWidget()
+    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
+    session = make_session(tmp_path)
+    errors: list[str] = []
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+    assert session._login_dialog_open is True
+    assert session._refreshing is True
+    assert session._refresh_watchdog.isActive()
+
+    dialog = session._login_dialog
+    assert dialog is not None
+    dialog.close()
+    assert session._login_dialog_open is False
+    assert session._refreshing is False
+    assert session._refresh_watchdog.isActive() is False
+    assert session._active_refresh_generation is None
+    assert errors == []
+
+    session.view.scripts = []
+    session.refresh()
+    assert session.view.scripts
+    assert "_server" in session.view.scripts[-1]
+    assert session.view.url().toString() == WORKSPACE_URL
+    session.close()
+
+
+def test_quota_success_close_does_not_double_handle(monkeypatch, qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.opencode_web_session as module
+
+    container = QWidget()
+    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
+    session = make_session(tmp_path)
+    login_states: list[bool] = []
+    errors: list[str] = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+
+    session.open_login()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session.view.script_result = json.dumps(
+        {
+            "kind": "quota",
+            "generation": generation,
+            "raw": {
+                "subscription": {
+                    "rollingUsage": {"usagePercent": 5, "resetInSec": 3600},
+                    "weeklyUsage": {"usagePercent": 5, "resetInSec": 3600},
+                    "monthlyUsage": {"usagePercent": 5, "resetInSec": 3600},
+                }
+            },
+        }
+    )
+    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    assert login_states == [True]
+    assert session._login_dialog_open is False
+    assert session._refreshing is False
+    assert errors == []
+    session.close()
+
+
 def test_open_login_arms_watchdog(monkeypatch, qapp, tmp_path: Path) -> None:
     del qapp
     import aacc.opencode_web_session as module
