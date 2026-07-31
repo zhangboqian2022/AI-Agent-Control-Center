@@ -33,6 +33,11 @@ MAX_CDP_MESSAGE_BYTES = 4 * 1024 * 1024
 EDGE_STARTUP_TIMEOUT_SECONDS = 15.0
 EDGE_LOGIN_TIMEOUT_SECONDS = 15.0 * 60.0
 EDGE_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+# A freshly loaded membership page may need a few seconds for Kimi's own
+# token refresh to replace an expired access token. One 401 must not
+# permanently disable background refresh, so headless runs retry inside a
+# bounded grace window before declaring the session unauthorized.
+EDGE_HEADLESS_AUTH_GRACE_SECONDS = 60.0
 
 
 class EdgeSessionError(RuntimeError):
@@ -469,6 +474,7 @@ class ManagedEdgeOperation:
                 raise EdgeSessionError(KimiWebErrorCategory.LOAD_FAILED)
             startup_deadline = self._monotonic() + EDGE_STARTUP_TIMEOUT_SECONDS
             login_deadline = self._monotonic() + EDGE_LOGIN_TIMEOUT_SECONDS
+            headless_auth_deadline = self._monotonic() + EDGE_HEADLESS_AUTH_GRACE_SECONDS
             while True:
                 if cancel.is_set():
                     raise EdgeCancelledError
@@ -490,10 +496,11 @@ class ManagedEdgeOperation:
                         page.close()
                     return parse_quota_payload(payload)
                 except EdgeUnauthorizedError:
-                    if not visible:
+                    if visible:
+                        if self._monotonic() >= login_deadline:
+                            raise EdgeSessionError(KimiWebErrorCategory.REFRESH_TIMEOUT) from None
+                    elif self._monotonic() >= headless_auth_deadline:
                         raise
-                    if self._monotonic() >= login_deadline:
-                        raise EdgeSessionError(KimiWebErrorCategory.REFRESH_TIMEOUT) from None
                     self._sleep(2.0)
                 except EdgeCancelledError:
                     raise

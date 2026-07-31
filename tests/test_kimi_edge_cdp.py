@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from threading import Event
 from typing import Any
 
 import pytest
 
+from aacc.kimi_edge_cdp import ManagedEdgeOperation
 from aacc.kimi_web_error import KimiWebErrorCategory
 
 
@@ -293,6 +295,102 @@ def test_parse_unauthorized_payload_uses_internal_exception() -> None:
 
     with pytest.raises(EdgeUnauthorizedError):
         parse_quota_payload({"kind": "unauthorized"})
+
+
+_KIMI_TARGET = {
+    "type": "page",
+    "url": "https://www.kimi.com/membership/subscription",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:43127/devtools/page/page-id",
+}
+_UNAUTHORIZED_RESPONSE = '{"id":1,"result":{"result":{"value":{"kind":"unauthorized"}}}}'
+_QUOTA_RESPONSE = (
+    '{"id":1,"result":{"result":{"value":{"kind":"quota","stats":{},"subscription":{}}}}}'
+)
+
+
+def _build_headless_operation(
+    tmp_path: Path,
+    process: FakeProcess,
+    page_socket_factory: Callable[[], FakeSocket],
+    clock: list[float],
+) -> ManagedEdgeOperation:
+    edge = tmp_path / "msedge.exe"
+    edge.write_bytes(b"MZ")
+    browser_socket = FakeSocket(['{"id":1,"result":{}}'])
+
+    def protect(profile: Path) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+
+    def start(_command: list[str]) -> FakeProcess:
+        profile = tmp_path / "AACC" / "kimi-edge-profile"
+        (profile / "DevToolsActivePort").write_text(
+            "43127\n/devtools/browser/browser-id\n",
+            encoding="ascii",
+        )
+        return process
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    return ManagedEdgeOperation(
+        local_app_data=tmp_path,
+        executable=edge,
+        protector=protect,
+        process_factory=start,
+        target_loader=lambda _origin: [dict(_KIMI_TARGET)],
+        socket_factory=lambda url: browser_socket if "/browser/" in url else page_socket_factory(),
+        sleep=sleep,
+        monotonic=lambda: clock[0],
+    )
+
+
+def test_headless_operation_retries_unauthorized_while_page_recovers(
+    tmp_path: Path,
+) -> None:
+    attempts = [FakeSocket([_UNAUTHORIZED_RESPONSE]) for _ in range(2)]
+    attempts.append(FakeSocket([_QUOTA_RESPONSE]))
+    remaining = list(attempts)
+    clock = [0.0]
+
+    operation = _build_headless_operation(
+        tmp_path,
+        FakeProcess(),
+        lambda: remaining.pop(0),
+        clock,
+    )
+
+    result = operation.run(visible=False, cancel=Event())
+
+    assert result.stats == {}
+    assert remaining == []
+    assert clock[0] < 60.0
+
+
+def test_headless_operation_gives_up_unauthorized_after_grace_window(
+    tmp_path: Path,
+) -> None:
+    from aacc.kimi_edge_cdp import EdgeUnauthorizedError
+
+    attempts = 0
+
+    def next_socket() -> FakeSocket:
+        nonlocal attempts
+        attempts += 1
+        return FakeSocket([_UNAUTHORIZED_RESPONSE])
+
+    clock = [0.0]
+    operation = _build_headless_operation(
+        tmp_path,
+        FakeProcess(),
+        next_socket,
+        clock,
+    )
+
+    with pytest.raises(EdgeUnauthorizedError):
+        operation.run(visible=False, cancel=Event())
+
+    assert attempts > 2
+    assert 60.0 <= clock[0] <= 62.0
 
 
 def test_managed_edge_operation_returns_quota_and_closes_browser(tmp_path: Path) -> None:

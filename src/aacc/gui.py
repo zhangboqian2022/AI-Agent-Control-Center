@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from pathlib import PurePath
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QEvent,
     QPoint,
     QPropertyAnimation,
     QSettings,
@@ -32,6 +34,7 @@ from PySide6.QtGui import (
     QPainter,
     QPixmap,
     QResizeEvent,
+    QShowEvent,
 )
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -129,6 +132,10 @@ STATUS_NAME_KEYS = {
 
 STATUS_LIGHT_FONT_SIZE = 64
 AACC_MESSAGE_CATEGORY_KEY = "aacc_message_category"
+# Restoring the panel asks the Kimi web quota service for an immediate
+# catch-up refresh, at most once per interval so rapid hide/show toggling
+# does not relaunch the browser session back to back.
+RESTORE_QUOTA_REFRESH_INTERVAL_SECONDS = 60.0
 AACC_MESSAGE_TEXT_KEYS = {
     "manual_update": "feedback.manual_update",
     **{
@@ -1449,6 +1456,7 @@ class MainWindow(QWidget):
         self._latest_kimi_code_quota: KimiQuota | None = None
         self._latest_kimi_web_quota: KimiQuota | None = None
         self._kimi_web_authorized = False
+        self._last_restore_quota_refresh = float("-inf")
         self._open_url = open_url or (lambda url: QDesktopServices.openUrl(QUrl(url)))
         self._oauth_dialog: KimiOAuthDialog | None = None
         self._subtitle_presentation: _SubtitlePresentation | None = None
@@ -2736,6 +2744,24 @@ class MainWindow(QWidget):
             self.show()
             self.raise_()
             self.activateWindow()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._request_quota_refresh_on_restore()
+
+    def changeEvent(self, event: QEvent) -> None:
+        if event.type() == QEvent.Type.WindowStateChange and not self.isMinimized():
+            self._request_quota_refresh_on_restore()
+        super().changeEvent(event)
+
+    def _request_quota_refresh_on_restore(self) -> None:
+        if self.kimi_web_quota_service is None:
+            return
+        now = time.monotonic()
+        if now - self._last_restore_quota_refresh < RESTORE_QUOTA_REFRESH_INTERVAL_SECONDS:
+            return
+        self._last_restore_quota_refresh = now
+        self.kimi_web_quota_service.refresh_now()
 
     def handle_app_state_change(self, state: Qt.ApplicationState) -> None:
         if sys.platform != "darwin":
