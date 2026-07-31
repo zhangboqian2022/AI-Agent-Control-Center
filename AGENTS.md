@@ -60,7 +60,20 @@ scripts\build_windows_installer.ps1
 - `scripts/install.sh` 的 wheel 版本用 `uv version --short` 动态获取，
   不要硬编码版本号。
 
-## 当前进度（2026-07-30）
+## 当前进度（2026-07-31）
+
+- **1.4.3-rc.2（Windows 单独递增）**：修复 Windows 面板长时间最小化后
+  Kimi 额度自动刷新永久停止。根因：headless Edge 后台刷新遇到 token
+  过期 401 时一次都不重试，直接 `may_reuse=False` 永久关闭自动复用，
+  五分钟定时器空转；点击额度条弹可见 Edge 由 kimi.com 静默续期才恢复。
+  修复（TDD，5 个新测试）：① `kimi_edge_cdp` headless 401 在 60 秒有界
+  宽限窗口内按 2 秒重试（`EDGE_HEADLESS_AUTH_GRACE_SECONDS`），耗尽才判
+  失效（安全语义不变）；② `gui.py` 面板恢复显示（showEvent/取消最小化）
+  立即补刷 Kimi 额度，60 秒节流，双平台生效。macOS 经本机日志确认不受
+  影响（WebView 页面常驻，五分钟节奏无缺口）。版本 1.4.3rc2，macOS 保持
+  1.4.3-rc.1 不发新产物；本机 964 passed、ruff、format、mypy 全绿。
+
+## 历史进度（2026-07-30）
 
 - **1.4.3-rc.1（候选版）**：外部联合评审（Gemini × DeepSeek，3 轮 9 步，
   结论无 P0）14 项已逐条对照代码核实，**4 项部分接受已修**：
