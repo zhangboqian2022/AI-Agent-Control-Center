@@ -43,6 +43,7 @@ def _runtime_for_application_test(events: list[str]) -> SimpleNamespace:
         discovery=Service(),
         kimi_discovery=Service(),
         kimi_desktop_discovery=Service(),
+        opencode_discovery=Service(),
         quota_service=None,
         kimi_web_quota_service=None,
         codex_quota_service=None,
@@ -729,6 +730,7 @@ def test_runtime_close_reaches_manager_after_earlier_stop_failure(caplog) -> Non
         discovery=Component("codex", fail=True),  # type: ignore[arg-type]
         kimi_discovery=Component("kimi"),  # type: ignore[arg-type]
         kimi_desktop_discovery=Component("desktop"),  # type: ignore[arg-type]
+        opencode_discovery=Component("opencode"),  # type: ignore[arg-type]
         codex_quota_service=Component("codex-quota", fail=True),  # type: ignore[arg-type]
         quota_service=Component("kimi-quota"),  # type: ignore[arg-type]
         kimi_web_quota_service=Component("web-quota"),  # type: ignore[arg-type]
@@ -740,6 +742,7 @@ def test_runtime_close_reaches_manager_after_earlier_stop_failure(caplog) -> Non
         "codex-quota",
         "kimi-quota",
         "web-quota",
+        "opencode",
         "desktop",
         "kimi",
         "codex",
@@ -1227,3 +1230,58 @@ def test_default_codex_quota_factory_rediscovers_executable_after_startup(
     assert primary is not None
     assert primary._locator() is None
     assert primary._locator() == codex
+
+
+def test_runtime_wires_opencode_discovery(tmp_path) -> None:
+    from aacc.app import build_runtime
+    from aacc.config import create_default_config
+
+    config_path = tmp_path / "config.yaml"
+    create_default_config(config_path)
+    runtime = build_runtime(
+        config_path,
+        tmp_path / "aacc.db",
+        quota_service_factory=lambda config_dir: None,
+        kimi_web_quota_service_factory=lambda config_dir: None,
+        codex_quota_service_factory=lambda: None,
+    )
+    assert runtime.opencode_discovery is not None
+    runtime.close()
+
+
+def test_startup_stops_before_opencode_when_kimi_desktop_start_quits(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    class QuittingDesktop:
+        catalog: dict[str, object] = {}
+        auto_active_ids: set[str] = set()
+        retained_ids: set[str] = set()
+        muted_ids: set[str] = set()
+        health = None
+
+        def set_monitoring_preferences(self, *_args: object) -> None:
+            pass
+
+        def subscribe_health(self, *_args: object) -> None:
+            pass
+
+        def start(self) -> None:
+            events.append("desktop-start")
+            runtime.qt_app.exit(0)  # type: ignore[attr-defined]
+
+        def stop(self) -> None:
+            pass
+
+    runtime.kimi_desktop_discovery = QuittingDesktop()  # type: ignore[attr-defined]
+    _patch_application_shell(monkeypatch, events, runtime)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("desktop-start") < events.index("runtime-close")
+    assert events.count("service-start") == 2
+    assert "hotkeys-created" not in events

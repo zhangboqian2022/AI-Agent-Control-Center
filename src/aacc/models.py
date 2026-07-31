@@ -56,7 +56,7 @@ class AppSettings(BaseModel):
     keyboard_injection: bool = True
     automation_timeout_seconds: float = Field(default=5.0, ge=2.0, le=15.0)
     visible_agent_types: list[str] = Field(
-        default_factory=lambda: ["codex_cli", "kimi_code", "kimi_desktop"]
+        default_factory=lambda: ["codex_cli", "kimi_code", "kimi_desktop", "opencode_cli"]
     )
     api: APIConfig = Field(default_factory=APIConfig)
     codex_quota_enabled: bool = True

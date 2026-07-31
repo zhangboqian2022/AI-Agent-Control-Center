@@ -32,6 +32,7 @@ from aacc.gui import (
     KimiOAuthDialog,
     KimiTaskSelectionDialog,
     MainWindow,
+    OpenCodeTaskSelectionDialog,
     QuotaBar,
     SettingsDialog,
     TaskCard,
@@ -43,6 +44,7 @@ from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
 from aacc.kimi_quota import KimiQuota, QuotaDetail
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
+from aacc.opencode_discovery import OpenCodeSession
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
 
@@ -2479,4 +2481,190 @@ def test_kimi_desktop_health_warning_merges_all_brands(tmp_path: Path, qtbot: ob
 def test_empty_tasks_label_mentions_kimi_desktop(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     assert "Kimi Desktop" in window.empty_tasks_label.text()
+    manager.close()
+
+
+def test_opencode_agent_visible_by_default() -> None:
+    from aacc.config import default_config
+
+    config = default_config()
+    assert "opencode_cli" in config.app.visible_agent_types
+
+
+def test_settings_dialog_shows_opencode_selector(qtbot, tmp_path) -> None:
+    from aacc.gui import SettingsDialog
+    from tests.test_gui import build_window
+
+    window, manager = build_window(tmp_path, qtbot)
+    window.opencode_sessions = lambda: []  # type: ignore[method-assign]
+    dialog = SettingsDialog(window)
+    texts = [button.text() for button in dialog.findChildren(QPushButton)]
+    assert any("OpenCode" in text for text in texts)
+    manager.close()
+
+
+def build_opencode_window(
+    tmp_path: Path, qtbot: object
+) -> tuple[MainWindow, TaskManager, list[tuple[set[str], set[str], set[str]]]]:
+    config = default_config()
+    store = StateStore(tmp_path / "gui-oc.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    settings = QSettings(str(tmp_path / "gui-oc-settings.ini"), QSettings.Format.IniFormat)
+    applied: list[tuple[set[str], set[str], set[str]]] = []
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=settings,
+        opencode_sessions=lambda: [],
+        opencode_auto_active_ids=lambda: set(),
+        opencode_retained_ids=lambda: set(),
+        opencode_muted_ids=lambda: set(),
+        set_opencode_monitoring_preferences=lambda manual, retained, muted: applied.append(
+            (set(manual), set(retained), set(muted))
+        ),
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    return window, manager, applied
+
+
+def test_opencode_preferences_persist_and_apply(tmp_path: Path, qtbot: object) -> None:
+    window, manager, applied = build_opencode_window(tmp_path, qtbot)
+    window.set_opencode_selected_ids({"oc-1"})
+    assert applied[-1] == ({"oc-1"}, set(), set())
+    window.set_opencode_monitoring_preferences({"oc-1"}, {"oc-2"}, {"oc-3"})
+    assert applied[-1] == ({"oc-1"}, {"oc-2"}, {"oc-3"})
+    assert window.opencode_selected_ids == {"oc-1"}
+    assert window.opencode_manual_ids == {"oc-1"}
+    assert window.opencode_retained_ids == {"oc-2"}
+    assert window.opencode_muted_ids == {"oc-3"}
+    manager.close()
+
+
+def test_opencode_preferences_reload_from_settings(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_opencode_window(tmp_path, qtbot)
+    window.set_opencode_monitoring_preferences({"oc-1", "oc-2"}, {"oc-3"}, {"oc-4", "oc-5"})
+    manager.close()
+    reloaded_settings = QSettings(str(tmp_path / "gui-oc-settings.ini"), QSettings.Format.IniFormat)
+    config = default_config()
+    store = StateStore(tmp_path / "gui-oc2.db")
+    store.initialize(config.tasks)
+    manager2 = TaskManager(config, store)
+    reloaded = MainWindow(
+        manager2,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=reloaded_settings,
+    )
+    qtbot.addWidget(reloaded)  # type: ignore[attr-defined]
+    assert reloaded.opencode_manual_ids == {"oc-1", "oc-2"}
+    assert reloaded.opencode_retained_ids == {"oc-3"}
+    assert reloaded.opencode_muted_ids == {"oc-4", "oc-5"}
+    reloaded.set_opencode_monitoring_preferences({"oc-9"}, {"oc-8", "oc-7"}, {"oc-6"})
+    manager2.close()
+    reloaded_settings2 = QSettings(
+        str(tmp_path / "gui-oc-settings.ini"), QSettings.Format.IniFormat
+    )
+    store2 = StateStore(tmp_path / "gui-oc3.db")
+    store2.initialize(config.tasks)
+    manager3 = TaskManager(config, store2)
+    reloaded2 = MainWindow(
+        manager3,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=reloaded_settings2,
+    )
+    qtbot.addWidget(reloaded2)  # type: ignore[attr-defined]
+    assert reloaded2.opencode_manual_ids == {"oc-9"}
+    assert reloaded2.opencode_retained_ids == {"oc-8", "oc-7"}
+    assert reloaded2.opencode_muted_ids == {"oc-6"}
+    manager3.close()
+
+
+def test_opencode_task_selection_dialog_applies_preferences(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_opencode_window(tmp_path, qtbot)
+    sessions = [
+        OpenCodeSession(
+            session_id="ses-1",
+            title="opencode 会话",
+            work_dir=None,
+            agent=None,
+            model=None,
+            updated_at=datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+        )
+    ]
+    dialog = OpenCodeTaskSelectionDialog(sessions, set(), set(), window)
+    assert dialog.tasks.count() == 1
+    dialog.tasks.item(0).setCheckState(Qt.CheckState.Checked)
+    assert dialog.selected_ids() == {"ses-1"}
+    manager.close()
+
+
+def test_opencode_selector_applies_preferences(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    window, manager, applied = build_opencode_window(tmp_path, qtbot)
+
+    class AcceptedDialog:
+        restore = False
+
+        def __init__(self, sessions, selected_ids, auto_active_ids, parent):
+            self._sessions = sessions
+            self._selected = set(selected_ids)
+            self._auto_active = set(auto_active_ids)
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_ids(self) -> set[str]:
+            return {"oc-1"}
+
+        def restore_auto_requested(self) -> bool:
+            return self.restore
+
+    monkeypatch.setattr("aacc.gui.OpenCodeTaskSelectionDialog", AcceptedDialog)  # type: ignore[attr-defined]
+    window.set_opencode_monitoring_preferences({"oc-1"}, {"oc-3"}, {"oc-4"})
+    window.opencode_auto_active_ids = lambda: {"oc-2"}  # type: ignore[method-assign]
+    window.open_opencode_task_selector()
+    assert applied[-1] == ({"oc-1"}, set(), {"oc-2", "oc-4"})
+    AcceptedDialog.restore = True
+    window.open_opencode_task_selector()
+    assert applied[-1] == ({"oc-1"}, set(), {"oc-4"})
+    manager.close()
+
+
+def test_opencode_refresh_syncs_retained_and_muted(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_opencode_window(tmp_path, qtbot)
+    window.opencode_retained_ids = {"r-1"}
+    window.opencode_muted_ids = {"m-1"}
+    window.refresh()
+    assert window.opencode_retained_ids == set()
+    assert window.opencode_muted_ids == set()
+    manager.close()
+
+
+def test_opencode_restore_accepts_plain_string_values(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui-oc-str.ini"), QSettings.Format.IniFormat)
+    settings.setValue("opencode_manual_tasks", "oc-1")
+    settings.setValue("opencode_retained_tasks", "oc-2")
+    settings.setValue("opencode_muted_tasks", "oc-3")
+    config = default_config()
+    store = StateStore(tmp_path / "gui-oc-str.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    assert window.opencode_manual_ids == {"oc-1"}
+    assert window.opencode_retained_ids == {"oc-2"}
+    assert window.opencode_muted_ids == {"oc-3"}
     manager.close()

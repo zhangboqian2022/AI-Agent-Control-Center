@@ -68,7 +68,7 @@ from aacc.codex_discovery import CodexSession
 from aacc.codex_quota import CodexQuotaSnapshot, CodexQuotaStatus
 from aacc.codex_quota_service import CodexQuotaService
 from aacc.constants import APP_SUPPORT_DIR, DEFAULT_CONFIG_PATH
-from aacc.discovery_service import DiscoveryHealth
+from aacc.discovery_service import DiscoveryHealth, HealthSubscriber
 from aacc.i18n import ZH_CN, LanguageManager, other_language
 from aacc.kimi_desktop_discovery import KimiDesktopSession
 from aacc.kimi_discovery import KimiSession
@@ -91,6 +91,7 @@ from aacc.kimi_web_error import (
 from aacc.kimi_web_quota import merge_kimi_quota
 from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.models import TaskConfig, TaskState, TaskStatus
+from aacc.opencode_discovery import OpenCodeSession
 from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
 from aacc.task_manager import TaskManager
 
@@ -926,7 +927,7 @@ class TaskCard(QFrame):
         root.addWidget(self.details, 1)
 
         self.remove_button: QPushButton | None = None
-        if task.id.startswith(("codex:", "kimi:", "kimi_desktop:")):
+        if task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:")):
             self.remove_button = QPushButton("×")
             self.remove_button.setObjectName("removeTaskButton")
             self.remove_button.setFixedSize(24, 24)
@@ -1080,7 +1081,7 @@ class TaskCard(QFrame):
             else self.language_manager.text("task.copy")
         )
         copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
-        if self.task.id.startswith(("codex:", "kimi:", "kimi_desktop:")):
+        if self.task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:")):
             rename_action = menu.addAction(
                 "重命名任务"
                 if self.language_manager.language == ZH_CN
@@ -1169,6 +1170,16 @@ class SettingsDialog(QDialog):
         )
         kimi_desktop_tasks.clicked.connect(window.open_kimi_desktop_task_selector)
         layout.addWidget(kimi_desktop_tasks)
+        opencode_tasks = QPushButton(
+            language.text("settings.select_opencode")
+            + language.text(
+                "settings.selected_counts",
+                selected=len(window.opencode_selected_ids),
+                automatic=len(window.opencode_auto_active_ids()),
+            )
+        )
+        opencode_tasks.clicked.connect(window.open_opencode_task_selector)
+        layout.addWidget(opencode_tasks)
         rotate_credentials = QPushButton(language.text("settings.rotate_api"))
         rotate_credentials.clicked.connect(window.rotate_credentials)
         layout.addWidget(rotate_credentials)
@@ -1198,6 +1209,7 @@ class SettingsDialog(QDialog):
             "claude_code": "Claude Code",
             "kimi_code": "Kimi Code",
             "kimi_desktop": "Kimi Desktop",
+            "opencode_cli": "OpenCode",
             "generic_cli": language.text("settings.generic_cli"),
         }
         for agent_type, label in labels.items():
@@ -1326,6 +1338,23 @@ class KimiTaskSelectionDialog(TaskSelectionDialog):
         )
 
 
+class OpenCodeTaskSelectionDialog(TaskSelectionDialog):
+    def __init__(
+        self,
+        sessions: list[OpenCodeSession],
+        selected_ids: set[str],
+        auto_active_ids: set[str],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(
+            [(session.session_id, session.title, session.updated_at) for session in sessions],
+            selected_ids,
+            auto_active_ids,
+            parent,
+            window_title_key="settings.select_opencode",
+        )
+
+
 class KimiDesktopTaskSelectionDialog(TaskSelectionDialog):
     def __init__(
         self,
@@ -1350,6 +1379,7 @@ class MainWindow(QWidget):
     discovery_health_received = Signal(object)
     kimi_discovery_health_received = Signal(object)
     kimi_desktop_discovery_health_received = Signal(object)
+    opencode_discovery_health_received = Signal(object)
     settings_keys = {
         "geometry",
         "compact_mode",
@@ -1396,6 +1426,17 @@ class MainWindow(QWidget):
         subscribe_kimi_desktop_discovery_health: (
             Callable[[Callable[[DiscoveryHealth], None]], Callable[[], None]] | None
         ) = None,
+        opencode_sessions: Callable[[], list[OpenCodeSession]] | None = None,
+        opencode_auto_active_ids: Callable[[], set[str]] | None = None,
+        opencode_retained_ids: Callable[[], set[str]] | None = None,
+        opencode_muted_ids: Callable[[], set[str]] | None = None,
+        set_opencode_monitoring_preferences: (
+            Callable[[set[str], set[str], set[str]], None] | None
+        ) = None,
+        opencode_discovery_health: Callable[[], DiscoveryHealth] | None = None,
+        subscribe_opencode_discovery_health: (
+            Callable[[HealthSubscriber], Callable[[], None]] | None
+        ) = None,
         discovery_log_path: str = str(APP_SUPPORT_DIR / "logs" / "app.log"),
         accessibility_trusted: bool = True,
         open_accessibility_settings_callback: Callable[[], None] | None = None,
@@ -1438,6 +1479,18 @@ class MainWindow(QWidget):
         self._kimi_desktop_muted_ids = kimi_desktop_muted_ids or (lambda: set())
         self._set_kimi_desktop_monitoring_preferences = set_kimi_desktop_monitoring_preferences or (
             lambda _manual_ids, _retained_ids, _muted_ids: None
+        )
+        self._opencode_sessions = opencode_sessions or (lambda: [])
+        self._opencode_auto_active_ids = opencode_auto_active_ids or (lambda: set())
+        self._opencode_retained_ids = opencode_retained_ids or (lambda: set())
+        self._opencode_muted_ids = opencode_muted_ids or (lambda: set())
+        self._set_opencode_monitoring_preferences = set_opencode_monitoring_preferences or (
+            lambda _m, _r, _u: None
+        )
+        self._unsubscribe_opencode_discovery_health = (
+            subscribe_opencode_discovery_health(self.opencode_discovery_health_received.emit)
+            if subscribe_opencode_discovery_health is not None
+            else lambda: None
         )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_healths: dict[str, DiscoveryHealth] = {}
@@ -1547,6 +1600,29 @@ class MainWindow(QWidget):
         else:
             self.kimi_desktop_muted_ids = set()
         self._apply_kimi_desktop_monitoring_preferences()
+        saved_opencode_tasks = self._settings.value("opencode_manual_tasks")
+        if isinstance(saved_opencode_tasks, str):
+            self.opencode_manual_ids = {saved_opencode_tasks}
+        elif isinstance(saved_opencode_tasks, list):
+            self.opencode_manual_ids = {str(value) for value in saved_opencode_tasks}
+        else:
+            self.opencode_manual_ids = set()
+        saved_opencode_retained = self._settings.value("opencode_retained_tasks")
+        if isinstance(saved_opencode_retained, str):
+            self.opencode_retained_ids = {saved_opencode_retained}
+        elif isinstance(saved_opencode_retained, list):
+            self.opencode_retained_ids = {str(value) for value in saved_opencode_retained}
+        else:
+            self.opencode_retained_ids = set()
+        saved_opencode_muted = self._settings.value("opencode_muted_tasks")
+        if isinstance(saved_opencode_muted, str):
+            self.opencode_muted_ids = {saved_opencode_muted}
+        elif isinstance(saved_opencode_muted, list):
+            self.opencode_muted_ids = {str(value) for value in saved_opencode_muted}
+        else:
+            self.opencode_muted_ids = set()
+        self.opencode_selected_ids = set(self.opencode_manual_ids)
+        self._apply_opencode_monitoring_preferences()
         saved_custom_names = self._settings.value("custom_task_names")
         try:
             parsed_names = json.loads(saved_custom_names) if saved_custom_names else {}
@@ -1901,6 +1977,8 @@ class MainWindow(QWidget):
         self._sync_kimi_muted_ids()
         self._sync_kimi_desktop_retained_ids()
         self._sync_kimi_desktop_muted_ids()
+        self._sync_opencode_retained_ids()
+        self._sync_opencode_muted_ids()
         self.sync_cards()
         for state in self.manager.list():
             self._apply_state(state)
@@ -2353,6 +2431,44 @@ class MainWindow(QWidget):
             self.kimi_desktop_muted_ids = set(muted_ids)
             self._settings.setValue("kimi_desktop_muted_tasks", sorted(self.kimi_desktop_muted_ids))
 
+    def set_opencode_selected_ids(self, selected_ids: set[str]) -> None:
+        self.set_opencode_monitoring_preferences(selected_ids, set(), set())
+
+    def set_opencode_monitoring_preferences(
+        self, manual_ids: set[str], retained_ids: set[str], muted_ids: set[str]
+    ) -> None:
+        self.opencode_manual_ids = set(manual_ids)
+        self.opencode_retained_ids = set(retained_ids) - self.opencode_manual_ids
+        self.opencode_muted_ids = set(muted_ids) - self.opencode_manual_ids
+        self.opencode_selected_ids = set(self.opencode_manual_ids)
+        self._settings.setValue("opencode_manual_tasks", sorted(self.opencode_manual_ids))
+        self._settings.setValue("opencode_retained_tasks", sorted(self.opencode_retained_ids))
+        self._settings.setValue("opencode_muted_tasks", sorted(self.opencode_muted_ids))
+        self._apply_opencode_monitoring_preferences()
+        self.sync_cards()
+
+    def _apply_opencode_monitoring_preferences(self) -> None:
+        self._set_opencode_monitoring_preferences(
+            self.opencode_manual_ids,
+            self.opencode_retained_ids,
+            self.opencode_muted_ids,
+        )
+
+    def _sync_opencode_retained_ids(self) -> None:
+        retained_ids = self._opencode_retained_ids()
+        if retained_ids != self.opencode_retained_ids:
+            self.opencode_retained_ids = set(retained_ids)
+            self._settings.setValue("opencode_retained_tasks", sorted(self.opencode_retained_ids))
+
+    def _sync_opencode_muted_ids(self) -> None:
+        muted_ids = self._opencode_muted_ids()
+        if muted_ids != self.opencode_muted_ids:
+            self.opencode_muted_ids = set(muted_ids)
+            self._settings.setValue("opencode_muted_tasks", sorted(self.opencode_muted_ids))
+
+    def opencode_auto_active_ids(self) -> set[str]:
+        return set(self._opencode_auto_active_ids())
+
     def _remove_task_requested(self, task_id: str) -> None:
         # Single funnel for card removal: a card whose task id matches no
         # known brand would otherwise be ignored silently by every
@@ -2521,6 +2637,25 @@ class MainWindow(QWidget):
             if dialog.restore_auto_requested():
                 muted_ids -= auto_active_ids
             self.set_kimi_desktop_monitoring_preferences(manual_ids, retained_ids, muted_ids)
+
+    def open_opencode_task_selector(self) -> None:
+        auto_active_ids = self.opencode_auto_active_ids()
+        dialog = OpenCodeTaskSelectionDialog(
+            self._opencode_sessions(),
+            self.opencode_selected_ids,
+            auto_active_ids,
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_ids = dialog.selected_ids()
+            retained_ids = self.opencode_retained_ids & selected_ids
+            manual_ids = (self.opencode_manual_ids & selected_ids) | (
+                selected_ids - auto_active_ids - retained_ids
+            )
+            muted_ids = (self.opencode_muted_ids | (auto_active_ids - selected_ids)) - selected_ids
+            if dialog.restore_auto_requested():
+                muted_ids -= auto_active_ids
+            self.set_opencode_monitoring_preferences(manual_ids, retained_ids, muted_ids)
 
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
