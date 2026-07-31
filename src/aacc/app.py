@@ -553,7 +553,9 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
             if cleaned:
                 stop_after_shutdown()
                 return
-            _logger.error("Application startup failed stage=opencode-web-quota")
+            _logger.error(
+                "Application startup failed stage=opencode-web-quota", exc_info=True
+            )
             try:
                 opencode_web_quota_service.stop()
             except Exception:  # noqa: BLE001 - app startup must still continue
