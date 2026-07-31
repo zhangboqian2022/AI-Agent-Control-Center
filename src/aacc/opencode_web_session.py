@@ -224,6 +224,7 @@ class OpenCodeWebSession(QObject):
     def logout(self) -> bool:
         if not self.workspace_url:
             return True
+        self._invalidate_refresh()
         self._logout_after_load = True
         self._logout_cleanup_watchdog.start(LOGOUT_CLEANUP_TIMEOUT_MS)
         self.view.setUrl(QUrl(self.workspace_url))
@@ -269,6 +270,12 @@ class OpenCodeWebSession(QObject):
     def _start_refresh_watchdog(self) -> None:
         self._refresh_watchdog.start(REFRESH_TIMEOUT_MS)
 
+    def _invalidate_refresh(self) -> None:
+        self._refresh_generation += 1
+        self._active_refresh_generation = None
+        self._refreshing = False
+        self._refresh_watchdog.stop()
+
     def _refresh_watchdog_timeout(self) -> None:
         self._finish_refresh_with_error("refresh_timeout")
 
@@ -306,7 +313,15 @@ class OpenCodeWebSession(QObject):
         def dispatch(payload_text: object) -> None:
             self._handle_bridge(payload_text)
 
-        self.view.runJavaScript(f"window[{json.dumps(BRIDGE_PAYLOAD_KEY)}]", dispatch)
+        script = (
+            "(() => {"
+            f"const key = {json.dumps(BRIDGE_PAYLOAD_KEY)};"
+            "const value = window[key] || '';"
+            "delete window[key];"
+            "return value;"
+            "})()"
+        )
+        self.view.runJavaScript(script, dispatch)
 
     def _handle_bridge(self, payload_text: object) -> None:
         try:
@@ -316,10 +331,13 @@ class OpenCodeWebSession(QObject):
         if not isinstance(payload, dict):
             self._finish_refresh_with_error("refresh_failed")
             return
+        if payload.get("generation") != self._active_refresh_generation:
+            return
         kind = payload.get("kind")
         if kind == "quota":
             self._refreshing = False
             self._refresh_watchdog.stop()
+            self._active_refresh_generation = None
             self.quota_received.emit(payload.get("raw"))
             if self._login_dialog_open:
                 self._close_login_dialog()
@@ -328,6 +346,7 @@ class OpenCodeWebSession(QObject):
         if kind == "unauthorized":
             self._refreshing = False
             self._refresh_watchdog.stop()
+            self._active_refresh_generation = None
             self.login_state_changed.emit(False)
             self.error_occurred.emit("unauthorized")
             return

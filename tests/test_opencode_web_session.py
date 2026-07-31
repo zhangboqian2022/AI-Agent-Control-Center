@@ -185,3 +185,75 @@ def test_session_logout_clears_cookies(qapp, tmp_path: Path) -> None:
     assert "localStorage.clear" in session.view.scripts[-1]
     session.close()
     assert session.view.deleted is True
+
+
+def test_logout_invalidates_in_flight_refresh(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    login_states: list[bool] = []
+    quotas: list[object] = []
+    session.login_state_changed.connect(login_states.append)
+    session.quota_received.connect(quotas.append)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session._on_loading_changed(FakeLoadingInfo())
+    assert session._refresh_watchdog.isActive()
+    session._login_dialog_open = True
+    session.view.script_result = json.dumps(
+        {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
+    )
+    assert session.logout() is True
+    assert session._active_refresh_generation is None
+    assert not session._refresh_watchdog.isActive()
+    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    assert quotas == []
+    assert login_states == [False]
+
+
+def test_bridge_payload_generation_mismatch_ignored(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    quotas: list[object] = []
+    errors: list[str] = []
+    session.quota_received.connect(quotas.append)
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session.view.script_result = json.dumps(
+        {"kind": "quota", "generation": generation + 5, "raw": {"subscription": {}}}
+    )
+    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    assert quotas == []
+    assert errors == []
+
+
+def test_bridge_completion_clears_active_generation(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    quotas: list[object] = []
+    session.quota_received.connect(quotas.append)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session.view.script_result = json.dumps(
+        {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
+    )
+    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    assert len(quotas) == 1
+    assert session._active_refresh_generation is None
+    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    assert len(quotas) == 1
+
+
+def test_bridge_read_deletes_payload_key(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    assert session.view.scripts
+    read_script = session.view.scripts[-1]
+    assert "delete window[" in read_script
