@@ -7,9 +7,11 @@ from aacc.discovery_service import (
     DiscoveryHealth,
     KimiDesktopDiscoveryService,
     KimiDiscoveryService,
+    OpenCodeDiscoveryService,
 )
 from aacc.kimi_desktop_discovery import KimiDesktopDiscoveryError
 from aacc.models import AgentConfig, TaskConfig, TaskState
+from aacc.opencode_discovery import OpenCodeDiscoveryError
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
 
@@ -61,6 +63,13 @@ class StubKimiDesktopDiscovery(StubDiscovery):
             for task in self.tasks
             if task.config.id.removeprefix("kimi_desktop:") in selected_ids
         ]
+
+
+def _manager_for(tmp_path: Path) -> TaskManager:
+    config = default_config()
+    store = StateStore(tmp_path / "disc.db")
+    store.initialize(config.tasks)
+    return TaskManager(config, store)
 
 
 def test_default_poll_interval_is_five_seconds(tmp_path: Path) -> None:
@@ -298,4 +307,56 @@ def test_kimi_desktop_health_degrades_on_discovery_error(tmp_path: Path) -> None
     health = service.health()
     assert health.degraded
     assert health.brand == "Kimi Desktop"
+    manager.close()
+
+
+class _FakeOpenCodeDiscovery:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.selected: set[str] | None = None
+
+    def discover(self, selected_ids: set[str] | None = None):
+        self.calls += 1
+        self.selected = selected_ids
+        return []
+
+    def active_session_ids(self) -> set[str]:
+        return set()
+
+    def catalog(self) -> list[object]:
+        return []
+
+
+def test_opencode_service_polls_and_forwards_selection(tmp_path: Path) -> None:
+    discovery = _FakeOpenCodeDiscovery()
+    manager = _manager_for(tmp_path)
+    service = OpenCodeDiscoveryService(
+        manager,
+        discovery=discovery,  # type: ignore[arg-type]
+        interval_seconds=0.5,
+    )
+    service.set_selected_ids({"ses_1"})
+    service.poll_once()
+    assert discovery.calls == 1
+    assert discovery.selected == {"ses_1"}
+    assert service.health().brand == "OpenCode"
+    service.stop()
+    manager.close()
+
+
+def test_opencode_service_tolerates_discovery_errors(tmp_path: Path, caplog) -> None:
+    class _BoomDiscovery(_FakeOpenCodeDiscovery):
+        def discover(self, selected_ids=None):
+            raise OpenCodeDiscoveryError("boom")
+
+    manager = _manager_for(tmp_path)
+    service = OpenCodeDiscoveryService(
+        manager,
+        discovery=_BoomDiscovery(),  # type: ignore[arg-type]
+        interval_seconds=0.5,
+    )
+    assert service.poll_safely() == 0
+    health = service.health()
+    assert health.degraded
+    service.stop()
     manager.close()
