@@ -230,6 +230,67 @@ def open_windows_replaceable_text(path: Path) -> Any:
         raise FileProtectionError("Windows replaceable file access failed") from None
 
 
+def duplicate_windows_handle(source_handle: int) -> int:
+    """Duplicate a native sensitive-file handle while retaining its access."""
+    if os.name != "nt":
+        raise FileProtectionError("Windows handle duplication is unavailable on this platform")
+
+    import ctypes
+    from ctypes import wintypes
+
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        raise FileProtectionError("Windows handle duplication is unavailable on this platform")
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.DuplicateHandle.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.DuplicateHandle.restype = wintypes.BOOL
+
+    process = kernel32.GetCurrentProcess()
+    duplicated = wintypes.HANDLE()
+    if not kernel32.DuplicateHandle(
+        process,
+        wintypes.HANDLE(source_handle),
+        process,
+        ctypes.byref(duplicated),
+        0,
+        False,
+        0x00000002,
+    ):
+        raise FileProtectionError("Windows handle duplication failed")
+    value = _native_handle_value(duplicated)
+    if value is None or value == -1:
+        raise FileProtectionError("Windows handle duplication failed")
+    return value
+
+
+def close_windows_handle(handle: int) -> None:
+    """Close a native handle returned by ``duplicate_windows_handle``."""
+    if os.name != "nt":
+        raise FileProtectionError("Windows handle close is unavailable on this platform")
+
+    import ctypes
+    from ctypes import wintypes
+
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        raise FileProtectionError("Windows handle close is unavailable on this platform")
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    if not kernel32.CloseHandle(wintypes.HANDLE(handle)):
+        raise FileProtectionError("Windows handle close failed")
+
+
 def replace_windows_file(
     source: Path,
     target: Path,

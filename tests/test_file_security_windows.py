@@ -93,6 +93,20 @@ def test_windows_atomic_replace_native_contract_retains_handle_and_buffer() -> N
     assert "os.replace(" not in source
 
 
+def test_windows_sensitive_writers_duplicate_delete_handle_before_close() -> None:
+    config_source = (Path(__file__).resolve().parents[1] / "src" / "aacc" / "config.py").read_text(
+        encoding="utf-8"
+    )
+    oauth_source = (
+        Path(__file__).resolve().parents[1] / "src" / "aacc" / "kimi_oauth.py"
+    ).read_text(encoding="utf-8")
+
+    assert "duplicate_windows_handle" in config_source
+    assert "duplicate_windows_handle" in oauth_source
+    assert "close_windows_handle" in config_source
+    assert "close_windows_handle" in oauth_source
+
+
 def test_windows_sensitive_writers_request_delete_share_for_native_publish() -> None:
     config_source = (Path(__file__).resolve().parents[1] / "src" / "aacc" / "config.py").read_text(
         encoding="utf-8"
