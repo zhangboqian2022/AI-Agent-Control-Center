@@ -46,6 +46,7 @@ from aacc.kimi_edge_smoke import run_edge_cdp_smoke
 from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.logging_setup import configure_logging
 from aacc.models import AppConfig
+from aacc.opencode_web_quota_service import OpenCodeWebQuotaService
 from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
 from aacc.shutdown_windows import WindowsShutdownListener, request_shutdown_for_update
@@ -69,6 +70,7 @@ class Runtime:
     codex_quota_service: CodexQuotaService | None = None
     quota_service: QuotaService | None = None
     kimi_web_quota_service: KimiWebQuotaService | None = None
+    opencode_web_quota_service: OpenCodeWebQuotaService | None = None
 
     def close(self) -> None:
         operations: tuple[tuple[str, Callable[[], None]], ...] = (
@@ -89,6 +91,12 @@ class Runtime:
                 else lambda: None,
             ),
             ("opencode-discovery", self.opencode_discovery.stop),
+            (
+                "opencode-web-quota",
+                self.opencode_web_quota_service.stop
+                if self.opencode_web_quota_service is not None
+                else lambda: None,
+            ),
             ("kimi-desktop-discovery", self.kimi_desktop_discovery.stop),
             ("kimi-discovery", self.kimi_discovery.stop),
             ("discovery", self.discovery.stop),
@@ -122,6 +130,21 @@ def _default_kimi_web_quota_service_factory(
         config_dir,
         language_manager=language_manager,
     )
+
+
+def _default_opencode_web_quota_service_factory(
+    config_dir: Path,
+    config: AppConfig,
+    language_manager: LanguageManager | None = None,
+) -> OpenCodeWebQuotaService | None:
+    if sys.platform == "win32":
+        return None
+    service = OpenCodeWebQuotaService(
+        config_dir,
+        language_manager=language_manager,
+    )
+    service.set_workspace_url(config.opencode_workspace_url)
+    return service
 
 
 def _default_codex_quota_service_factory(
@@ -214,6 +237,9 @@ def build_runtime(
     quota_service_factory: Callable[[Path], QuotaService | None] | None = None,
     kimi_web_quota_service_factory: (Callable[[Path], KimiWebQuotaService | None] | None) = None,
     codex_quota_service_factory: Callable[[], CodexQuotaService | None] | None = None,
+    opencode_web_quota_service_factory: (
+        Callable[[Path], OpenCodeWebQuotaService | None] | None
+    ) = None,
     language_manager: LanguageManager | None = None,
 ) -> Runtime:
     config = load_config(config_path)
@@ -234,8 +260,16 @@ def build_runtime(
             language_manager,
         )
     )
+    opencode_web_quota_factory = opencode_web_quota_service_factory or (
+        lambda config_dir: _default_opencode_web_quota_service_factory(
+            config_dir,
+            config,
+            language_manager,
+        )
+    )
     quota_service = factory(config_path.parent)
     kimi_web_quota_service = kimi_web_quota_factory(config_path.parent)
+    opencode_web_quota_service = opencode_web_quota_factory(config_path.parent)
     if quota_service is not None and kimi_web_quota_service is not None:
         quota_service.set_externally_scheduled(True)
         kimi_web_quota_service.set_fallback_refresh(quota_service.refresh_now)
@@ -252,6 +286,7 @@ def build_runtime(
         codex_quota_service=codex_quota_factory(),
         quota_service=quota_service,
         kimi_web_quota_service=kimi_web_quota_service,
+        opencode_web_quota_service=opencode_web_quota_service,
     )
 
 
@@ -416,6 +451,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         quota_service=runtime.quota_service,
         kimi_web_quota_service=runtime.kimi_web_quota_service,
         codex_quota_service=runtime.codex_quota_service,
+        opencode_web_quota_service=runtime.opencode_web_quota_service,
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
         kimi_discovery_health=runtime.kimi_discovery.health,
@@ -508,6 +544,37 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
                 return
             _logger.info("Application startup completed stage=kimi-web-quota")
 
+    def start_opencode_web_quota() -> None:
+        if cleaned or runtime.opencode_web_quota_service is None:
+            return
+        opencode_web_quota_service = runtime.opencode_web_quota_service
+        if not opencode_web_quota_service.workspace_url:
+            return
+
+        def stop_after_shutdown() -> None:
+            try:
+                opencode_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - shutdown must keep unwinding
+                _logger.error("Application post-shutdown cleanup failed stage=opencode-web-quota")
+
+        _logger.info("Application startup beginning stage=opencode-web-quota")
+        try:
+            opencode_web_quota_service.start()
+        except Exception:  # noqa: BLE001 - optional web quota must not block the app
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.error("Application startup failed stage=opencode-web-quota", exc_info=True)
+            try:
+                opencode_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - app startup must still continue
+                _logger.error("Application startup rollback failed stage=opencode-web-quota")
+        else:
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.info("Application startup completed stage=opencode-web-quota")
+
     def show_accessibility_guidance() -> None:
         if not cleaned:
             window.show_accessibility_guidance()
@@ -582,6 +649,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         _logger.info("Application event-loop startup completed")
         if runtime.kimi_web_quota_service is not None:
             QTimer.singleShot(0, start_kimi_web_quota)
+        if runtime.opencode_web_quota_service is not None:
+            QTimer.singleShot(0, start_opencode_web_quota)
         if not trusted:
             QTimer.singleShot(0, show_accessibility_guidance)
 

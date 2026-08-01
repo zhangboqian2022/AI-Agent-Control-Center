@@ -4,6 +4,7 @@ import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -124,6 +125,23 @@ class AppConfig(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     hotkeys: dict[str, str] = Field(default_factory=dict)
     tasks: list[TaskConfig] = Field(default_factory=list)
+    opencode_workspace_url: str = Field(default="", max_length=2048)
+
+    @field_validator("opencode_workspace_url")
+    @classmethod
+    def validate_opencode_workspace_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        try:
+            parsed = urlparse(value)
+        except ValueError as error:
+            raise ValueError("opencode_workspace_url must be a valid URL") from error
+        if parsed.scheme != "https" or parsed.netloc != "opencode.ai":
+            raise ValueError("opencode_workspace_url host must be opencode.ai")
+        if not parsed.path.startswith("/workspace/"):
+            raise ValueError("opencode_workspace_url must point to an opencode.ai workspace page")
+        return value
 
 
 class TaskState(BaseModel):

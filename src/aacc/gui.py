@@ -92,6 +92,13 @@ from aacc.kimi_web_quota import merge_kimi_quota
 from aacc.kimi_web_quota_service import KimiWebQuotaService
 from aacc.models import TaskConfig, TaskState, TaskStatus
 from aacc.opencode_discovery import OpenCodeSession
+from aacc.opencode_web_error import (
+    OpenCodeQuotaErrorCategory,
+    normalize_opencode_quota_error_category,
+    opencode_quota_error_text,
+)
+from aacc.opencode_web_quota import OpenCodeQuota, OpenCodeUsage
+from aacc.opencode_web_quota_service import OpenCodeWebQuotaService
 from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
 from aacc.task_manager import TaskManager
 
@@ -563,6 +570,218 @@ class QuotaBar(QFrame):
             else format_quota_reset(detail.reset_at, self.language_manager)
         )
         return f"{name}: {detail.percentage}% ({reset})"
+
+    def retranslate_ui(self) -> None:
+        if self._display_state == "pending":
+            self.show_pending()
+        elif self._display_state == "quota" and self._last_quota is not None:
+            self._render_quota(self._last_quota)
+        elif self._display_state == "error":
+            self._render_error()
+        else:
+            self.show_unauthorized()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class OpenCodeQuotaBar(QFrame):
+    """OpenCode workspace usage strip (5H / WEEK / MONTH) from web session data."""
+
+    clicked = Signal()
+
+    def __init__(self, language_manager: LanguageManager | None = None) -> None:
+        super().__init__()
+        self.language_manager = language_manager or LanguageManager(ZH_CN)
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self._last_quota: OpenCodeQuota | None = None
+        self._display_state = "unauthorized"
+        self._last_error: OpenCodeQuotaErrorCategory | None = None
+        self.setObjectName("quotaBar")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QGridLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setHorizontalSpacing(4)
+        layout.setVerticalSpacing(4)
+        self.dot = QLabel("●")
+        self.dot.setObjectName("quotaDot")
+        layout.addWidget(self.dot, 0, 0, Qt.AlignmentFlag.AlignTop)
+        self.summary_label = QLabel()
+        self.summary_label.setObjectName("quotaSummary")
+        self.summary_label.setFixedWidth(98)
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label, 0, 1, Qt.AlignmentFlag.AlignTop)
+        metric_layout = QGridLayout()
+        metric_layout.setContentsMargins(0, 0, 0, 0)
+        metric_layout.setHorizontalSpacing(4)
+        metric_layout.setVerticalSpacing(4)
+        metric_layout.setColumnMinimumWidth(0, 40)
+        metric_layout.setColumnMinimumWidth(1, 36)
+        metric_layout.setColumnMinimumWidth(2, 16)
+        metric_layout.setColumnMinimumWidth(3, 152)
+        metric_layout.setColumnStretch(2, 1)
+        layout.addLayout(metric_layout, 0, 2, 1, 1)
+        layout.setColumnStretch(2, 1)
+        self._rolling_row = _add_quota_metric_row(metric_layout, 0, "5H")
+        self._weekly_row = _add_quota_metric_row(metric_layout, 1, "WEEK")
+        self._monthly_row = _add_quota_metric_row(metric_layout, 2, "MONTH")
+        self._metric_rows = [self._rolling_row, self._weekly_row, self._monthly_row]
+        self.rolling_label = self._rolling_row.percent_label
+        self.rolling_bar = self._rolling_row.progress_bar
+        self.weekly_label = self._weekly_row.percent_label
+        self.weekly_bar = self._weekly_row.progress_bar
+        self.monthly_label = self._monthly_row.percent_label
+        self.monthly_bar = self._monthly_row.progress_bar
+        self.show_unauthorized()
+
+    def period_labels(self) -> list[str]:
+        return [row.period_label.text() for row in self._metric_rows]
+
+    def percent_labels(self) -> list[str]:
+        return [row.percent_label.text() for row in self._metric_rows]
+
+    def reset_labels(self) -> list[str]:
+        return [row.reset_label.text() for row in self._metric_rows]
+
+    def metric_row_count(self) -> int:
+        return len(self._metric_rows)
+
+    def show_unauthorized(self) -> None:
+        self._display_state = "unauthorized"
+        self._last_quota = None
+        self._last_error = None
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self.dot.setStyleSheet("color: #e06c75;")
+        self.summary_label.setText(
+            "OpenCode 用量\n点击授权"
+            if self.language_manager.language == ZH_CN
+            else "OpenCode usage\nAuthorize"
+        )
+        for row in self._metric_rows:
+            _set_quota_metric(row, None, None, self.language_manager)
+        self.setToolTip(
+            "点击登录 opencode.ai 工作区，同步 Go 套餐用量"
+            if self.language_manager.language == ZH_CN
+            else "Sign in to the opencode.ai workspace to sync Go plan usage"
+        )
+
+    def show_pending(self) -> None:
+        self._display_state = "pending"
+        self._last_error = None
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('opencode.quota')}\n"
+            f"{self.language_manager.text('quota.authorizing')}"
+        )
+        self.setToolTip(self.language_manager.text("quota.authorizing"))
+
+    def show_quota(
+        self,
+        quota: OpenCodeQuota,
+        *,
+        preserve_errors: bool = False,
+    ) -> None:
+        self._last_quota = quota
+        if not preserve_errors:
+            self._last_error = None
+        if self._last_error is not None:
+            self._display_state = "error"
+            self._render_error()
+            return
+        self._display_state = "quota"
+        self._render_quota(quota)
+
+    def show_error(self, category: object) -> None:
+        self._display_state = "error"
+        self._last_error = normalize_opencode_quota_error_category(category)
+        self._render_error()
+
+    def _render_quota(self, quota: OpenCodeQuota) -> None:
+        self._has_known_quota = quota.status is not QuotaStatus.UNKNOWN
+        if quota.status is QuotaStatus.UNKNOWN:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText(
+                "OpenCode 用量\n数据不可用"
+                if self.language_manager.language == ZH_CN
+                else "OpenCode usage\nUsage unavailable"
+            )
+        elif quota.status is QuotaStatus.PARTIAL:
+            self.dot.setStyleSheet("color: #e5c07b;")
+            self.summary_label.setText(
+                "OpenCode 用量\n部分数据"
+                if self.language_manager.language == ZH_CN
+                else "OpenCode usage\nPartial usage data"
+            )
+        elif quota.status is QuotaStatus.STALE:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('opencode.quota')}\n"
+                f"{self.language_manager.text('quota.stale')}"
+            )
+        else:
+            self.dot.setStyleSheet("color: #98c379;")
+            self.summary_label.setText(self.language_manager.text("opencode.quota"))
+        self._show_detail(self._rolling_row, quota.rolling)
+        self._show_detail(self._weekly_row, quota.weekly)
+        self._show_detail(self._monthly_row, quota.monthly)
+        tooltip_lines = [
+            self._detail_tooltip("5H", quota.rolling),
+            self._detail_tooltip("WEEK", quota.weekly),
+            self._detail_tooltip("MONTH", quota.monthly),
+        ]
+        if quota.fetched_at is not None:
+            tooltip_lines.append(
+                self.language_manager.text(
+                    "quota.last_update",
+                    updated=quota.fetched_at.astimezone().strftime("%H:%M:%S"),
+                )
+            )
+        tooltip_lines.append(self.language_manager.text("quota.refresh"))
+        self._last_quota_tooltip = "\n".join(tooltip_lines)
+        self.setToolTip(self._last_quota_tooltip)
+
+    def _show_detail(self, row: _QuotaMetricRow, usage: OpenCodeUsage | None) -> None:
+        if usage is None:
+            _set_quota_metric(row, None, None, self.language_manager)
+            return
+        _set_quota_metric(row, usage.percentage, usage.reset_at, self.language_manager)
+
+    def _detail_tooltip(self, name: str, usage: OpenCodeUsage | None) -> str:
+        if usage is None:
+            unknown = "未知" if self.language_manager.language == ZH_CN else "Unknown"
+            return f"{name}: {unknown}"
+        reset = (
+            format_reset_countdown(usage.reset_at)
+            if self.language_manager.language == ZH_CN
+            else format_quota_reset(usage.reset_at, self.language_manager)
+        )
+        return f"{name}: {usage.percentage}% ({reset})"
+
+    def _render_error(self) -> None:
+        if self._last_quota is not None:
+            self._render_quota(self._last_quota)
+        self.dot.setStyleSheet("color: #8997aa;")
+        if self._has_known_quota:
+            state_text = (
+                "数据过期"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.stale")
+            )
+        else:
+            state_text = (
+                "数据不可用"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.unavailable")
+            )
+        self.summary_label.setText(f"{self.language_manager.text('opencode.quota')}\n{state_text}")
+        previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
+        retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
+        error_text = opencode_quota_error_text(self._last_error, self.language_manager)
+        self.setToolTip(f"{previous}{error_text}\n{retry}")
 
     def retranslate_ui(self) -> None:
         if self._display_state == "pending":
@@ -1203,6 +1422,13 @@ class SettingsDialog(QDialog):
             kimi_logout = QPushButton(language.text("settings.kimi_logout"))
             kimi_logout.clicked.connect(window.kimi_logout)
             layout.addWidget(kimi_logout)
+        if window.opencode_web_quota_service is not None:
+            opencode_login = QPushButton(language.text("settings.opencode_web_login"))
+            opencode_login.clicked.connect(window.open_opencode_web_login)
+            layout.addWidget(opencode_login)
+            opencode_logout = QPushButton(language.text("settings.opencode_logout"))
+            opencode_logout.clicked.connect(window.opencode_logout)
+            layout.addWidget(opencode_logout)
         layout.addWidget(QLabel(language.text("settings.visible_agents")))
         labels = {
             "codex_cli": "Codex",
@@ -1445,6 +1671,7 @@ class MainWindow(QWidget):
         quota_service: QuotaService | None = None,
         kimi_web_quota_service: KimiWebQuotaService | None = None,
         codex_quota_service: CodexQuotaService | None = None,
+        opencode_web_quota_service: OpenCodeWebQuotaService | None = None,
         open_url: Callable[[str], None] | None = None,
         language_manager: LanguageManager | None = None,
     ) -> None:
@@ -1508,6 +1735,9 @@ class MainWindow(QWidget):
         self.quota_service = quota_service
         self.kimi_web_quota_service = kimi_web_quota_service
         self.codex_quota_service = codex_quota_service
+        self.opencode_web_quota_service = opencode_web_quota_service
+        self._latest_opencode_quota: OpenCodeQuota | None = None
+        self._opencode_authorized = False
         self._latest_kimi_code_quota: KimiQuota | None = None
         self._latest_kimi_web_quota: KimiQuota | None = None
         self._kimi_web_authorized = False
@@ -1517,6 +1747,7 @@ class MainWindow(QWidget):
         self._subtitle_presentation: _SubtitlePresentation | None = None
         self.quota_bar: QuotaBar | None = None
         self.codex_quota_bar: CodexQuotaBar | None = None
+        self.opencode_quota_bar: OpenCodeQuotaBar | None = None
         self._unsubscribe_discovery_health = (
             subscribe_discovery_health(self.discovery_health_received.emit)
             if subscribe_discovery_health is not None
@@ -1738,6 +1969,15 @@ class MainWindow(QWidget):
             self.kimi_web_quota_service.login_state_changed.connect(self._on_kimi_web_login_state)
             self.kimi_web_quota_service.web_error_occurred.connect(self._on_kimi_web_quota_error)
             self.kimi_web_quota_service.code_error_occurred.connect(self._on_kimi_code_quota_error)
+        if self.opencode_web_quota_service is not None:
+            self.opencode_quota_bar = OpenCodeQuotaBar(self.language_manager)
+            self.opencode_quota_bar.clicked.connect(self._on_opencode_quota_bar_clicked)
+            layout.addWidget(self.opencode_quota_bar)
+            self.opencode_web_quota_service.quota_updated.connect(self._on_opencode_quota_updated)
+            self.opencode_web_quota_service.login_state_changed.connect(
+                self._on_opencode_login_state
+            )
+            self.opencode_web_quota_service.error_occurred.connect(self._on_opencode_quota_error)
 
         self.discovery_warning = QFrame()
         self.discovery_warning.setObjectName("discoveryWarning")
@@ -1884,6 +2124,8 @@ class MainWindow(QWidget):
             self.quota_bar.retranslate_ui()
         if self.codex_quota_bar is not None:
             self.codex_quota_bar.retranslate_ui()
+        if self.opencode_quota_bar is not None:
+            self.opencode_quota_bar.retranslate_ui()
         if self.tray_show_action is not None:
             self.tray_show_action.setText(self.language_manager.text("tray.show_hide"))
         if self.tray_compact_action is not None:
@@ -2274,6 +2516,47 @@ class MainWindow(QWidget):
     def _on_kimi_web_quota_error(self, category: str) -> None:
         if self.quota_bar is not None:
             self.quota_bar.show_web_error(category)
+
+    def _on_opencode_quota_bar_clicked(self) -> None:
+        if self.opencode_web_quota_service is None:
+            return
+        if not self._opencode_authorized:
+            self.opencode_web_quota_service.open_login(self)
+            return
+        self.opencode_web_quota_service.refresh_now()
+
+    def _on_opencode_quota_updated(self, quota: object) -> None:
+        if not isinstance(quota, OpenCodeQuota):
+            return
+        self._latest_opencode_quota = quota
+        self._opencode_authorized = quota.status is not QuotaStatus.UNKNOWN
+        if self.opencode_quota_bar is not None:
+            self.opencode_quota_bar.show_quota(quota)
+
+    def _on_opencode_login_state(self, authorized: bool) -> None:
+        self._opencode_authorized = authorized
+        if authorized:
+            return
+        self._latest_opencode_quota = None
+        if self.opencode_quota_bar is not None:
+            self.opencode_quota_bar.show_unauthorized()
+
+    def _on_opencode_quota_error(self, category: str) -> None:
+        if self.opencode_quota_bar is not None:
+            self.opencode_quota_bar.show_error(category)
+
+    def open_opencode_web_login(self) -> None:
+        if self.opencode_web_quota_service is not None:
+            self.opencode_web_quota_service.open_login(self)
+
+    def opencode_logout(self) -> None:
+        if self.opencode_web_quota_service is None:
+            return
+        self.opencode_web_quota_service.logout()
+        self._latest_opencode_quota = None
+        self._opencode_authorized = False
+        if self.opencode_quota_bar is not None:
+            self.opencode_quota_bar.show_unauthorized()
 
     def _on_oauth_code_ready(self, user_code: str, url: str) -> None:
         if self._oauth_dialog is None:
@@ -2933,13 +3216,16 @@ class MainWindow(QWidget):
         super().changeEvent(event)
 
     def _request_quota_refresh_on_restore(self) -> None:
-        if self.kimi_web_quota_service is None:
+        if self.kimi_web_quota_service is None and self.opencode_web_quota_service is None:
             return
         now = time.monotonic()
         if now - self._last_restore_quota_refresh < RESTORE_QUOTA_REFRESH_INTERVAL_SECONDS:
             return
         self._last_restore_quota_refresh = now
-        self.kimi_web_quota_service.refresh_now()
+        if self.kimi_web_quota_service is not None:
+            self.kimi_web_quota_service.refresh_now()
+        if self.opencode_web_quota_service is not None:
+            self.opencode_web_quota_service.refresh_now()
 
     def handle_app_state_change(self, state: Qt.ApplicationState) -> None:
         if sys.platform != "darwin":
