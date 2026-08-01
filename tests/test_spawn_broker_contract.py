@@ -213,6 +213,21 @@ def test_broker_source_has_fixed_sanitized_diagnostics_and_stages() -> None:
         assert f"Fail({stage}," in source
 
 
+def test_broker_path_normalization_allows_nonexistent_path_entries() -> None:
+    source = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.cpp").read_text(encoding="utf-8")
+    normalize_path = source.index("bool NormalizePath(")
+    normalize_existing = source.index("bool NormalizeExistingPath(")
+
+    assert (
+        "return !normalized->empty() && ExpandLongPath(normalized);"
+        not in source[normalize_path:normalize_existing]
+    )
+    assert (
+        "return NormalizePath(original, normalized) && ExpandLongPath(normalized);"
+        in source[normalize_existing:]
+    )
+
+
 def test_broker_resource_template_tracks_product_and_protocol() -> None:
     resource = (ROOT / "native" / "aacc_spawn" / "aacc_spawn.rc.in").read_text(encoding="utf-8")
 
