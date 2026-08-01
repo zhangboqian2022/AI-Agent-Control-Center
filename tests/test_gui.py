@@ -1919,19 +1919,29 @@ def test_opencode_card_shows_work_dir_basename_next_to_status(
     manager.close()
 
 
-def test_codex_card_hides_work_dir_label(tmp_path: Path, qtbot: object) -> None:
+def test_codex_card_shows_work_dir_basename_next_to_status(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     task = TaskConfig(
-        id="codex:no-dir",
+        id="codex:workdir",
         slot=1,
-        name="Codex 任务",
+        name="带目录的 Codex 任务",
         agent=AgentConfig(type="codex_cli", display_name="Codex"),
     )
-    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
-    window.set_codex_selected_ids({"no-dir"})
+    manager.register(
+        task,
+        TaskState.new(
+            task.id,
+            "running",
+            source="codex_local",
+            metadata={"work_dir": "/Users/test/Desktop/codelight"},
+        ),
+    )
+    window.set_codex_selected_ids({"workdir"})
     card = window.cards[task.id]
 
-    assert card.workdir_label.isHidden()
+    assert card.workdir_label.text() == "· codelight"
+    assert not card.workdir_label.isHidden()
+    assert card.workdir_label.toolTip() == "/Users/test/Desktop/codelight"
     manager.close()
 
 

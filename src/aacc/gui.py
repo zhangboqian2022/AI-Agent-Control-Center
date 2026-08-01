@@ -1181,7 +1181,7 @@ class TaskCard(QFrame):
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
         work_dir = state.metadata.get("work_dir")
         if (
-            self.task.agent.type in ("kimi_code", "opencode_cli")
+            self.task.agent.type in ("codex_cli", "kimi_code", "opencode_cli")
             and isinstance(work_dir, str)
             and work_dir
         ):
