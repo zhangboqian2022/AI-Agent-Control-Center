@@ -22,7 +22,7 @@ def _quota() -> OpenCodeQuota:
 def test_bar_shows_three_metric_rows(qapp: object) -> None:
     bar = OpenCodeQuotaBar()
     assert bar.metric_row_count() == 3
-    assert bar.period_labels() == ["5H", "WEEK", "MONTH"]
+    assert bar.period_labels() == ["滚动", "WEEK", "MONTH"]
 
 
 def test_bar_renders_quota_percentages_and_resets(qapp: object) -> None:
@@ -49,10 +49,11 @@ def test_bar_uses_quota_wording_and_never_renders_none_percent(qapp: object) -> 
 
     assert "OpenCode 额度" in bar.summary_label.text()
     assert "None%" not in bar.toolTip()
-    assert "5H: --" in bar.toolTip()
+    assert "滚动: --" in bar.toolTip()
 
     english = OpenCodeQuotaBar(LanguageManager(EN_US))
     assert english.language_manager.text("opencode.quota") == "OpenCode quota"
+    assert english.period_labels() == ["ROLLING", "WEEK", "MONTH"]
 
 
 def test_bar_unauthorized_state(qapp: object) -> None:

@@ -9,6 +9,7 @@
 - [集成] 将已配置的非原生 Agent Adapter 接入保守的进程级发现服务；进程消失显示 STOPPED，不声称 Agent 专属完成。
 - [安全] macOS 与 Windows 都要求桌面目标唯一，并在注入前立即核验前台身份；目标歧义或焦点变化时失败关闭。
 - [安全] POSIX 配置替换改为基于已打开父目录的锚定操作；回环状态请求禁用代理继承；AppleScript 转义 CR/LF；INFO 日志不再记录 Daimon 绝对路径。
+- [界面] OpenCode 滚动额度统一显示为英文 `ROLLING`、中文“滚动”，不再错误显示为 Kimi 的 `5H` 窗口。
 - [构建] macOS RC 产物使用公开版本 `1.4.4-rc.1` 命名；Windows Setup 保持 PEP 440 的 `1.4.4rc1`；macOS Bundle 不再使用硬编码构建号。
 
 ## 1.4.3 — 2026-08-01

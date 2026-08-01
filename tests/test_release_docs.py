@@ -41,7 +41,7 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     assert "KIMI_5H = 30" in script
     assert "KIMI_WEEK = 72" in script
     assert "KIMI_MONTH = 31" in script
-    assert "OPENCODE_5H = 12" in script
+    assert "OPENCODE_ROLLING = 12" in script
     assert "OPENCODE_WEEK = 44" in script
     assert "OPENCODE_MONTH = 68" in script
     assert "OpenCodeQuota" in script

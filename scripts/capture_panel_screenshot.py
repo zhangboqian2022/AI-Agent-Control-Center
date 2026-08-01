@@ -54,7 +54,7 @@ CODEX_WEEK = 17
 KIMI_5H = 30
 KIMI_WEEK = 72
 KIMI_MONTH = 31
-OPENCODE_5H = 12
+OPENCODE_ROLLING = 12
 OPENCODE_WEEK = 44
 OPENCODE_MONTH = 68
 
@@ -176,7 +176,7 @@ def _demo_quota() -> KimiQuota:
 def _demo_opencode_quota() -> OpenCodeQuota:
     return OpenCodeQuota(
         rolling=OpenCodeUsage(
-            OPENCODE_5H,
+            OPENCODE_ROLLING,
             3600 * 2,
             DEMO_NOW + timedelta(hours=2),
         ),

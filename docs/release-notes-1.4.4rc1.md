@@ -35,6 +35,9 @@ claim of consumer Windows 10/11 hardware validation.
 - **Local API warning.** The API token reset dialog and API documentation now
   explicitly warn that `/send-text` plus `Enter` can execute commands in a
   terminal-like target if the token is leaked.
+- **Quota terminology.** OpenCode's `rollingUsage` is labeled `ROLLING` in
+  English and `滚动` in Chinese; the `5H` label remains specific to Kimi and
+  is no longer shown for OpenCode.
 - **Platform hardening.** Windows sensitive-file publication retains a
   DELETE-capable native writer, verifies file identity against the original
   write handle, derives the destination from a verified non-reparse parent's
@@ -98,6 +101,8 @@ documented Gatekeeper or SmartScreen path.
   runner、版本的 provenance JSON；这些是 CI 证据输入，不是消费级真机证据。
 - **本地 API 警示。** API Token 重置对话框和 API 文档明确警示：Token 泄露后，
   `/send-text` 配合 `Enter` 可能在终端类目标中执行命令。
+- **额度术语统一。** OpenCode 的 `rollingUsage` 在英文界面显示为 `ROLLING`，
+  中文界面显示为“滚动”；`5H` 仅保留给 Kimi，不再显示在 OpenCode 上。
 - **平台加固。** Windows 敏感文件发布使用带 DELETE 权限的原生写入句柄，
   将原始写入句柄的文件身份与新句柄比对，并从已验证的非 reparse 父目录句柄取得 canonical
   final path 后发布，同时拒绝不安全凭据路径；Uvicorn 启动前再次检查回环边界；Windows broker
