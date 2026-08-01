@@ -1890,6 +1890,35 @@ def test_kimi_card_shows_work_dir_basename_next_to_status(tmp_path: Path, qtbot:
     manager.close()
 
 
+def test_opencode_card_shows_work_dir_basename_next_to_status(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="opencode:workdir",
+        slot=1,
+        name="带目录的 OpenCode 任务",
+        agent=AgentConfig(type="opencode_cli", display_name="OpenCode"),
+    )
+    manager.register(
+        task,
+        TaskState.new(
+            task.id,
+            "running",
+            source="opencode_local",
+            metadata={"work_dir": "/Users/test/Desktop/codelight"},
+        ),
+    )
+    window.set_opencode_selected_ids({"workdir"})
+    window.sync_cards()
+    card = window.cards[task.id]
+
+    assert card.workdir_label.text() == "· codelight"
+    assert not card.workdir_label.isHidden()
+    assert card.workdir_label.toolTip() == "/Users/test/Desktop/codelight"
+    manager.close()
+
+
 def test_codex_card_hides_work_dir_label(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     task = TaskConfig(
