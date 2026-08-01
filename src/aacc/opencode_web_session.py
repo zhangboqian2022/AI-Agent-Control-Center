@@ -346,7 +346,9 @@ class OpenCodeWebSession(QObject):
             self._refreshing = False
             self._refresh_watchdog.stop()
             self._active_refresh_generation = None
-            self.quota_received.emit(payload.get("raw"))
+            raw = payload.get("raw")
+            _logger.info("OpenCode quota raw=%s", str(raw)[:300])
+            self.quota_received.emit(raw)
             if self._login_dialog_open:
                 self._close_login_dialog()
                 self.login_state_changed.emit(True)
