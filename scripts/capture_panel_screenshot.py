@@ -100,7 +100,7 @@ class _DemoOpenCodeWebQuotaService(QObject):
 
 
 def _assert_label_fits(label: QLabel) -> None:
-    assert "…" not in label.text()
+    assert "…" not in label.text(), f"{label.objectName()} is elided: {label.text()}"
     text_width = label.fontMetrics().horizontalAdvance(label.text())
     assert text_width <= label.contentsRect().width(), (
         f"{label.objectName()} needs {text_width}px, has {label.contentsRect().width()}px"
@@ -271,7 +271,7 @@ def main() -> int:
             "RUNNING",
             running_message,
             minutes_ago=3.2,
-            work_dir="C:/AACC-Demo/sample-project",
+            work_dir="C:/AACC-Demo/aacc-demo",
             usage={
                 "total_input_tokens": 48_200,
                 "output_tokens": 6_100,
@@ -288,7 +288,7 @@ def main() -> int:
             "WAITING_APPROVAL",
             approval_message,
             minutes_ago=12.0,
-            work_dir="C:/AACC-Demo/sample-project",
+            work_dir="C:/AACC-Demo/aacc-demo",
         ),
         _task(
             "kimi_desktop:demo-notes",
@@ -326,6 +326,9 @@ def main() -> int:
     for card in window.cards.values():
         _assert_label_fits(card.name_label)
         _assert_label_fits(card.message_label)
+        for label in (card.status_label, card.workdir_label):
+            if not label.isHidden():
+                _assert_label_fits(label)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     screenshot = window.grab()
     screenshot_size = (screenshot.width(), screenshot.height())

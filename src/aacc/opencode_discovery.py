@@ -12,6 +12,7 @@ prompts, replies, tool commands and reasoning content are never touched.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sqlite3
 import sys
@@ -21,10 +22,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from aacc.codex_discovery import DiscoveredTask
 from aacc.kimi_discovery import Clock, ProcessAlive
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
-from aacc.processes import CachedProcessAlive
 
 _NAME_MAX_LENGTH = 20
 _DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
@@ -36,7 +38,11 @@ ORDER BY time_updated DESC
 LIMIT 50
 """
 _LATEST_PART_QUERY = """
-SELECT data, time_updated FROM part
+SELECT
+    CASE WHEN json_valid(data) THEN json_extract(data, '$.type') END,
+    CASE WHEN json_valid(data) THEN json_extract(data, '$.state.status') END,
+    time_updated
+FROM part
 WHERE session_id = ?
 ORDER BY time_updated DESC, id DESC
 LIMIT ?
@@ -66,6 +72,35 @@ def _default_terminal_config() -> TerminalConfig:
     return TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal")
 
 
+def _normalize_process_path(value: str) -> str:
+    return os.path.normcase(os.path.normpath(value))
+
+
+def _matching_process_cwds() -> tuple[set[str], bool]:
+    """Return matching OpenCode process working directories.
+
+    The boolean is true when a matching process exists but its cwd could not be
+    read. Such a process is only used as a conservative fallback for sessions
+    without a known working directory; it must not keep every session alive.
+    """
+    working_dirs: set[str] = set()
+    unreadable_cwd = False
+    try:
+        processes = psutil.process_iter(["name", "cwd"])
+        for process in processes:
+            name = process.info.get("name")
+            if not isinstance(name, str) or not _default_process_match(name):
+                continue
+            cwd = process.info.get("cwd")
+            if isinstance(cwd, str) and cwd:
+                working_dirs.add(_normalize_process_path(cwd))
+            else:
+                unreadable_cwd = True
+    except (psutil.Error, OSError):
+        return set(), True
+    return working_dirs, unreadable_cwd
+
+
 def _epoch_ms_to_datetime(value: object) -> datetime:
     if isinstance(value, (int, float)) and value > 0:
         return datetime.fromtimestamp(value / 1000, UTC)
@@ -84,6 +119,9 @@ class OpenCodeSession:
     agent: str | None
     model: str | None
     updated_at: datetime
+
+
+SessionProcessAlive = Callable[[OpenCodeSession], bool]
 
 
 @dataclass(frozen=True)
@@ -159,13 +197,15 @@ class OpenCodeLocalDiscovery:
         *,
         now: Clock = lambda: datetime.now(UTC),
         process_alive: ProcessAlive | None = None,
+        process_alive_for_session: SessionProcessAlive | None = None,
         activity_window_seconds: float = 90.0,
         max_tasks: int = 20,
         connect_factory: ConnectFactory | None = None,
     ) -> None:
         self.db_path = db_path or _DEFAULT_DB_PATH
         self.now = now
-        self.process_alive = process_alive or CachedProcessAlive("name", _default_process_match)
+        self.process_alive = process_alive
+        self.process_alive_for_session = process_alive_for_session
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         self.max_tasks = max(1, min(max_tasks, 20))
         self._connect = connect_factory or _default_connect
@@ -176,12 +216,25 @@ class OpenCodeLocalDiscovery:
             sessions = [session for session in sessions if session.session_id in selected_ids]
         now = self.now()
         process_alive: bool | None = None
+        process_cwds: set[str] = set()
+        unreadable_process_cwd = False
+        if self.process_alive is None and self.process_alive_for_session is None:
+            process_cwds, unreadable_process_cwd = _matching_process_cwds()
 
-        def is_alive() -> bool:
+        def is_alive(session: OpenCodeSession) -> bool:
             nonlocal process_alive
-            if process_alive is None:
-                process_alive = self.process_alive()
-            return process_alive
+            if self.process_alive_for_session is not None:
+                return self.process_alive_for_session(session)
+            if self.process_alive is not None:
+                if process_alive is None:
+                    process_alive = self.process_alive()
+                return process_alive
+            if session.work_dir:
+                return (
+                    _normalize_process_path(session.work_dir) in process_cwds
+                    or unreadable_process_cwd
+                )
+            return bool(process_cwds) or unreadable_process_cwd
 
         discovered: list[DiscoveredTask] = []
         snapshots = self._latest_part_snapshots([session.session_id for session in sessions])
@@ -189,7 +242,7 @@ class OpenCodeLocalDiscovery:
             evaluation = evaluate_opencode_session_status(
                 snapshots.get(session.session_id),
                 now=now,
-                process_alive=is_alive,
+                process_alive=lambda session=session: is_alive(session),
                 activity_window_seconds=self.activity_window_seconds,
             )
             activity_at = evaluation.activity_at
@@ -292,64 +345,36 @@ class OpenCodeLocalDiscovery:
                     ).fetchall()
                     if not rows:
                         continue
-                    parsed = self._parse_part_snapshot(rows[0][0])
-                    if parsed is not None:
-                        step_started_at: datetime | None = None
-                        completed_at: datetime | None = None
-                        for raw_data, raw_updated in rows:
-                            candidate = self._parse_part_snapshot(raw_data)
-                            if candidate is None:
-                                continue
-                            updated_at = _epoch_ms_to_datetime(raw_updated)
-                            if candidate.part_type == "step-start":
-                                step_started_at = max(
-                                    (step_started_at or datetime.min.replace(tzinfo=UTC)),
-                                    updated_at,
-                                )
-                            if candidate.part_type == "step-finish" or (
-                                candidate.part_type == "tool"
-                                and candidate.state_status == "completed"
-                            ):
-                                completed_at = max(
-                                    (completed_at or datetime.min.replace(tzinfo=UTC)),
-                                    updated_at,
-                                )
-                        snapshots[session_id] = OpenCodePartSnapshot(
-                            part_type=parsed.part_type,
-                            state_status=parsed.state_status,
-                            time_updated=_epoch_ms_to_datetime(rows[0][1]),
-                            completed_at=completed_at,
-                            step_started_at=step_started_at,
-                        )
+                    part_type, state_status, latest_updated = rows[0]
+                    if not isinstance(part_type, str):
+                        continue
+                    step_started_at: datetime | None = None
+                    completed_at: datetime | None = None
+                    for candidate_type, candidate_status, raw_updated in rows:
+                        if not isinstance(candidate_type, str):
+                            continue
+                        updated_at = _epoch_ms_to_datetime(raw_updated)
+                        if candidate_type == "step-start":
+                            step_started_at = max(
+                                (step_started_at or datetime.min.replace(tzinfo=UTC)),
+                                updated_at,
+                            )
+                        if candidate_type == "step-finish" or (
+                            candidate_type == "tool" and candidate_status == "completed"
+                        ):
+                            completed_at = max(
+                                (completed_at or datetime.min.replace(tzinfo=UTC)),
+                                updated_at,
+                            )
+                    snapshots[session_id] = OpenCodePartSnapshot(
+                        part_type=part_type,
+                        state_status=state_status if isinstance(state_status, str) else None,
+                        time_updated=_epoch_ms_to_datetime(latest_updated),
+                        completed_at=completed_at,
+                        step_started_at=step_started_at,
+                    )
             finally:
                 connection.close()
         except sqlite3.Error as error:
             raise OpenCodeDiscoveryError("opencode database is unreadable") from error
         return snapshots
-
-    @staticmethod
-    def _parse_part_snapshot(data: object) -> OpenCodePartSnapshot | None:
-        if not isinstance(data, str) or not data:
-            return None
-        try:
-            import json
-
-            parsed = json.loads(data)
-        except (json.JSONDecodeError, ValueError):
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        part_type = parsed.get("type")
-        if not isinstance(part_type, str):
-            return None
-        state = parsed.get("state")
-        state_status: str | None = None
-        if isinstance(state, dict):
-            candidate = state.get("status")
-            if isinstance(candidate, str):
-                state_status = candidate
-        return OpenCodePartSnapshot(
-            part_type=part_type,
-            state_status=state_status,
-            time_updated=None,
-        )

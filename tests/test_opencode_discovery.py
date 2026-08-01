@@ -129,6 +129,40 @@ def test_final_text_after_step_finish_is_completed(tmp_path: Path) -> None:
     assert "secret" not in str(task.state.metadata)
 
 
+def test_part_history_query_projects_only_safe_fields(tmp_path: Path) -> None:
+    from aacc.opencode_discovery import OpenCodeLocalDiscovery
+
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_safe", updated=now)
+    _add_part(
+        connection,
+        "ses_safe",
+        "safe-text",
+        {"type": "text", "text": "private prompt and reasoning"},
+        now,
+    )
+    connection.commit()
+    connection.close()
+    statements: list[str] = []
+
+    def connect(path: Path) -> sqlite3.Connection:
+        connection = sqlite3.connect(path)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    OpenCodeLocalDiscovery(
+        db_path=path,
+        process_alive=lambda: True,
+        connect_factory=connect,
+    ).discover()
+
+    part_queries = [statement for statement in statements if "FROM part" in statement]
+    assert part_queries
+    assert all("SELECT data" not in statement.upper() for statement in part_queries)
+    assert all("JSON_EXTRACT(DATA" in statement.upper() for statement in part_queries)
+
+
 def test_new_step_after_previous_finish_remains_running(tmp_path: Path) -> None:
     from aacc.opencode_discovery import OpenCodeLocalDiscovery
 
@@ -331,6 +365,28 @@ def test_discover_orders_by_recency_with_running_first(tmp_path: Path) -> None:
     tasks = discovery.discover()
     assert [task.config.id for task in tasks] == ["opencode:ses_old", "opencode:ses_new"]
     assert tasks[0].state.status is TaskStatus.RUNNING
+
+
+def test_discover_uses_session_specific_process_liveness(tmp_path: Path) -> None:
+    from aacc.opencode_discovery import OpenCodeLocalDiscovery
+
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_alive", directory="/work/alive", updated=now)
+    _add_session(connection, "ses_stopped", directory="/work/stopped", updated=now)
+    _add_part(connection, "ses_alive", "alive-text", {"type": "text"}, updated=now)
+    _add_part(connection, "ses_stopped", "stopped-text", {"type": "text"}, updated=now)
+    connection.commit()
+    connection.close()
+
+    discovery = OpenCodeLocalDiscovery(
+        db_path=path,
+        process_alive_for_session=lambda session: session.work_dir == "/work/alive",
+    )
+    tasks = {task.config.id: task for task in discovery.discover()}
+
+    assert tasks["opencode:ses_alive"].state.status is TaskStatus.RUNNING
+    assert tasks["opencode:ses_stopped"].state.status is TaskStatus.COMPLETED
 
 
 def test_discover_selects_only_requested_ids(tmp_path: Path) -> None:

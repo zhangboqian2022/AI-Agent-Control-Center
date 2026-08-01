@@ -248,6 +248,7 @@ class ElidedLabel(QLabel):
 
     def setText(self, text: str) -> None:
         self._full_text = text
+        self.setToolTip(text)
         self._update_elision()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
