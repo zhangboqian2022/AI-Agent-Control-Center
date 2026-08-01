@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Signal
 
@@ -163,6 +164,9 @@ def test_service_creates_native_session_on_demand(qapp, tmp_path: Path, monkeypa
     import aacc.opencode_web_quota_service as module
 
     monkeypatch.setattr(module.sys, "platform", "darwin")
+    session = FakeSession()
+    session.storage_path = tmp_path / "opencode-web-session"  # type: ignore[attr-defined]
+    monkeypatch.setattr(module, "_create_native_web_session", lambda *_args, **_kwargs: session)
     service = OpenCodeWebQuotaService(tmp_path)
     assert service._session is None
     session = service._ensure_session()
@@ -175,8 +179,17 @@ def test_service_creates_edge_session_on_windows(qapp, tmp_path: Path, monkeypat
     del qapp
     import aacc.opencode_web_quota_service as module
 
+    class OpenCodeEdgeSession(FakeSession):
+        def __init__(self, *_args, **_kwargs) -> None:
+            super().__init__()
+
     monkeypatch.setattr(module.sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(
+        module,
+        "import_module",
+        lambda _name: SimpleNamespace(OpenCodeEdgeSession=OpenCodeEdgeSession),
+    )
     service = OpenCodeWebQuotaService(tmp_path)
     service.set_workspace_url("https://opencode.ai/workspace/wrk_1/go")
 
