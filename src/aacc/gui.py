@@ -2063,6 +2063,7 @@ class MainWindow(QWidget):
         self.cards_scroll.setObjectName("cardsScroll")
         self.cards_scroll.setWidgetResizable(True)
         self.cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.cards_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cards_scroll.setWidget(self.cards_container)
         layout.addWidget(self.cards_scroll, 1)
         footer = QHBoxLayout()
