@@ -20,6 +20,8 @@ a = Analysis(
     datas=[(os.path.join(ROOT, 'src', 'aacc', 'styles.qss'), 'aacc')],
     hiddenimports=[
         'aacc.adapters',
+        'aacc.opencode_edge_cdp',
+        'aacc.opencode_edge_session',
         'aacc.windows_broker',
         'websocket',
         'win32api',

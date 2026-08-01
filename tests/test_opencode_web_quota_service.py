@@ -150,3 +150,18 @@ def test_service_creates_native_session_on_demand(qapp, tmp_path: Path) -> None:
     assert service._session is session
     assert session.storage_path == tmp_path / "opencode-web-session"
     service.stop()
+
+
+def test_service_creates_edge_session_on_windows(qapp, tmp_path: Path, monkeypatch) -> None:
+    del qapp
+    import aacc.opencode_web_quota_service as module
+
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    service = OpenCodeWebQuotaService(tmp_path)
+    service.set_workspace_url("https://opencode.ai/workspace/wrk_1/go")
+
+    session = service._ensure_session()
+
+    assert type(session).__name__ == "OpenCodeEdgeSession"
+    service.stop()

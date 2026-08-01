@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib import import_module
@@ -128,9 +129,16 @@ class OpenCodeWebQuotaService(QObject):
 
     def _ensure_session(self) -> _WebSessionLike:
         if self._session is None:
-            self._session = _create_native_web_session(
-                self._config_dir, self, language_manager=self.language_manager
-            )
+            if sys.platform == "win32":
+                session_type: Any = import_module("aacc.opencode_edge_session").OpenCodeEdgeSession
+                self._session = cast(
+                    _WebSessionLike,
+                    session_type(self._config_dir, self, language_manager=self.language_manager),
+                )
+            else:
+                self._session = _create_native_web_session(
+                    self._config_dir, self, language_manager=self.language_manager
+                )
             self._connect_session(self._session)
         return self._session
 

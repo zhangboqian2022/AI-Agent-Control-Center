@@ -137,8 +137,6 @@ def _default_opencode_web_quota_service_factory(
     config: AppConfig,
     language_manager: LanguageManager | None = None,
 ) -> OpenCodeWebQuotaService | None:
-    if sys.platform == "win32":
-        return None
     service = OpenCodeWebQuotaService(
         config_dir,
         language_manager=language_manager,
