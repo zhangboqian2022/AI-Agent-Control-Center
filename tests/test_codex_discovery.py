@@ -103,6 +103,34 @@ def test_discover_carries_payload_cwd_without_other_payload_data(tmp_path: Path)
     assert "do-not-copy" not in str(tasks[0].state)
 
 
+def test_discover_uses_windows_work_dir_for_terminal_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_id = "codex-dir-window-0001"
+    (sessions / f"rollout-{session_id}.jsonl").write_text(
+        '{"type":"session_meta","payload":{"cwd":"C:/dev/aacc"}}\n',
+        encoding="utf-8",
+    )
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        '{"id":"codex-dir-window-0001","thread_name":"Directory task",'
+        '"updated_at":"2026-08-01T08:00:00Z"}\n',
+        encoding="utf-8",
+    )
+
+    tasks = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: datetime(2026, 8, 1, 8, 0, 30, tzinfo=UTC),
+    ).discover()
+
+    assert tasks[0].config.terminal.window_title == "aacc"
+
+
 def test_discover_accepts_payload_directory_alias(tmp_path: Path) -> None:
     sessions = tmp_path / "sessions"
     sessions.mkdir()
