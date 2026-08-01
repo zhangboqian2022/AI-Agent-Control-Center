@@ -70,7 +70,8 @@ def opencode_usage_fetch_script(url: str, generation: int) -> str:
   const deadline = setTimeout(() => controller.abort(), 15000);
   const emit = (payload) => {{
     window[payloadKey] = JSON.stringify(payload);
-    document.title = prefix + generation + ':' + (payload.kind || 'unknown') + ':' + Date.now() + ':' + Math.random();
+    document.title = prefix + generation + ':' + (payload.kind || 'unknown')
+      + ':' + Date.now() + ':' + Math.random();
   }};
   const findSubscription = (node, depth) => {{
     if (!node || typeof node !== 'object' || depth > 6) return null;
