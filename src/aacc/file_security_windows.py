@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import ntpath
 import os
+import time
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -356,6 +357,9 @@ def replace_windows_file(
             f"Windows atomic replacement failed (winerror={cast(Any, ctypes).get_last_error()})"
         )
 
+    ERROR_SHARING_VIOLATION = 32
+    sharing_retry_delays = (0.02, 0.05, 0.1, 0.2, 0.4)
+
     def open_handle(path: Path, access: int, flags: int) -> Any:
         handle = kernel32.CreateFileW(
             os.fspath(path),
@@ -482,12 +486,21 @@ def replace_windows_file(
             file_name,
             len(file_name),
         )
-        if not kernel32.SetFileInformationByHandle(
-            native_source_handle,
-            file_rename_info,
-            ctypes.byref(buffer),
-            len(buffer),
-        ):
+        rename_succeeded = False
+        for retry_delay in (0.0, *sharing_retry_delays):
+            if retry_delay:
+                time.sleep(retry_delay)
+            rename_succeeded = bool(
+                kernel32.SetFileInformationByHandle(
+                    native_source_handle,
+                    file_rename_info,
+                    ctypes.byref(buffer),
+                    len(buffer),
+                )
+            )
+            if rename_succeeded or cast(Any, ctypes).get_last_error() != ERROR_SHARING_VIOLATION:
+                break
+        if not rename_succeeded:
             raise fail()
     except FileProtectionError:
         raise
