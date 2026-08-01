@@ -2,6 +2,15 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.3-rc.3 — 2026-08-01
+
+[Bilingual release notes](docs/release-notes-1.4.3rc3.md)
+
+- [Feature] OpenCode Go-plan usage bar (macOS): a self-owned web view signs you into opencode.ai, extracts the rendered rolling/weekly/monthly usage from the /go workspace page, and shows percentage + reset countdown in a three-row strip below the Kimi bar; cookie persists across restarts.
+- [Feature] OpenCode CLI task discovery: read-only polling of the local opencode SQLite database infers per-session status (pending permission → waiting approval; active streaming → running; finished turn → completed; stale + process alive → waiting input; process gone → completed) with the existing circular status lights.
+- [Fix] A finished opencode turn (step-finish / tool completed) now shows the green completed state immediately instead of staying blue.
+- [Delivery] macOS-only increment; the Windows build remains at 1.4.3-rc.2 with no new artifact.
+
 ## 1.4.3-rc.2 — 2026-07-31
 
 [Bilingual release notes](docs/release-notes-1.4.3rc2.md)
