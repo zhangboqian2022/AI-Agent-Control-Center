@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QWidget
 from aacc.file_security import FileProtectionError
 from aacc.i18n import EN_US, ZH_CN, LanguageManager
 from aacc.opencode_web_session import (
-    BRIDGE_PAYLOAD_KEY,
     BRIDGE_PREFIX,
     SERVER_FN_HASH,
     OpenCodeWebSession,
@@ -70,6 +69,10 @@ class FakeLoadingInfo:
         return self._status
 
 
+def _bridge_title(payload: object) -> str:
+    return BRIDGE_PREFIX + json.dumps(payload)
+
+
 def make_session(tmp_path: Path) -> OpenCodeWebSession:
     session = OpenCodeWebSession(tmp_path)
     session.view = FakeWebView()  # type: ignore[assignment]
@@ -106,7 +109,6 @@ def test_fetch_script_embeds_workspace_id_and_server_hash() -> None:
     assert "X-Server-Id" in script and "server-fn:1" in script
     assert "subscription" in script
     assert "rollingUsage" in script
-    assert BRIDGE_PAYLOAD_KEY in script
     assert "AACC_OPENCODE_QUOTA:" in script
     assert "node.rollingUsage || node.weeklyUsage || node.monthlyUsage" in script
     assert opencode_usage_fetch_script("https://opencode.ai/zen", 1) == ""
@@ -201,20 +203,18 @@ def test_open_login_builds_reusable_dialog_and_closes_after_quota(
 
     generation = session._active_refresh_generation
     assert generation is not None
-    session.view.script_result = json.dumps(
-        {
-            "kind": "quota",
-            "generation": generation,
-            "raw": {
-                "subscription": {
-                    "rollingUsage": {"usagePercent": 5, "resetInSec": 3600},
-                    "weeklyUsage": {"usagePercent": 5, "resetInSec": 3600},
-                    "monthlyUsage": {"usagePercent": 5, "resetInSec": 3600},
-                }
-            },
-        }
-    )
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    payload = {
+        "kind": "quota",
+        "generation": generation,
+        "raw": {
+            "subscription": {
+                "rollingUsage": {"usagePercent": 5, "resetInSec": 3600},
+                "weeklyUsage": {"usagePercent": 5, "resetInSec": 3600},
+                "monthlyUsage": {"usagePercent": 5, "resetInSec": 3600},
+            }
+        },
+    }
+    session._on_title_changed(_bridge_title(payload))
     assert login_states == [True]
     assert session._login_dialog_open is False
 
@@ -264,12 +264,12 @@ def test_title_with_invalid_generation_ignored(qapp, tmp_path: Path) -> None:
     session.error_occurred.connect(errors.append)
     session.refresh()
     session.view.scripts = []
-    session._on_title_changed(f"{BRIDGE_PREFIX}not-a-number:ready:result")
+    session._on_title_changed(f"{BRIDGE_PREFIX}not-json")
     assert session.view.scripts == []
     assert errors == []
 
 
-def test_bridge_invalid_json_emits_refresh_failed(qapp, tmp_path: Path) -> None:
+def test_bridge_invalid_json_title_ignored(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)
     errors: list[str] = []
@@ -277,9 +277,8 @@ def test_bridge_invalid_json_emits_refresh_failed(qapp, tmp_path: Path) -> None:
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    session.view.script_result = "{not valid json"
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
-    assert errors == ["refresh_failed"]
+    session._on_title_changed(f"{BRIDGE_PREFIX}{{not json")
+    assert errors == []
 
 
 def test_bridge_unknown_kind_emits_refresh_failed(qapp, tmp_path: Path) -> None:
@@ -290,8 +289,7 @@ def test_bridge_unknown_kind_emits_refresh_failed(qapp, tmp_path: Path) -> None:
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    session.view.script_result = json.dumps({"kind": "mystery", "generation": generation})
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    session._on_title_changed(_bridge_title({"kind": "mystery", "generation": generation}))
     assert errors == ["refresh_failed"]
 
 
@@ -324,8 +322,7 @@ def test_session_bridge_delivers_quota_payload(qapp, tmp_path: Path) -> None:
             }
         },
     }
-    session.view.script_result = json.dumps(payload)
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    session._on_title_changed(_bridge_title(payload))
     assert len(quotas) == 1
     assert quotas[0]["subscription"]["rollingUsage"]["usagePercent"] == 0
 
@@ -340,10 +337,8 @@ def test_session_bridge_unauthorized_emits_login_state(qapp, tmp_path: Path) -> 
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    session.view.script_result = json.dumps(
-        {"kind": "unauthorized", "generation": generation, "message": "UNAUTHORIZED:401"}
-    )
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    payload = {"kind": "unauthorized", "generation": generation, "message": "UNAUTHORIZED:401"}
+    session._on_title_changed(_bridge_title(payload))
     assert login_states == [False]
     assert errors == ["unauthorized"]
 
@@ -354,7 +349,9 @@ def test_session_bridge_stale_generation_ignored(qapp, tmp_path: Path) -> None:
     errors: list[str] = []
     session.error_occurred.connect(errors.append)
     session.refresh()
-    session._on_title_changed(f"{BRIDGE_PREFIX}9999:ready:result")
+    session._on_title_changed(
+        _bridge_title({"kind": "quota", "generation": 9999, "raw": {"subscription": {}}})
+    )
     assert errors == []
 
 
@@ -393,13 +390,11 @@ def test_logout_invalidates_in_flight_refresh(qapp, tmp_path: Path) -> None:
     session._on_loading_changed(FakeLoadingInfo())
     assert session._refresh_watchdog.isActive()
     session._login_dialog_open = True
-    session.view.script_result = json.dumps(
-        {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
-    )
+    payload = {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
     assert session.logout() is True
     assert session._active_refresh_generation is None
     assert not session._refresh_watchdog.isActive()
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    session._on_title_changed(_bridge_title(payload))
     assert quotas == []
     assert login_states == [False]
 
@@ -414,10 +409,8 @@ def test_bridge_payload_generation_mismatch_ignored(qapp, tmp_path: Path) -> Non
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    session.view.script_result = json.dumps(
-        {"kind": "quota", "generation": generation + 5, "raw": {"subscription": {}}}
-    )
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    payload = {"kind": "quota", "generation": generation + 5, "raw": {"subscription": {}}}
+    session._on_title_changed(_bridge_title(payload))
     assert quotas == []
     assert errors == []
 
@@ -430,26 +423,12 @@ def test_bridge_completion_clears_active_generation(qapp, tmp_path: Path) -> Non
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    session.view.script_result = json.dumps(
-        {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
-    )
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    payload = {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
+    session._on_title_changed(_bridge_title(payload))
     assert len(quotas) == 1
     assert session._active_refresh_generation is None
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    session._on_title_changed(_bridge_title(payload))
     assert len(quotas) == 1
-
-
-def test_bridge_read_deletes_payload_key(qapp, tmp_path: Path) -> None:
-    del qapp
-    session = make_session(tmp_path)
-    session.refresh()
-    generation = session._active_refresh_generation
-    assert generation is not None
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
-    assert session.view.scripts
-    read_script = session.view.scripts[-1]
-    assert "delete window[" in read_script
 
 
 def test_refresh_navigation_path_arms_watchdog(qapp, tmp_path: Path) -> None:
@@ -506,20 +485,18 @@ def test_quota_success_close_does_not_double_handle(monkeypatch, qapp, tmp_path:
     session.open_login()
     generation = session._active_refresh_generation
     assert generation is not None
-    session.view.script_result = json.dumps(
-        {
-            "kind": "quota",
-            "generation": generation,
-            "raw": {
-                "subscription": {
-                    "rollingUsage": {"usagePercent": 5, "resetInSec": 3600},
-                    "weeklyUsage": {"usagePercent": 5, "resetInSec": 3600},
-                    "monthlyUsage": {"usagePercent": 5, "resetInSec": 3600},
-                }
-            },
-        }
-    )
-    session._on_title_changed(f"{BRIDGE_PREFIX}{generation}:ready:result")
+    payload = {
+        "kind": "quota",
+        "generation": generation,
+        "raw": {
+            "subscription": {
+                "rollingUsage": {"usagePercent": 5, "resetInSec": 3600},
+                "weeklyUsage": {"usagePercent": 5, "resetInSec": 3600},
+                "monthlyUsage": {"usagePercent": 5, "resetInSec": 3600},
+            }
+        },
+    }
+    session._on_title_changed(_bridge_title(payload))
     assert login_states == [True]
     assert session._login_dialog_open is False
     assert session._refreshing is False

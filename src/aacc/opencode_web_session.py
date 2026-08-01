@@ -64,14 +64,11 @@ def opencode_usage_fetch_script(url: str, generation: int) -> str:
     return f"""
 (() => {{
   const prefix = {json.dumps(BRIDGE_PREFIX)};
-  const payloadKey = {json.dumps(BRIDGE_PAYLOAD_KEY)};
   const generation = {generation};
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), 15000);
   const emit = (payload) => {{
-    window[payloadKey] = JSON.stringify(payload);
-    document.title = prefix + generation + ':' + (payload.kind || 'unknown')
-      + ':' + Date.now() + ':' + Math.random();
+    document.title = prefix + JSON.stringify(payload);
   }};
   const findSubscription = (node, depth) => {{
     if (!node || typeof node !== 'object' || depth > 6) return null;
@@ -322,30 +319,24 @@ class OpenCodeWebSession(QObject):
     def _on_title_changed(self, title: str) -> None:
         if not title.startswith(BRIDGE_PREFIX):
             return
+        encoded = title[len(BRIDGE_PREFIX) :]
         try:
-            generation = int(title[len(BRIDGE_PREFIX) :].split(":", 1)[0])
+            payload = json.loads(encoded)
         except ValueError:
+            _logger.warning("OpenCode bridge title is not json: %.120s", encoded)
+            return
+        if not isinstance(payload, dict):
+            _logger.warning("OpenCode bridge title payload not a dict")
             return
         _logger.info(
-            "OpenCode bridge title received generation=%s active=%s",
-            generation,
+            "OpenCode bridge title received kind=%s generation=%s active=%s",
+            payload.get("kind"),
+            payload.get("generation"),
             self._active_refresh_generation,
         )
-        if generation != self._active_refresh_generation:
+        if payload.get("generation") != self._active_refresh_generation:
             return
-
-        def dispatch(payload_text: object) -> None:
-            self._handle_bridge(payload_text)
-
-        script = (
-            "(() => {"
-            f"const key = {json.dumps(BRIDGE_PAYLOAD_KEY)};"
-            "const value = window[key] || '';"
-            "delete window[key];"
-            "return value;"
-            "})()"
-        )
-        self.view.runJavaScript(script, dispatch)
+        self._handle_bridge(payload)
 
     def _handle_bridge(self, payload_text: object) -> None:
         try:
