@@ -192,6 +192,10 @@ class OpenCodeWebSession(QObject):
         self._start_refresh_generation()
         self._start_refresh_watchdog()
         if self._login_dialog_open or self.view.url().isEmpty() or not self._is_opencode_origin():
+            _logger.info(
+                "OpenCode quota refresh navigating to workspace url=%s",
+                self.view.url().toString(),
+            )
             self._load_workspace_url()
             return
         self._run_fetch_script()
@@ -269,8 +273,10 @@ class OpenCodeWebSession(QObject):
     def _run_fetch_script(self) -> None:
         script = opencode_usage_fetch_script(self.workspace_url, self._refresh_generation)
         if not script:
+            _logger.warning("OpenCode quota fetch script empty; workspace id missing")
             self._finish_refresh_with_error("refresh_failed")
             return
+        _logger.info("OpenCode quota fetch script running generation=%s", self._refresh_generation)
         self._start_refresh_watchdog()
         self.view.runJavaScript(script, lambda _result: None)
 
@@ -297,6 +303,7 @@ class OpenCodeWebSession(QObject):
     def _finish_refresh_with_error(self, category: str) -> None:
         self._refreshing = False
         self._refresh_watchdog.stop()
+        _logger.warning("OpenCode quota refresh error category=%s", category)
         self.error_occurred.emit(category)
 
     def _on_loading_changed(self, info: QWebViewLoadingInfo) -> None:
@@ -318,6 +325,11 @@ class OpenCodeWebSession(QObject):
             generation = int(title[len(BRIDGE_PREFIX) :].split(":", 1)[0])
         except ValueError:
             return
+        _logger.info(
+            "OpenCode bridge title received generation=%s active=%s",
+            generation,
+            self._active_refresh_generation,
+        )
         if generation != self._active_refresh_generation:
             return
 
