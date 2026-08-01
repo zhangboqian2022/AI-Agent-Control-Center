@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,24 @@ ROOT = Path(__file__).parents[1]
 
 def test_ci_evidence_script_writes_commit_bound_provenance(tmp_path: Path) -> None:
     output = tmp_path / "ci-evidence.json"
+    test_environment = os.environ.copy()
+    for name in (
+        "GITHUB_REPOSITORY",
+        "GITHUB_SHA",
+        "GITHUB_REF",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_JOB_STATUS",
+        "RUNNER_LABELS",
+        "AACC_CI_REPOSITORY",
+        "AACC_CI_COMMIT",
+        "AACC_CI_REF",
+        "AACC_CI_RUN_ID",
+        "AACC_CI_RUN_ATTEMPT",
+        "AACC_CI_RUNNER",
+        "AACC_CI_JOB_STATUS",
+    ):
+        test_environment.pop(name, None)
     subprocess.run(
         [
             sys.executable,
@@ -27,6 +46,7 @@ def test_ci_evidence_script_writes_commit_bound_provenance(tmp_path: Path) -> No
         ],
         check=True,
         cwd=tmp_path,
+        env=test_environment,
     )
 
     evidence = json.loads(output.read_text(encoding="utf-8"))
