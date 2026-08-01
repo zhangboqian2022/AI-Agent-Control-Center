@@ -68,14 +68,14 @@ def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
     cases = (
         (
             "README.md",
-            "docs/images/panel-overview.en.png",
-            "_Illustrative UI with synthetic demo data; no real account or task data._",
+            "docs/images/panel-overview-1.4.3.en.png",
+            "_AACC 1.4.3 illustrative UI with synthetic demo data; no real account or task data._",
             ("per-user", "without administrator", "Start Menu", "SmartScreen"),
         ),
         (
             "README.zh-CN.md",
-            "docs/images/panel-overview.png",
-            "_使用合成演示数据生成的界面示意图，不含真实账户或任务数据。_",
+            "docs/images/panel-overview-1.4.3.png",
+            "_AACC 1.4.3 界面示意图，使用合成演示数据，不含真实账户或任务数据。_",
             ("当前用户", "无需管理员", "开始菜单", "SmartScreen"),
         ),
     )
