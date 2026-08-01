@@ -29,11 +29,11 @@
 - Produces two 420×650 PNGs that GitHub README Markdown can render directly.
 - The SVG sources remain beside the PNGs so future screenshot updates can edit exact text without image-generation ambiguity.
 
-- [ ] **Step 1: Write the two language-specific SVG layouts**
+- [x] **Step 1: Write the two language-specific SVG layouts**
 
   Use the same card geometry and synthetic values in both files. The Chinese version uses `Codex 额度`, `Kimi 额度`, `OpenCode 额度`, `· codelight`, `运行中`, `已完成`; the English version uses `Codex quota`, `Kimi quota`, `OpenCode quota`, `· codelight`, `Running`, `Completed`.
 
-- [ ] **Step 2: Rasterize and verify dimensions**
+- [x] **Step 2: Rasterize and verify dimensions**
 
   Run:
 
@@ -45,11 +45,11 @@
 
   Expected: both PNGs report `420 x 650`.
 
-- [ ] **Step 3: Visually inspect both PNGs**
+- [x] **Step 3: Visually inspect both PNGs**
 
   Open both images and confirm that all labels are legible, the blue running light and green completed light are visible, quota rows are aligned, and no real user data appears.
 
-- [ ] **Step 4: Commit the assets**
+- [x] **Step 4: Commit the assets**
 
   ```bash
   git add -- docs/images/panel-overview-1.4.3.svg docs/images/panel-overview-1.4.3.en.svg docs/images/panel-overview-1.4.3.png docs/images/panel-overview-1.4.3.en.png
@@ -67,11 +67,11 @@
 - README Chinese references `docs/images/panel-overview-1.4.3.png`.
 - Captions explicitly identify the image as a 1.4.3 synthetic product illustration.
 
-- [ ] **Step 1: Update both image paths and captions**
+- [x] **Step 1: Update both image paths and captions**
 
   Preserve the existing privacy disclaimer and change only the image path plus the adjacent alt/caption wording.
 
-- [ ] **Step 2: Verify every repository reference**
+- [x] **Step 2: Verify every repository reference**
 
   Run:
 
@@ -82,7 +82,7 @@
 
   Expected: only the two new `panel-overview-1.4.3` paths are referenced by the default README pages and `git diff --check` is clean.
 
-- [ ] **Step 3: Commit the README references**
+- [x] **Step 3: Commit the README references**
 
   ```bash
   git add -- README.md README.zh-CN.md
@@ -94,7 +94,7 @@
 **Files:**
 - Review: all files changed by Tasks 1–2
 
-- [ ] **Step 1: Run the documentation asset gate**
+- [x] **Step 1: Run the documentation asset gate**
 
   ```bash
   file docs/images/panel-overview-1.4.3.png docs/images/panel-overview-1.4.3.en.png
@@ -104,12 +104,12 @@
 
   Expected: both PNGs are 420×650, only the planned assets/README files/plan are changed, and no whitespace errors are reported.
 
-- [ ] **Step 2: Push the feature branch**
+- [x] **Step 2: Push the feature branch**
 
   ```bash
   git push -u origin codex/refresh-product-screenshots
   ```
 
-- [ ] **Step 3: Merge the authorized documentation update into `main`**
+- [x] **Step 3: Merge the authorized documentation update into `main`**
 
   Create one non-draft PR from `codex/refresh-product-screenshots` to `main`, wait for its required checks, and merge it only after the changed-image references and asset files are present on the base branch.
