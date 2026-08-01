@@ -29,15 +29,27 @@ def test_fresh_lower_confidence_inference_does_not_override() -> None:
 
 
 def test_newer_same_source_running_state_leaves_waiting_approval() -> None:
-    current = state(TaskStatus.WAITING_APPROVAL, "opencode_local", 0.97)
-    candidate = state(TaskStatus.RUNNING, "opencode_local", 0.9)
+    current = state(TaskStatus.WAITING_APPROVAL, "opencode_local", 0.97, age=10)
+    candidate = current.model_copy(
+        update={
+            "status": TaskStatus.RUNNING,
+            "confidence": 0.9,
+            "updated_at": current.updated_at + timedelta(seconds=1),
+        }
+    )
 
     assert StateMachine.accept(current, candidate)
 
 
 def test_newer_same_source_completion_leaves_waiting_approval() -> None:
-    current = state(TaskStatus.WAITING_APPROVAL, "opencode_local", 0.97)
-    candidate = state(TaskStatus.COMPLETED, "opencode_local", 0.9)
+    current = state(TaskStatus.WAITING_APPROVAL, "opencode_local", 0.97, age=10)
+    candidate = current.model_copy(
+        update={
+            "status": TaskStatus.COMPLETED,
+            "confidence": 0.9,
+            "updated_at": current.updated_at + timedelta(seconds=1),
+        }
+    )
 
     assert StateMachine.accept(current, candidate)
 
