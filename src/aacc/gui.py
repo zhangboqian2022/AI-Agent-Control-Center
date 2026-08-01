@@ -1097,15 +1097,17 @@ class TaskCard(QFrame):
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(7)
-        self.status_label = QLabel()
+        self.status_label = ElidedLabel("")
         self.status_label.setObjectName("statusLabel")
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.workdir_label = ElidedLabel("")
         self.workdir_label.setObjectName("workdirLabel")
         self.workdir_label.setMaximumWidth(140)
+        self.workdir_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.workdir_label.hide()
-        meta_row.addWidget(self.agent_label)
-        meta_row.addWidget(self.status_label)
-        meta_row.addWidget(self.workdir_label)
+        meta_row.addWidget(self.agent_label, 0)
+        meta_row.addWidget(self.status_label, 1)
+        meta_row.addWidget(self.workdir_label, 2)
         meta_row.addStretch()
         details_layout.addLayout(meta_row)
 
@@ -2015,7 +2017,7 @@ class MainWindow(QWidget):
         self.retained_header = QWidget()
         retained_header_layout = QHBoxLayout(self.retained_header)
         retained_header_layout.setContentsMargins(0, 0, 0, 0)
-        self.retained_group_label = QLabel("已完成 · 保留直到移除")
+        self.retained_group_label = QLabel("已完成 · 保留")
         self.retained_group_label.setObjectName("taskGroupLabel")
         self.clear_retained_button = QPushButton("全部清除")
         self.clear_retained_button.setObjectName("clearRetainedButton")
@@ -2099,9 +2101,7 @@ class MainWindow(QWidget):
         self.quit_button.setToolTip(self.language_manager.text("header.quit"))
         self.running_group_label.setText(self.language_manager.text("group.running"))
         self.retained_group_label.setText(
-            "已完成 · 保留直到移除"
-            if self.language_manager.language == ZH_CN
-            else "Completed · Retained until removed"
+            "已完成 · 保留" if self.language_manager.language == ZH_CN else "Completed · Retained"
         )
         self.clear_retained_button.setText(self.language_manager.text("group.clear_all"))
         self.empty_tasks_label.setText(
