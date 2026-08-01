@@ -38,7 +38,7 @@ increment**: the Windows build remains at 1.4.3-rc.2 with no new artifact.
   idle/busy is a runtime event, not persisted). OpenCode support is macOS
   first; Windows (Edge-based session and discovery) is a later iteration.
 
-Evidence boundary: local macOS run passes 1108 tests (7 skipped), ruff check,
+Evidence boundary: local macOS run passes 1110 tests (7 skipped), ruff check,
 ruff format, and mypy. Hosted CI runs on push. The opencode
 feature was exercised against a live signed-in workspace on this Mac; hosted
 CI covers the code level only, and consumer Windows 10/11 behavior is not
@@ -72,6 +72,6 @@ claimed as verified.
   改版，提取可能需要跟进。状态推断为近似（官方 idle/busy 是运行时事件，不落库）。
   OpenCode 支持先做 macOS；Windows（Edge 会话与发现）为后续迭代。
 
-证据边界：本机 macOS 运行通过 1108 项测试（跳过 7 项）、ruff check、ruff format
+证据边界：本机 macOS 运行通过 1110 项测试（跳过 7 项）、ruff check、ruff format
 与 mypy。托管 CI 在推送时运行。OpenCode 功能已在本机对真实
 已登录工作区实测；托管 CI 仅覆盖代码层面，消费级 Windows 10/11 行为不宣称已验证。
