@@ -17,6 +17,7 @@ class FakeWin32:
     def __init__(self) -> None:
         self.windows: dict[str, int] = {}
         self.focused: list[int] = []
+        self.foreground: int | None = None
         self.combos: list[tuple[int, tuple[int, ...]]] = []
         self.texts: list[str] = []
 
@@ -28,7 +29,11 @@ class FakeWin32:
 
     def focus_window(self, hwnd: int) -> bool:
         self.focused.append(hwnd)
+        self.foreground = hwnd
         return True
+
+    def foreground_window(self) -> int:
+        return self.foreground or 0
 
     def send_key_combo(self, vk: int, modifiers: tuple[int, ...] = ()) -> None:
         self.combos.append((vk, modifiers))
@@ -108,6 +113,21 @@ def test_send_text_validates_length_and_nul() -> None:
         automation.send_text(_task(), "x" * 2001)
     with pytest.raises(AutomationError):
         automation.send_text(_task(), "a\0b")
+
+
+def test_injection_aborts_if_another_window_becomes_foreground() -> None:
+    win32 = FakeWin32()
+    win32.windows["myproject"] = 3
+    automation = _automation(win32)
+
+    def steal_focus(_seconds: float) -> None:
+        win32.foreground = 99
+
+    automation._sleep = steal_focus
+    with pytest.raises(AutomationError) as caught:
+        automation.send_key(_task(), "ENTER")
+    assert caught.value.category == "window_focus_failed"
+    assert win32.combos == []
 
 
 def test_injection_disabled_blocks_send() -> None:

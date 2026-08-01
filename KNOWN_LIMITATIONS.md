@@ -18,3 +18,4 @@
 
 - OpenCode quota (Go plan) is extracted from the rendered /go workspace page on opencode.ai; if opencode.ai changes that page layout, extraction may need updating. macOS stores the session in the native per-application web view; Windows uses an AACC-owned Edge profile and a CDP boundary, so the two profiles are intentionally not interchangeable.
 - OpenCode task status is inferred from local part snapshots (official idle/busy is a runtime event, not persisted) with a 90-second activity window; status is approximate. Windows database discovery prefers `%LOCALAPPDATA%\opencode\opencode.db` and supports an XDG-compatible profile fallback; alternate OpenCode release-channel database names are searched in a fixed allowlist.
+- Configured non-native adapters provide process-level running/stopped evidence only. They do not parse agent-specific completion, approvals, or output unless a separate structured API, CLI, or wrapper reports that state.

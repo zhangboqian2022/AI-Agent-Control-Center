@@ -39,8 +39,16 @@ class StateMachine:
             age = (datetime.now(UTC) - current.updated_at).total_seconds()
             if age <= cls.STALE_SECONDS:
                 return False
+        if current.status is TaskStatus.IDLE and candidate.status in cls.RESTART:
+            return candidate.updated_at >= current.updated_at
         if current.status in cls.TERMINAL and candidate.status in cls.RESTART:
-            return True
+            if candidate.updated_at <= current.updated_at:
+                return False
+            return not (
+                current.finished_at is not None
+                and candidate.started_at is not None
+                and candidate.started_at <= current.finished_at
+            )
         age = (datetime.now(UTC) - current.updated_at).total_seconds()
         if candidate.confidence < current.confidence and age <= cls.STALE_SECONDS:
             return False

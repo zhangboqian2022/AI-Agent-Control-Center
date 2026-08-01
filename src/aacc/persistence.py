@@ -109,7 +109,23 @@ class StateStore:
             self._initialized = True
 
     def register(self, task: TaskConfig) -> None:
-        self.initialize([task])
+        initial = TaskState.new(
+            task.id,
+            TaskStatus.IDLE if task.enabled else TaskStatus.UNCONFIGURED,
+            source="system",
+        )
+
+        def operation() -> None:
+            with self._connection:
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO current_states(task_id, payload) VALUES (?, ?)",
+                    (task.id, initial.model_dump_json()),
+                )
+
+        with self._lock:
+            self._require_initialized()
+            self._retry_locked(operation)
+            self._secure_database_files_or_close()
 
     def get(self, task_id: str) -> TaskState:
         with self._lock:

@@ -2,13 +2,13 @@
 
 > 面向本机 AI Coding Agent 的桌面状态与控制中心，支持 macOS 13+ 与 Windows 10+。
 
-[English README](README.md) · [下载 AACC 1.4.3](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.3) · [发布说明](docs/release-notes-1.4.3.md) · [产品设计](docs/product-design.zh-CN.md)
+[English README](README.md) · [下载 AACC 1.4.4-rc.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.4-rc.1) · [发布说明](docs/release-notes-1.4.4rc1.md) · [产品设计](docs/product-design.zh-CN.md)
 
 AACC 是一个本机优先的跨平台悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
 
-![AACC 1.4.3 面板：额度与任务状态](docs/images/panel-overview-1.4.3.png)
+![AACC 1.4.4-rc.1 面板：额度与任务状态](docs/images/panel-overview-1.4.4-rc.1.png)
 
-_AACC 1.4.3 界面示意图，使用合成演示数据，不含真实账户或任务数据。_
+_AACC 1.4.4-rc.1 界面示意图，使用合成演示数据，不含真实账户或任务数据。_
 
 ![平台](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![许可证](https://img.shields.io/badge/license-MIT-blue) ![本机优先](https://img.shields.io/badge/privacy-local--first-18a999)
 
@@ -24,25 +24,25 @@ _AACC 1.4.3 界面示意图，使用合成演示数据，不含真实账户或�
 - **及时且克制的概括：** 每 5 秒检查 Codex 元数据，用“正在修改代码”“正在运行测试”等固定短语反馈活动，不展示原始载荷。
 - **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示；OpenCode 显示 Go 套餐滚动/每周/每月额度。每个可用重置时间都直接写在行内；真实 `0%` 明确显示为 `0%`，只有未知数据才显示 `--`。
 - **OpenCode Go 套餐额度条：** macOS 使用自持网页视图，Windows 使用独立的 AACC 专用 Microsoft Edge 配置目录和 CDP；两边都登录 opencode.ai（GitHub/Google），从 /go 工作区页面提取已渲染的滚动/每周/每月额度（百分比 + 重置倒计时），三行展示在 Kimi 额度条下方。绝不读取 prompt、回复、工具命令或 reasoning 内容。在 `config.yaml` 配置 `opencode_workspace_url`。
-- **OpenCode CLI 任务发现：** 每 5 秒只读轮询 opencode 本地 SQLite 数据库，从消息部件快照推断任务状态：权限挂起 → 黄灯"等待同意"；进行中 → 蓝灯"进行中"；停滞 + 进程在 → 黄灯"等待输入"；进程退出 → 绿灯"已完成"。Windows 优先读取 `%LOCALAPPDATA%\opencode\opencode.db`，并按会话工作目录定位终端。只读取部件类型/状态/时间戳——绝不读取文本内容。
+- **OpenCode CLI 任务发现：** 每 5 秒只读轮询 opencode 本地 SQLite 数据库，从消息部件快照推断任务状态：权限挂起 → 黄灯“等待同意”；进行中 → 蓝灯“进行中”；停滞 + 进程在 → 黄灯“等待输入”；有明确完成证据 → 绿灯“已完成”；进程消失但没有完成证据 → 停止态，不伪造完成。Windows 优先读取 `%LOCALAPPDATA%\opencode\opencode.db`，并按会话工作目录定位终端。只读取部件类型/状态/时间戳——绝不读取文本内容。
 - **Kimi 会员额度缓存：** Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置；Kimi Code OAuth 凭据由 AACC 凭据保护另行保存。网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；查询不消耗生成 Token。
 - **本机优先：** 只读取判断状态所需的本机任务元数据，不上传对话内容。
 - **可靠的完成判断：** 优先依据 Codex `task_started` 与 `task_complete` 会话事件，避免任务完成后仍错误显示“执行中”。
 - **发现故障可见：** Codex 元数据连续读取失败时显示可恢复的黄色告警条，不再静默冻结旧状态。
 - **控制串行且界面流畅：** 聚焦与输入作为完整事务进入有界工作线程，并发调用不会错窗，面板也不会被阻塞。
 - **克制的桌面控制：** 单击卡片只选中任务；只有右键菜单的“切换到任务”才会聚焦 Codex。按键输入仅允许白名单按键。
-- **可扩展接入：** 支持 Codex CLI/App、Claude Code、Kimi Code、通用 CLI，以及本地 API、CLI 和包装器接入。
+- **可扩展接入：** 支持 Codex CLI/App、Claude Code、Kimi Code、通用 CLI，以及本地 API、CLI 和包装器接入。非原生 Adapter 只提供保守的进程级运行/停止证据，不声称具备 Agent 专属的完成语义。
 
 ## 安装
 
-### 推荐：下载 DMG
+### 推荐：下载 RC DMG
 
-下载 [AACC-1.4.3.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.3/AACC-1.4.3.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
+下载 [AACC-1.4.4-rc.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4-rc.1.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
 
 此社区版本使用 ad-hoc 签名，尚未经过 Apple 公证。请先下载配套的 `.dmg.sha256` 资产，并对比：
 
 ```bash
-shasum -a 256 AACC-1.4.3.dmg
+shasum -a 256 AACC-1.4.4-rc.1.dmg
 ```
 
 仅在校验值一致后，若 macOS 拦截首次启动，再到“系统设置 → 隐私与安全性”选择“仍要打开”。如果该标准路径仍失败，最后才在本机移除隔离属性：
@@ -71,9 +71,9 @@ cd AI-Agent-Control-Center
 ./scripts/build_dmg.sh
 ```
 
-### Windows 1.4.3
+### Windows 1.4.4-rc.1
 
-Windows 主下载文件是 [`AACC-1.4.3-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.3/AACC-1.4.3-Setup.exe)，并配套 `AACC-1.4.3-Setup.exe.sha256`。
+Windows RC 主下载文件是 [`AACC-1.4.4rc1-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4rc1-Setup.exe)，并配套 `AACC-1.4.4rc1-Setup.exe.sha256`。
 
 Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC` 下由 AACC 管理的设置、历史、数据库、凭据和 Kimi 复用决定。
 

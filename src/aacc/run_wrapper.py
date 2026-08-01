@@ -35,12 +35,16 @@ def _status(
     config_path: Path, task_id: str, state: str, message: str, pid: int | None = None
 ) -> None:
     config = load_config(config_path)
-    with suppress(httpx.HTTPError):
-        httpx.post(
+    with suppress(httpx.HTTPError), httpx.Client(timeout=1.5, trust_env=False) as client:
+        client.post(
             f"http://{config.app.api.host}:{config.app.api.port}/api/v1/tasks/{task_id}/status",
             headers={"Authorization": f"Bearer {config.app.api.token}"},
-            json={"status": state, "message": message, "source": "wrapper", "confidence": 0.95},
-            timeout=1.5,
+            json={
+                "status": state,
+                "message": message,
+                "source": "wrapper",
+                "confidence": 0.95,
+            },
         )
 
 

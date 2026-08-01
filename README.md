@@ -2,13 +2,13 @@
 
 > A local-first desktop control center for the AI coding agents you choose to monitor, supporting macOS 13+ and Windows 10+.
 
-[中文文档](README.zh-CN.md) · [Download AACC 1.4.3](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.3) · [Release notes](docs/release-notes-1.4.3.md) · [Product design](docs/product-design.md)
+[中文文档](README.zh-CN.md) · [Download AACC 1.4.4-rc.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.4-rc.1) · [Release notes](docs/release-notes-1.4.4rc1.md) · [Product design](docs/product-design.md)
 
 AACC is a floating cross-platform panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative platform-specific focus/input automation.
 
-![AACC 1.4.3 panel with quota and task states](docs/images/panel-overview-1.4.3.en.png)
+![AACC 1.4.4-rc.1 panel with quota and task states](docs/images/panel-overview-1.4.4-rc.1.en.png)
 
-_AACC 1.4.3 illustrative UI with synthetic demo data; no real account or task data._
+_AACC 1.4.4-rc.1 illustrative UI with synthetic demo data; no real account or task data._
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![License](https://img.shields.io/badge/license-MIT-blue) ![Local first](https://img.shields.io/badge/privacy-local--first-18a999)
 
@@ -24,25 +24,25 @@ _AACC 1.4.3 illustrative UI with synthetic demo data; no real account or task da
 - **Timely private summaries.** Codex metadata is checked every five seconds and reduced to fixed labels such as “editing code” or “running tests,” without displaying raw payload content.
 - **Quota resets at a glance.** Codex shows its 10080-minute `WEEK` window; Kimi shows `5H`, `WEEK`, and `MONTH`. OpenCode shows the Go-plan rolling/weekly/monthly quota. Every available reset is an absolute local date and time inside the row; a real `0%` stays `0%`, and only unknown data becomes `--`.
 - **OpenCode Go-plan quota bar.** macOS uses a self-owned web view; Windows uses a separate AACC-owned Microsoft Edge profile with CDP. Both sign you into opencode.ai (GitHub/Google), extract the rendered quota bars from the /go workspace page, and display rolling/weekly/monthly quota (percentage + reset countdown) in a three-row strip. No prompt, reply, tool command, or reasoning content is ever read. Configure `opencode_workspace_url` in `config.yaml`.
-- **OpenCode CLI task discovery.** AACC polls opencode's local SQLite database read-only every 5 s and infers monitored status from part snapshots: pending permission → yellow ("waiting approval"), active streaming → blue ("running"), stale + process alive → yellow ("waiting input"), process gone → green ("completed"). Windows resolves `%LOCALAPPDATA%\opencode\opencode.db` first and binds terminal focus to the session work directory. Only part type/status/timestamp are read — never text content.
+- **OpenCode CLI task discovery.** AACC polls opencode's local SQLite database read-only every 5 s and infers monitored status from part snapshots: pending permission → yellow ("waiting approval"), active streaming → blue ("running"), stale + process alive → yellow ("waiting input"), explicit completion → green ("completed"), and process disappearance without completion → stopped (never falsely completed). Windows resolves `%LOCALAPPDATA%\opencode\opencode.db` first and binds terminal focus to the session work directory. Only part type/status/timestamp are read — never text content.
 - **Cached Kimi membership quota.** On Windows, the first sign-in opens Microsoft Edge with an isolated AACC-owned Edge profile at `%LOCALAPPDATA%\AACC\kimi-edge-profile`; it never reads the normal Edge profile. The dedicated session survives AACC and PC restarts until you sign out, Kimi expires it, or a security check fails. macOS keeps its native per-application web session. AACC stores only a protected reuse decision and never copies a cookie, password, website bearer token, account name, or quota value into configuration. Kimi Code OAuth credentials are stored separately under AACC credential protection. The web source and Kimi Code fallback start in the same five-minute cycle. These metadata-only lookups send no prompt and use no generation tokens.
 - **Local-first by design.** AACC reads only the local task metadata needed for status detection and never uploads task content.
 - **Reliable status boundaries.** Codex session `task_started` and `task_complete` events take priority over file activity to avoid stale “running” indicators.
 - **Visible discovery health.** Repeated Codex metadata errors show a recoverable warning banner with sanitized diagnostics instead of silently freezing task state.
 - **Responsive, serialized control.** Complete focus-and-input transactions run in a bounded worker so concurrent calls cannot inject into the wrong window and the panel stays responsive.
 - **Desktop control without blind input.** Cards select a task; the explicit context action focuses the target app. Keyboard injection is restricted to a small allowlist.
-- **Extensible integration.** Use the local API, `aacc` CLI, `aacc-run` wrapper, or configurable adapters for Codex CLI/App, Claude Code, Kimi Code, and generic CLIs.
+- **Extensible integration.** Use the local API, `aacc` CLI, `aacc-run` wrapper, or configurable adapters for Codex CLI/App, Claude Code, Kimi Code, and generic CLIs. Non-native adapters provide conservative process-level running/stopped evidence; they do not claim agent-specific completion semantics.
 
 ## Install
 
-### Recommended: download the DMG
+### Recommended: download the RC DMG
 
-Download [AACC-1.4.3.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.3/AACC-1.4.3.dmg), open it, and drag `AACC.app` to Applications.
+Download [AACC-1.4.4-rc.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4-rc.1.dmg), open it, and drag `AACC.app` to Applications.
 
 This community build uses an ad-hoc signature and is not notarized by Apple. First download the matching `.dmg.sha256` asset and compare it with:
 
 ```bash
-shasum -a 256 AACC-1.4.3.dmg
+shasum -a 256 AACC-1.4.4-rc.1.dmg
 ```
 
 Only after the checksum matches, use **System Settings → Privacy & Security → Open Anyway** if macOS blocks the first launch. If that documented path still fails, the last-resort local quarantine removal is:
@@ -71,9 +71,9 @@ To create a distributable image:
 ./scripts/build_dmg.sh
 ```
 
-### Windows 1.4.3
+### Windows 1.4.4-rc.1
 
-The primary Windows download is [`AACC-1.4.3-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.3/AACC-1.4.3-Setup.exe), accompanied by `AACC-1.4.3-Setup.exe.sha256`.
+The primary Windows RC download is [`AACC-1.4.4rc1-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4rc1-Setup.exe), accompanied by `AACC-1.4.4rc1-Setup.exe.sha256`.
 
 This per-user Setup installs for the current user without administrator elevation at `%LocalAppData%\Programs\AACC`. It always adds a Start Menu shortcut, offers an unchecked desktop shortcut, and adds no login item. Run the same Setup to upgrade in place; uninstall removes the program and shortcuts. Both upgrade and uninstall preserve AACC-owned data under `%APPDATA%\AACC`, including settings, history, database, credentials, and the protected Kimi reuse decision.
 

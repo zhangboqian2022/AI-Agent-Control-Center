@@ -44,9 +44,9 @@ OUTPUT = (
     Path(sys.argv[1])
     if len(sys.argv) > 1
     else Path(
-        "docs/images/panel-overview.en.png"
+        "docs/images/panel-overview-1.4.4-rc.1.en.png"
         if LANGUAGE == EN_US
-        else "docs/images/panel-overview.png"
+        else "docs/images/panel-overview-1.4.4-rc.1.png"
     )
 )
 DEMO_NOW = datetime(2026, 7, 27, 8, 0, tzinfo=UTC)

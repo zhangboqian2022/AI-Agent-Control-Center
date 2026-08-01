@@ -4,7 +4,7 @@ import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -145,7 +145,8 @@ class AppConfig(BaseModel):
             or parsed.fragment
         ):
             raise ValueError("opencode_workspace_url host must be opencode.ai")
-        if not parsed.path.startswith("/workspace/"):
+        decoded_path = unquote(parsed.path)
+        if re.fullmatch(r"/workspace/[A-Za-z0-9_-]+(?:/go)?/?", decoded_path) is None:
             raise ValueError("opencode_workspace_url must point to an opencode.ai workspace page")
         return value
 

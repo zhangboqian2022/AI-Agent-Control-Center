@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import aacc.app as app_module
+from aacc.adapter_discovery_service import AdapterDiscoveryService
 from aacc.app import build_runtime
 from aacc.discovery_service import (
     CodexDiscoveryService,
@@ -251,6 +252,26 @@ def test_untrusted_guidance_is_shown_after_core_services_start(
     )
     assert events.index("exec") < events.index("service-start")
     assert events.index("service-start") < events.index("guidance-show")
+
+
+def test_configured_adapter_starts_with_core_discovery_services(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    events: list[str] = []
+    runtime = _runtime_for_application_test(events)
+
+    def start_adapter() -> None:
+        events.append("adapter-start")
+        runtime.qt_app.exit(0)
+
+    runtime.adapter_discovery = SimpleNamespace(start=start_adapter)
+    _patch_application_shell(monkeypatch, events, runtime)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
+
+    assert (
+        app_module._run_application(tmp_path / "config.yaml", tmp_path / "aacc.db", tmp_path) == 0
+    )
+    assert events.index("service-start") < events.index("adapter-start")
 
 
 def test_web_start_shutdown_does_not_show_later_guidance_or_restart_components(
@@ -877,6 +898,7 @@ def test_build_runtime_creates_default_config_database_and_four_tasks(tmp_path: 
     assert runtime.automation.config is runtime.config
     assert isinstance(runtime.discovery, CodexDiscoveryService)
     assert isinstance(runtime.kimi_discovery, KimiDiscoveryService)
+    assert isinstance(runtime.adapter_discovery, AdapterDiscoveryService)
     runtime.close()
 
 

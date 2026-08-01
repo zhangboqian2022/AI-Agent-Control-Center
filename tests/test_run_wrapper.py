@@ -2,6 +2,7 @@ import subprocess
 from pathlib import Path
 
 import aacc.run_wrapper as wrapper_module
+from aacc.config import default_config
 from aacc.run_wrapper import terminate_process
 
 
@@ -39,6 +40,30 @@ def test_terminate_process_kills_and_reaps_after_timeout() -> None:
     assert process.terminated
     assert process.killed
     assert process.waits == [3.0, None]
+
+
+def test_status_does_not_use_proxy_environment(monkeypatch: object, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def post(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    monkeypatch.setattr(wrapper_module, "load_config", lambda _path: default_config())  # type: ignore[attr-defined]
+    monkeypatch.setattr(wrapper_module.httpx, "Client", FakeClient)  # type: ignore[attr-defined]
+
+    wrapper_module._status(tmp_path / "config.yaml", "task-1", "running", "test")
+
+    assert captured["trust_env"] is False
 
 
 def test_main_reports_success_and_restores_signal_handlers(monkeypatch: object) -> None:

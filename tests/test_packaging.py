@@ -97,6 +97,8 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
     script = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
     assert "CFBundleShortVersionString" in script
     assert "CFBundleVersion" in script
+    assert 'CFBundleVersion -string "$AACC_BUNDLE_VERSION"' in script
+    assert 'CFBundleVersion -string "3"' not in script
     assert "--exclude-module mypy" in script
     assert "--hidden-import Quartz" in script
     assert "--hidden-import PySide6.QtWebView" in script
@@ -108,7 +110,7 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-${AACC_VERSION}.dmg" in script
+    assert "AACC-${AACC_PUBLIC_VERSION}.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
     assert "SKIP_BUILD" in script
@@ -913,7 +915,7 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "10080" in content
         assert "300-minute" not in content
         assert "300 分钟" not in content
-        assert "shasum -a 256 AACC-1.4.3.dmg" in content
+        assert "shasum -a 256 AACC-1.4.4-rc.1.dmg" in content
         assert "xattr -cr /Applications/AACC.app" in content
 
 

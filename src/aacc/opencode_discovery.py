@@ -54,7 +54,8 @@ LIMIT ?
 """
 _PART_HISTORY_LIMIT = 64
 _STREAMING_PART_TYPES = {"text", "reasoning", "patch", "step-start"}
-_STEP_END_PART_TYPES = {"step-finish", "tool"}
+_ERROR_TOOL_STATES = {"error", "failed", "rejected"}
+_CANCELLED_TOOL_STATES = {"cancelled", "canceled"}
 
 _logger = logging.getLogger("aacc.opencode_discovery")
 
@@ -190,38 +191,44 @@ def evaluate_opencode_session_status(
     if snapshot is None or snapshot.part_type is None or snapshot.time_updated is None:
         if process_alive():
             return OpenCodeSessionStatus(TaskStatus.IDLE, "空闲", 0.7, None)
-        # A retained session with no readable part snapshot and no live
-        # OpenCode process cannot still be running.  Treat it as a terminal
-        # observation with the same confidence as other process-exit paths so
-        # a stale RUNNING state is allowed to turn green.
-        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "已完成", 0.92, None)
-    if not process_alive():
-        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "已完成", 0.92, snapshot.time_updated)
-    if snapshot.part_type == "tool" and snapshot.state_status == "pending":
-        fresh = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
-        if fresh:
-            return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
+        return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, None)
+    state_status = (
+        snapshot.state_status.casefold() if isinstance(snapshot.state_status, str) else None
+    )
+    if snapshot.part_type == "tool" and state_status == "pending":
         return OpenCodeSessionStatus(
             TaskStatus.WAITING_APPROVAL, "等待同意", 0.97, snapshot.time_updated
         )
-    if snapshot.part_type == "tool" and snapshot.state_status == "running":
-        return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.95, snapshot.time_updated)
+    if snapshot.part_type == "tool" and state_status in _ERROR_TOOL_STATES:
+        return OpenCodeSessionStatus(TaskStatus.ERROR, "执行失败", 0.96, snapshot.time_updated)
+    if snapshot.part_type == "tool" and state_status in _CANCELLED_TOOL_STATES:
+        return OpenCodeSessionStatus(TaskStatus.CANCELLED, "已取消", 0.96, snapshot.time_updated)
+    if snapshot.part_type == "tool" and state_status == "running":
+        if process_alive():
+            return OpenCodeSessionStatus(
+                TaskStatus.RUNNING, "正在运行", 0.95, snapshot.time_updated
+            )
+        return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, snapshot.time_updated)
     if (
         snapshot.completed_at is not None
         and snapshot.step_started_at is not None
         and snapshot.completed_at >= snapshot.step_started_at
     ):
         return OpenCodeSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated)
+    if snapshot.part_type == "step-finish" or (
+        snapshot.part_type == "tool" and state_status == "completed"
+    ):
+        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated)
+    if not process_alive():
+        return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, snapshot.time_updated)
     active = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
     if snapshot.part_type in _STREAMING_PART_TYPES and active:
         return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
-    if snapshot.part_type in _STEP_END_PART_TYPES:
-        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated)
     if process_alive():
         return OpenCodeSessionStatus(
             TaskStatus.WAITING_INPUT, "等待输入", 0.85, snapshot.time_updated
         )
-    return OpenCodeSessionStatus(TaskStatus.COMPLETED, "已完成", 0.92, snapshot.time_updated)
+    return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, snapshot.time_updated)
 
 
 class OpenCodeLocalDiscovery:
@@ -319,7 +326,17 @@ class OpenCodeLocalDiscovery:
                         confidence=evaluation.confidence,
                         started_at=(activity_at if status is TaskStatus.RUNNING else None),
                         updated_at=updated_at,
-                        finished_at=(updated_at if status is TaskStatus.COMPLETED else None),
+                        finished_at=(
+                            updated_at
+                            if status
+                            in {
+                                TaskStatus.COMPLETED,
+                                TaskStatus.ERROR,
+                                TaskStatus.CANCELLED,
+                                TaskStatus.STOPPED,
+                            }
+                            else None
+                        ),
                         pid=None,
                         session_id=session.session_id,
                         metadata=metadata,
@@ -344,7 +361,11 @@ class OpenCodeLocalDiscovery:
     def active_session_ids(self, *, limit: int = 4) -> set[str]:
         active: set[str] = set()
         for task in self.discover():
-            if task.state.status is TaskStatus.RUNNING and task.state.session_id is not None:
+            if (
+                task.state.status
+                in {TaskStatus.RUNNING, TaskStatus.WAITING_INPUT, TaskStatus.WAITING_APPROVAL}
+                and task.state.session_id is not None
+            ):
                 active.add(task.state.session_id)
                 if len(active) >= max(1, limit):
                     break

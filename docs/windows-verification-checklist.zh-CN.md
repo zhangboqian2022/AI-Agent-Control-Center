@@ -1,4 +1,4 @@
-# Windows 10/11 人工验证清单 — AACC 1.4.3
+# Windows 10/11 人工验证清单 — AACC 1.4.4-rc.1
 
 只记录实际观察结果；未勾选项不代表兼容性承诺。GitHub Actions 在 Windows
 Server 2022/2025 上执行构建与自动化产品冒烟，但它**不能**替代本清单中的消费级
@@ -6,7 +6,7 @@ Windows 10/11 真机验证，也不能替代另一账户拒读测试。
 完成本清单只构成 Kimi 会话保留与退出验证所需 macOS 与 Windows 人工
 签字中的 Windows 部分。
 
-候选安装包：`AACC-1.4.3-Setup.exe`
+候选安装包：`AACC-1.4.4rc1-Setup.exe`
 
 验证人：
 
@@ -21,7 +21,7 @@ Windows 版本（`Windows 10` 或 `Windows 11`）、版本号与内部版本：
 Commit 与候选文件 SHA-256：
 
 - [ ] **校验值与 SmartScreen**：Setup 的 SHA-256 与
-  `AACC-1.4.3-Setup.exe.sha256` 一致；启动未签名候选版时出现预期的“未知
+  `AACC-1.4.4rc1-Setup.exe.sha256` 一致；启动未签名候选版时出现预期的“未知
   发布者”/SmartScreen 路径，选择“更多信息 → 仍要运行”后进入安装器。
 - [ ] **当前用户安装**：Setup 不请求管理员提权，并安装到
   `%LocalAppData%\Programs\AACC`。

@@ -25,8 +25,8 @@ class Recorder:
 
 
 def test_applescript_quote_escapes_quotes_backslashes_and_newlines() -> None:
-    quoted = applescript_quote('A "window"\\name\nnext')
-    assert quoted == '"A \\"window\\"\\\\name\\nnext"'
+    quoted = applescript_quote('A "window"\\name\r\nnext')
+    assert quoted == '"A \\"window\\"\\\\name\\r\\nnext"'
 
 
 def test_focus_uses_argument_array_and_escaped_window_title() -> None:
@@ -45,9 +45,10 @@ def test_send_key_focuses_before_injecting_whitelisted_key() -> None:
     recorder = Recorder()
     automation = MacAutomation(config, runner=recorder)
     automation.send_key(config.tasks[0], "ENTER")
-    assert len(recorder.calls) == 2
+    assert len(recorder.calls) == 3
     assert "activate" in recorder.calls[0][2]
-    assert "key code 36" in recorder.calls[1][2]
+    assert "frontmost" in recorder.calls[1][2]
+    assert "key code 36" in recorder.calls[2][2]
 
 
 def test_send_control_c_uses_control_modifier() -> None:
@@ -125,6 +126,35 @@ def test_focus_supports_iterm_title_and_plain_app_bundle() -> None:
     assert "com.openai.codex" in script
     assert "activate" in script
     assert "set miniaturized of windows to false" in script
+
+
+def test_terminal_focus_requires_a_unique_title_match() -> None:
+    config = default_config()
+    task = config.tasks[0]
+    task.terminal.window_title = "Agent Window"
+    script = MacAutomation(config, runner=Recorder())._terminal_script(task)
+    assert "matchingWindows" in script
+    assert "count of matchingWindows is not 1" in script
+
+
+def test_frontmost_check_supports_terminal_bundle_variants_and_rejects_unconfigured_app() -> None:
+    config = default_config()
+    automation = MacAutomation(config, runner=Recorder())
+
+    iterm = config.tasks[0].model_copy(deep=True)
+    iterm.terminal.type = "iterm2"
+    iterm.terminal.window_title = "Agent Window"
+    assert "com.googlecode.iterm2" in automation._frontmost_check_script(iterm)
+
+    terminal = config.tasks[0].model_copy(deep=True)
+    terminal.terminal.type = "terminal_app"
+    assert "com.apple.Terminal" in automation._frontmost_check_script(terminal)
+
+    app = config.tasks[0].model_copy(deep=True)
+    app.terminal.type = "mac_app"
+    app.terminal.app_bundle_id = None
+    with pytest.raises(AutomationError, match="bundle identifier"):
+        automation._frontmost_check_script(app)
 
 
 def test_voice_focuses_and_triggers_double_fn() -> None:
@@ -231,7 +261,10 @@ def test_concurrent_send_text_keeps_focus_and_input_together() -> None:
         ]
         assert [future.result(timeout=2) for future in futures] == ["文本已发送"] * 10
 
-    assert len(calls) == 20
-    for focus_call, input_call in zip(calls[::2], calls[1::2], strict=True):
+    assert len(calls) == 30
+    for focus_call, verify_call, input_call in zip(
+        calls[::3], calls[1::3], calls[2::3], strict=True
+    ):
         index = int(input_call[-1].removeprefix("payload-"))
         assert f"task-{index}" in focus_call[2]
+        assert "frontmost" in verify_call[2]
