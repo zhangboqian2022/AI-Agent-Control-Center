@@ -16,5 +16,5 @@
 - Windows CI 运行于托管 Windows Server SKU；消费级 Windows 10/11 行为（SmartScreen、托盘、窗口聚焦/热键、长时间运行）以人工验证清单覆盖，非自动化门禁。
 - F13–F20 热键在多数 Windows 键盘需要 Fn 层映射。
 
-- OpenCode 用量（Go 套餐）从 opencode.ai /go 工作区页面的渲染结果提取；若 opencode.ai 改版该页面布局，提取可能需要跟进。opencode 会话 Cookie 保存在 macOS 网页视图的每应用网页存储中。
+- OpenCode 额度（Go 套餐）从 opencode.ai /go 工作区页面的渲染结果提取；若 opencode.ai 改版该页面布局，提取可能需要跟进。opencode 会话 Cookie 保存在 macOS 网页视图的每应用网页存储中。
 - OpenCode 任务状态依据本机部件快照推断（官方 idle/busy 为运行时事件不落库），采用 90 秒活动窗口；状态为近似。OpenCode 支持先做 macOS；Windows 为后续迭代。
