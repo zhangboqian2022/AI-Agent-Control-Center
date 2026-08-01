@@ -127,6 +127,22 @@ def test_service_logout_clears_snapshot(qapp, tmp_path: Path) -> None:
     assert service.last_quota is None
 
 
+def test_service_logout_creates_session_to_clean_persisted_state(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    del qapp
+    import aacc.opencode_web_quota_service as module
+
+    session = FakeSession()
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module, "_create_native_web_session", lambda *_args, **_kwargs: session)
+    service = OpenCodeWebQuotaService(tmp_path)
+
+    assert service.logout() is True
+    assert session.logouts == 1
+    service.stop()
+
+
 def test_service_open_login_delegates_to_session(qapp, tmp_path: Path) -> None:
     session = FakeSession()
     service = OpenCodeWebQuotaService(tmp_path, session=session)

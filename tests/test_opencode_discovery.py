@@ -3,11 +3,12 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from aacc.models import TaskStatus
+from aacc.models import TaskState, TaskStatus
 from aacc.opencode_discovery import (
     OpenCodeLocalDiscovery,
     OpenCodePartSnapshot,
@@ -15,6 +16,7 @@ from aacc.opencode_discovery import (
     default_opencode_db_paths,
     evaluate_opencode_session_status,
 )
+from aacc.state_machine import StateMachine
 
 
 def _now() -> datetime:
@@ -206,9 +208,26 @@ def test_no_parts_with_process_is_idle() -> None:
     assert result.status is TaskStatus.IDLE
 
 
-def test_no_parts_without_process_is_unknown() -> None:
+def test_no_parts_without_process_completes_stale_running_state() -> None:
     result = _evaluate(None, alive=False)
-    assert result.status is TaskStatus.UNKNOWN
+    assert result.status is TaskStatus.COMPLETED
+    current = TaskState.new(
+        "opencode:session",
+        TaskStatus.RUNNING,
+        source="opencode_local",
+        confidence=0.9,
+    )
+    candidate = TaskState(
+        task_id=current.task_id,
+        status=result.status,
+        message=result.message,
+        source="opencode_local",
+        confidence=result.confidence,
+        updated_at=_now(),
+    )
+    transitioned = StateMachine.transition(current, candidate)
+    assert transitioned is not None
+    assert transitioned.status is TaskStatus.COMPLETED
 
 
 def test_activity_at_uses_part_timestamp() -> None:
@@ -447,6 +466,87 @@ def test_windows_discovery_uses_session_work_dir_for_terminal_title(
     task = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True).discover()[0]
 
     assert task.config.terminal.window_title == "aacc"
+
+
+def test_matching_process_cwds_scopes_alive_state_to_opencode_processes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aacc.opencode_discovery as module
+
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    processes = [
+        SimpleNamespace(info={"name": "other", "cwd": "/wrong"}),
+        SimpleNamespace(info={"name": "opencode", "cwd": "/work/a"}),
+        SimpleNamespace(info={"name": "opencode.exe", "cwd": None}),
+    ]
+    monkeypatch.setattr(module.psutil, "process_iter", lambda _attrs: processes)
+
+    working_dirs, unreadable = module._matching_process_cwds()
+
+    assert working_dirs == {module._normalize_process_path("/work/a")}
+    assert unreadable is True
+
+
+def test_matching_process_cwds_degrades_conservatively_on_process_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aacc.opencode_discovery as module
+
+    def fail(_attrs: object) -> list[object]:
+        raise OSError("process listing unavailable")
+
+    monkeypatch.setattr(module.psutil, "process_iter", fail)
+
+    assert module._matching_process_cwds() == (set(), True)
+
+
+def test_discovery_uses_session_directory_matching_without_global_process_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_match", directory="/work/match", updated=now)
+    _add_session(connection, "ses_stopped", directory="/work/stopped", updated=now)
+    _add_session(connection, "ses_unknown", directory=None, updated=now)
+    _add_part(connection, "ses_match", "match-text", {"type": "text"}, updated=now)
+    _add_part(connection, "ses_stopped", "stopped-text", {"type": "text"}, updated=now)
+    _add_part(connection, "ses_unknown", "unknown-text", {"type": "text"}, updated=now)
+    connection.commit()
+    connection.close()
+    import aacc.opencode_discovery as module
+
+    monkeypatch.setattr(
+        module,
+        "_matching_process_cwds",
+        lambda: ({module._normalize_process_path("/work/match")}, False),
+    )
+
+    tasks = {task.config.id: task for task in OpenCodeLocalDiscovery(db_path=path).discover()}
+
+    assert tasks["opencode:ses_match"].state.status is TaskStatus.RUNNING
+    assert tasks["opencode:ses_stopped"].state.status is TaskStatus.COMPLETED
+    assert tasks["opencode:ses_unknown"].state.status is TaskStatus.RUNNING
+
+
+def test_latest_snapshot_ignores_empty_and_non_string_history_rows(tmp_path: Path) -> None:
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_empty", updated=now)
+    _add_session(connection, "ses_history", updated=now)
+    _add_part(connection, "ses_history", "latest", {"type": "text"}, updated=now)
+    _add_part(
+        connection,
+        "ses_history",
+        "older-invalid",
+        {"state": {"status": "completed"}},
+        updated=now - timedelta(seconds=1),
+    )
+    connection.commit()
+    connection.close()
+
+    tasks = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True).discover()
+
+    assert {task.config.id for task in tasks} == {"opencode:ses_empty", "opencode:ses_history"}
 
 
 def test_connect_opens_read_only(tmp_path: Path, monkeypatch) -> None:

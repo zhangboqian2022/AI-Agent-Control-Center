@@ -140,6 +140,7 @@ class AppConfig(BaseModel):
         if (
             parsed.scheme != "https"
             or parsed.netloc != "opencode.ai"
+            or parsed.params
             or parsed.query
             or parsed.fragment
         ):

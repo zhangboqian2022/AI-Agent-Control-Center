@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
@@ -35,9 +36,11 @@ from aacc.kimi_edge_cdp import (
 from aacc.opencode_web_error import OpenCodeQuotaErrorCategory
 
 OPENCODE_EDGE_PROFILE_NAME = "opencode-edge-profile"
+_QUARANTINE_PREFIX = f".{OPENCODE_EDGE_PROFILE_NAME}.logout-"
 _WINDOW_KEYS = frozenset({"usagePercent", "resetInSec"})
 _WORKSPACE_PATH = re.compile(r"^/workspace/[A-Za-z0-9_-]+(?:/go)?/?$")
 _PAGE_PATH = re.compile(r"^/devtools/page/[A-Za-z0-9_-]+$")
+_logger = logging.getLogger("aacc.opencode_edge_cdp")
 
 
 class OpenCodeEdgeQuotaError(RuntimeError):
@@ -79,12 +82,22 @@ def validate_owned_opencode_profile(profile: Path, local_app_data: Path) -> None
 
 def clear_owned_opencode_profile(profile: Path, local_app_data: Path) -> None:
     validate_owned_opencode_profile(profile, local_app_data)
-    if not profile.exists():
+    if not profile.parent.exists():
         return
-    quarantine = profile.parent / f".{OPENCODE_EDGE_PROFILE_NAME}.logout-{uuid4().hex}"
     try:
-        os.replace(profile, quarantine)
-        shutil.rmtree(quarantine)
+        if profile.exists():
+            quarantine = profile.parent / f"{_QUARANTINE_PREFIX}{uuid4().hex}"
+            os.replace(profile, quarantine)
+        # A failed recursive delete must be retryable even though the atomic
+        # rename already removed the live profile path.
+        for candidate in profile.parent.iterdir():
+            if not candidate.name.startswith(_QUARANTINE_PREFIX):
+                continue
+            if _is_reparse_point(candidate) or not candidate.is_dir():
+                raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED)
+            shutil.rmtree(candidate)
+    except OpenCodeEdgeQuotaError:
+        raise
     except OSError as error:
         raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED) from error
 
@@ -95,6 +108,7 @@ def _validate_workspace_url(workspace_url: str) -> None:
         parsed.scheme != "https"
         or parsed.netloc != "opencode.ai"
         or _WORKSPACE_PATH.fullmatch(parsed.path) is None
+        or parsed.params
         or parsed.query
         or parsed.fragment
     ):
@@ -147,6 +161,7 @@ def select_opencode_target(
             parsed_page.scheme != "https"
             or parsed_page.netloc != "opencode.ai"
             or parsed_page.path.rstrip("/") != expected_path
+            or parsed_page.params
             or parsed_page.query
             or parsed_page.fragment
         ):
@@ -377,8 +392,8 @@ class ManagedOpenCodeEdgeOperation:
                 with suppress(Exception):
                     browser.close_browser()
                 browser.close()
-            with suppress(Exception):
-                self._shutdown_process(process)
+            if not self._shutdown_process(process):
+                _logger.error("OpenCode Edge process did not stop cleanly")
 
     def _wait_for_endpoint(
         self,
@@ -408,12 +423,20 @@ class ManagedOpenCodeEdgeOperation:
         except OSError as error:
             raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED) from error
 
-    def _shutdown_process(self, process: _ProcessLike) -> None:
+    def _shutdown_process(self, process: _ProcessLike) -> bool:
         try:
             process.wait(timeout=EDGE_SHUTDOWN_TIMEOUT_SECONDS)
-            return
+            return True
         except Exception:
             pass
-        self._process_tree_terminator(process)
-        with suppress(Exception):
+        try:
+            self._process_tree_terminator(process)
+        except Exception:
+            _logger.error("OpenCode Edge process tree termination failed", exc_info=True)
+            return False
+        try:
             process.wait(timeout=EDGE_SHUTDOWN_TIMEOUT_SECONDS)
+            return True
+        except Exception:
+            _logger.error("OpenCode Edge process remained alive after termination", exc_info=True)
+            return False
