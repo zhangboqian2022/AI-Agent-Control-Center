@@ -164,7 +164,7 @@ class CodexLocalDiscovery:
                         slot=1,
                         name=session["title"] or f"Codex 任务 {conversation_id[:8]}",
                         agent=AgentConfig(type="codex_cli", display_name="Codex"),
-                        terminal=_default_terminal_config(),
+                        terminal=_default_terminal_config(session_work_dirs.get(conversation_id)),
                     ),
                     state=TaskState(
                         task_id=task_id,
