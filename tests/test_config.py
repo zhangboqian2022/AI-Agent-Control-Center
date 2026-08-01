@@ -351,6 +351,18 @@ def test_opencode_workspace_url_rejects_http_scheme() -> None:
         AppConfig(opencode_workspace_url="http://opencode.ai/workspace/wrk_1")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://opencode.ai/workspace/wrk_1/go?tab=quota",
+        "https://opencode.ai/workspace/wrk_1/go#quota",
+    ],
+)
+def test_opencode_workspace_url_rejects_query_and_fragment(url: str) -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(opencode_workspace_url=url)
+
+
 def test_opencode_workspace_url_rejects_non_workspace_path() -> None:
     with pytest.raises(ValidationError):
         AppConfig(opencode_workspace_url="https://opencode.ai/zen")

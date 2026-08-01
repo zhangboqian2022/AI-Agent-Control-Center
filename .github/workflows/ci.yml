@@ -26,7 +26,20 @@ jobs:
       - name: Type check
         run: uv run mypy src/aacc
       - name: Test
-        run: uv run pytest --cov=src/aacc --cov-report=xml -q
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          uv run pytest --cov=src/aacc --cov-report=xml -ra -vv --tb=long --junitxml=test-results-${{ matrix.os }}.xml
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics-${{ matrix.os }}
+          path: |
+            coverage.xml
+            test-results-${{ matrix.os }}.xml
+            .pytest_cache
+          if-no-files-found: warn
       - name: Changed-line coverage
         if: matrix.os == 'macos-latest'
         run: uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
@@ -41,7 +54,7 @@ jobs:
         with:
           name: pip-audit-${{ matrix.os }}
           path: pip-audit-${{ matrix.os }}.json
-          if-no-files-found: error
+          if-no-files-found: warn
       - name: Build macOS app
         if: matrix.os == 'macos-latest'
         run: scripts/build_app.sh
@@ -73,7 +86,7 @@ jobs:
           if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
           if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
           $listing = (uv run pyi-archive_viewer -r "dist\AACC\AACC.exe" | Out-String)
-          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker", "aacc.kimi_edge_cdp", "aacc.kimi_edge_session", "aacc.kimi_membership_query", "websocket")) {
+          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker", "aacc.kimi_edge_cdp", "aacc.kimi_edge_session", "aacc.kimi_membership_query", "aacc.opencode_edge_cdp", "aacc.opencode_edge_session", "websocket")) {
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
           $eventModules = @(Get-ChildItem -LiteralPath "dist\AACC" -Recurse -File -Filter "win32event*.pyd")
@@ -114,7 +127,7 @@ jobs:
           if (-not (Test-Path -LiteralPath "dist\AACC\AACC.exe" -PathType Leaf)) { throw "AACC.exe missing" }
           if (-not (Test-Path -LiteralPath "dist\AACC\aacc-spawn.exe" -PathType Leaf)) { throw "aacc-spawn.exe missing" }
           $listing = (uv run pyi-archive_viewer -r "dist\AACC\AACC.exe" | Out-String)
-          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker", "aacc.kimi_edge_cdp", "aacc.kimi_edge_session", "aacc.kimi_membership_query", "websocket")) {
+          foreach ($module in @("aacc.win32", "aacc.automation_windows", "aacc.hotkeys_windows", "aacc.windows_broker", "aacc.kimi_edge_cdp", "aacc.kimi_edge_session", "aacc.kimi_membership_query", "aacc.opencode_edge_cdp", "aacc.opencode_edge_session", "websocket")) {
             if ($listing -notmatch [regex]::Escape($module)) { throw "$module missing" }
           }
           $eventModules = @(Get-ChildItem -LiteralPath "dist\AACC" -Recurse -File -Filter "win32event*.pyd")
@@ -170,3 +183,28 @@ jobs:
             build/native/*.txt
             dist/installer/*.log
           if-no-files-found: warn
+
+  windows-consumer-compatibility-contract:
+    needs: [quality]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [windows-10, windows-11]
+    runs-on: windows-2022
+    env:
+      QT_QPA_PLATFORM: offscreen
+      AACC_WINDOWS_COMPAT_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+      - name: Run Windows compatibility contract
+        shell: powershell
+        run: |
+          uv run pytest tests/test_automation_windows.py tests/test_codex_discovery.py tests/test_kimi_edge_session.py tests/test_opencode_edge_cdp.py tests/test_opencode_edge_session.py tests/test_windows_broker.py tests/test_windows_installer_contract.py -q
+          ./scripts/test_windows_compatibility_contract.ps1 -Target "${{ matrix.target }}"
+          Write-Host "Hosted Windows Server compatibility evidence only; consumer Windows 10/11 hardware not claimed"

@@ -143,7 +143,10 @@ def test_service_stop_is_idempotent(qapp, tmp_path: Path) -> None:
     assert session.closed == 1
 
 
-def test_service_creates_native_session_on_demand(qapp, tmp_path: Path) -> None:
+def test_service_creates_native_session_on_demand(qapp, tmp_path: Path, monkeypatch) -> None:
+    import aacc.opencode_web_quota_service as module
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
     service = OpenCodeWebQuotaService(tmp_path)
     assert service._session is None
     session = service._ensure_session()

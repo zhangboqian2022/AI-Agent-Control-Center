@@ -137,7 +137,12 @@ class AppConfig(BaseModel):
             parsed = urlparse(value)
         except ValueError as error:
             raise ValueError("opencode_workspace_url must be a valid URL") from error
-        if parsed.scheme != "https" or parsed.netloc != "opencode.ai":
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "opencode.ai"
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("opencode_workspace_url host must be opencode.ai")
         if not parsed.path.startswith("/workspace/"):
             raise ValueError("opencode_workspace_url must point to an opencode.ai workspace page")

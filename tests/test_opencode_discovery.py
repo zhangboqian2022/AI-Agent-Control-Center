@@ -9,8 +9,10 @@ import pytest
 
 from aacc.models import TaskStatus
 from aacc.opencode_discovery import (
+    OpenCodeLocalDiscovery,
     OpenCodePartSnapshot,
     OpenCodeSessionStatus,
+    default_opencode_db_paths,
     evaluate_opencode_session_status,
 )
 
@@ -287,8 +289,6 @@ def _add_part(
 
 
 def test_discover_reports_waiting_approval(tmp_path: Path, monkeypatch) -> None:
-    from aacc.opencode_discovery import OpenCodeLocalDiscovery
-
     path, connection = _make_db(tmp_path)
     _add_session(connection, "ses_1", title="任务一", directory="/work/a")
     _add_part(
@@ -311,8 +311,6 @@ def test_discover_reports_waiting_approval(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_discover_filters_children_and_archived(tmp_path: Path) -> None:
-    from aacc.opencode_discovery import OpenCodeLocalDiscovery
-
     path, connection = _make_db(tmp_path)
     now = datetime.now(UTC)
     _add_session(connection, "ses_1", title="主会话", updated=now)
@@ -339,8 +337,6 @@ def test_discover_filters_children_and_archived(tmp_path: Path) -> None:
 
 
 def test_discover_orders_by_recency_with_running_first(tmp_path: Path) -> None:
-    from aacc.opencode_discovery import OpenCodeLocalDiscovery
-
     path, connection = _make_db(tmp_path)
     now = datetime.now(UTC)
     _add_session(connection, "ses_old", title="旧会话", updated=now - timedelta(minutes=5))
@@ -368,8 +364,6 @@ def test_discover_orders_by_recency_with_running_first(tmp_path: Path) -> None:
 
 
 def test_discover_uses_session_specific_process_liveness(tmp_path: Path) -> None:
-    from aacc.opencode_discovery import OpenCodeLocalDiscovery
-
     path, connection = _make_db(tmp_path)
     now = datetime.now(UTC)
     _add_session(connection, "ses_alive", directory="/work/alive", updated=now)
@@ -390,8 +384,6 @@ def test_discover_uses_session_specific_process_liveness(tmp_path: Path) -> None
 
 
 def test_discover_selects_only_requested_ids(tmp_path: Path) -> None:
-    from aacc.opencode_discovery import OpenCodeLocalDiscovery
-
     path, connection = _make_db(tmp_path)
     now = datetime.now(UTC)
     _add_session(connection, "ses_1", title="一", updated=now)
@@ -406,20 +398,55 @@ def test_discover_selects_only_requested_ids(tmp_path: Path) -> None:
 
 
 def test_discover_missing_db_returns_empty(tmp_path: Path) -> None:
-    from aacc.opencode_discovery import OpenCodeLocalDiscovery
-
     discovery = OpenCodeLocalDiscovery(db_path=tmp_path / "missing.db", process_alive=lambda: True)
     assert discovery.discover() == []
 
 
 def test_discover_corrupt_db_raises_error(tmp_path: Path) -> None:
-    from aacc.opencode_discovery import OpenCodeDiscoveryError, OpenCodeLocalDiscovery
+    from aacc.opencode_discovery import OpenCodeDiscoveryError
 
     path = tmp_path / "bad.db"
     path.write_bytes(b"not a sqlite database")
     discovery = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True)
     with pytest.raises(OpenCodeDiscoveryError):
         discovery.discover()
+
+
+def test_windows_db_candidates_include_local_app_data_and_profile_fallback() -> None:
+    candidates = default_opencode_db_paths(
+        platform="win32",
+        environ={"LOCALAPPDATA": r"C:\Users\tester\AppData\Local"},
+        home=Path(r"C:\Users\tester"),
+    )
+
+    assert candidates[0] == Path(r"C:\Users\tester\AppData\Local") / "opencode" / "opencode.db"
+    assert Path(r"C:\Users\tester") / ".local" / "share" / "opencode" / "opencode.db" in candidates
+
+
+def test_non_windows_db_candidate_respects_xdg_data_home() -> None:
+    candidates = default_opencode_db_paths(
+        platform="darwin",
+        environ={"XDG_DATA_HOME": "/tmp/aacc-data"},
+        home=Path("/Users/tester"),
+    )
+
+    assert candidates[0] == Path("/tmp/aacc-data/opencode/opencode.db")
+
+
+def test_windows_discovery_uses_session_work_dir_for_terminal_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_windows", directory="C:/dev/aacc")
+    _add_part(connection, "ses_windows", "part", {"type": "text"}, updated=now)
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr("aacc.opencode_discovery.sys.platform", "win32")
+
+    task = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True).discover()[0]
+
+    assert task.config.terminal.window_title == "aacc"
 
 
 def test_connect_opens_read_only(tmp_path: Path, monkeypatch) -> None:

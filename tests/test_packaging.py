@@ -466,6 +466,8 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
         "aacc.kimi_edge_cdp",
         "aacc.kimi_edge_session",
         "aacc.kimi_membership_query",
+        "aacc.opencode_edge_cdp",
+        "aacc.opencode_edge_session",
         "websocket",
     ):
         assert module in workflow

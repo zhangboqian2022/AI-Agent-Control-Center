@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import shutil
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -12,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from aacc.file_security import protect_directory
 from aacc.kimi_edge_cdp import (
@@ -33,9 +35,9 @@ from aacc.kimi_edge_cdp import (
 from aacc.opencode_web_error import OpenCodeQuotaErrorCategory
 
 OPENCODE_EDGE_PROFILE_NAME = "opencode-edge-profile"
-_REPARSE_POINT_ATTRIBUTE = 0x400
 _WINDOW_KEYS = frozenset({"usagePercent", "resetInSec"})
-_WORKSPACE_PATH = re.compile(r"^/workspace/[A-Za-z0-9_-]+(?:/go)?(?:/)?$")
+_WORKSPACE_PATH = re.compile(r"^/workspace/[A-Za-z0-9_-]+(?:/go)?/?$")
+_PAGE_PATH = re.compile(r"^/devtools/page/[A-Za-z0-9_-]+$")
 
 
 class OpenCodeEdgeQuotaError(RuntimeError):
@@ -79,17 +81,10 @@ def clear_owned_opencode_profile(profile: Path, local_app_data: Path) -> None:
     validate_owned_opencode_profile(profile, local_app_data)
     if not profile.exists():
         return
-    quarantine = profile.parent / f".{OPENCODE_EDGE_PROFILE_NAME}.logout"
+    quarantine = profile.parent / f".{OPENCODE_EDGE_PROFILE_NAME}.logout-{uuid4().hex}"
     try:
         os.replace(profile, quarantine)
-        for child in quarantine.iterdir():
-            if child.is_dir() and not _is_reparse_point(child):
-                import shutil
-
-                shutil.rmtree(child)
-            elif not _is_reparse_point(child):
-                child.unlink()
-        quarantine.rmdir()
+        shutil.rmtree(quarantine)
     except OSError as error:
         raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED) from error
 
@@ -100,6 +95,8 @@ def _validate_workspace_url(workspace_url: str) -> None:
         parsed.scheme != "https"
         or parsed.netloc != "opencode.ai"
         or _WORKSPACE_PATH.fullmatch(parsed.path) is None
+        or parsed.query
+        or parsed.fragment
     ):
         raise ValueError("invalid OpenCode workspace URL")
 
@@ -128,7 +125,14 @@ def build_opencode_edge_launch(
     )
 
 
-def select_opencode_target(targets: object, *, expected_port: int) -> str:
+def select_opencode_target(
+    targets: object,
+    *,
+    expected_port: int,
+    expected_workspace_url: str,
+) -> str:
+    _validate_workspace_url(expected_workspace_url)
+    expected_path = urlparse(expected_workspace_url).path.rstrip("/")
     if not isinstance(targets, list):
         raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED)
     for candidate in targets:
@@ -137,25 +141,28 @@ def select_opencode_target(targets: object, *, expected_port: int) -> str:
         page_url = candidate.get("url")
         websocket_url = candidate.get("webSocketDebuggerUrl")
         parsed_page = urlparse(page_url) if isinstance(page_url, str) else None
-        if candidate.get("type") == "page" and (
-            parsed_page is None
-            or parsed_page.scheme != "https"
-            or parsed_page.netloc != "opencode.ai"
-            or not parsed_page.path.startswith("/workspace/")
-        ):
-            raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED)
+        if candidate.get("type") != "page" or parsed_page is None:
+            continue
         if (
-            candidate.get("type") != "page"
-            or parsed_page is None
-            or not isinstance(websocket_url, str)
+            parsed_page.scheme != "https"
+            or parsed_page.netloc != "opencode.ai"
+            or parsed_page.path.rstrip("/") != expected_path
+            or parsed_page.query
+            or parsed_page.fragment
         ):
             continue
+        if not isinstance(websocket_url, str):
+            raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED)
         parsed_socket = urlparse(websocket_url)
+        try:
+            socket_port = parsed_socket.port
+        except ValueError as error:
+            raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED) from error
         if (
             parsed_socket.scheme == "ws"
             and parsed_socket.hostname == "127.0.0.1"
-            and parsed_socket.port == expected_port
-            and parsed_socket.path.startswith("/devtools/page/")
+            and socket_port == expected_port
+            and _PAGE_PATH.fullmatch(parsed_socket.path) is not None
             and not parsed_socket.query
             and not parsed_socket.fragment
         ):
@@ -179,9 +186,12 @@ def opencode_dom_extract_expression(workspace_url: str) -> str:
     if (minutes) seconds += parseInt(minutes[1], 10) * 60;
     return seconds > 0 ? seconds : null;
   };
-  for (let attempt = 0; attempt <= 50; attempt += 1) {
+  for (let attempt = 0; attempt <= 7; attempt += 1) {
     const text = document.body ? document.body.innerText : '';
     const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+    if (/(?:sign in|log in|continue with (?:github|google)|登录)/i.test(text)) {
+      return {kind: 'unauthorized'};
+    }
     const percentages = [];
     const resets = [];
     for (const line of lines) {
@@ -200,7 +210,7 @@ def opencode_dom_extract_expression(workspace_url: str) -> str:
         }}
       };
     }
-    await wait(1000);
+    await wait(500);
   }
   return {kind: 'error', message: 'DOM_TIMEOUT'};
 })()
@@ -238,9 +248,11 @@ def parse_opencode_edge_payload(payload: object) -> dict[str, object]:
         raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED)
     raw = payload.get("raw")
     subscription = raw.get("subscription") if isinstance(raw, dict) else None
-    if not isinstance(subscription, dict) or not set(subscription).issubset(
-        {"rollingUsage", "weeklyUsage", "monthlyUsage"}
-    ):
+    if not isinstance(subscription, dict) or set(subscription) != {
+        "rollingUsage",
+        "weeklyUsage",
+        "monthlyUsage",
+    }:
         raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED)
     safe_subscription: dict[str, object] = {}
     for key, value in subscription.items():
@@ -326,7 +338,11 @@ class ManagedOpenCodeEdgeOperation:
                     raise OpenCodeEdgeQuotaError(OpenCodeQuotaErrorCategory.REFRESH_FAILED)
                 try:
                     targets = self._target_loader(endpoint.http_origin)
-                    page_url = select_opencode_target(targets, expected_port=port)
+                    page_url = select_opencode_target(
+                        targets,
+                        expected_port=port,
+                        expected_workspace_url=self.workspace_url,
+                    )
                     page = CdpConnection(self._socket_factory(page_url))  # type: ignore[arg-type]
                     try:
                         payload = page.evaluate(self._expression_factory())
@@ -361,7 +377,8 @@ class ManagedOpenCodeEdgeOperation:
                 with suppress(Exception):
                     browser.close_browser()
                 browser.close()
-            self._shutdown_process(process)
+            with suppress(Exception):
+                self._shutdown_process(process)
 
     def _wait_for_endpoint(
         self,
