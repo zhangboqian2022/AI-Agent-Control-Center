@@ -47,80 +47,68 @@ def workspace_id_from_url(url: str) -> str | None:
     return match.group(1) if match else None
 
 
-def opencode_usage_fetch_script(url: str, generation: int) -> str:
-    """Return the same-origin usage request used by the native web view."""
+def opencode_dom_extract_script(url: str, generation: int) -> str:
+    """Return a script that extracts rendered usage data from the workspace DOM.
 
-    workspace_id = workspace_id_from_url(url)
-    if workspace_id is None:
+    The workspace /go page renders the Go-plan usage bars (rolling / weekly /
+    monthly) with percentages and reset countdowns directly in the DOM. This
+    script reads the rendered text, extracts the three percentage values and
+    reset countdowns, and bridges them up via document.title.
+    """
+
+    if workspace_id_from_url(url) is None:
         return ""
-    body = json.dumps(
-        {
-            "t": {"t": 15, "l": 1, "c": "Array", "a": [{"t": 2, "s": workspace_id}]},
-            "f": 31,
-            "m": [],
-        },
-        separators=(",", ":"),
-    )
-    return f"""
-(() => {{
-  const prefix = {json.dumps(BRIDGE_PREFIX)};
-  const generation = {generation};
-  const controller = new AbortController();
-  const deadline = setTimeout(() => controller.abort(), 15000);
-  const emit = (payload) => {{
+
+    template = r"""
+(() => {
+  const prefix = __PREFIX__;
+  const generation = __GEN__;
+  const emit = (payload) => {
     document.title = prefix + JSON.stringify(payload);
-  }};
-  const findSubscription = (node, depth) => {{
-    if (!node || typeof node !== 'object' || depth > 6) return null;
-    if (node.rollingUsage || node.weeklyUsage || node.monthlyUsage) return node;
-    for (const key in node) {{
-      if (Object.prototype.hasOwnProperty.call(node, key)) {{
-        const found = findSubscription(node[key], depth + 1);
-        if (found) return found;
-      }}
-    }}
-    return null;
-  }};
-  const parse = (text) => {{
-    const trimmed = String(text || '').trim();
-    if (!trimmed) return null;
-    const equals = trimmed.indexOf('=');
-    const candidate = equals === -1 ? trimmed : trimmed.slice(equals + 1);
-    try {{ return JSON.parse(candidate); }} catch (_) {{ return null; }}
-  }};
-  fetch('/_server', {{
-    method: 'POST',
-    headers: {{
-      'Content-Type': 'application/json',
-      'X-Server-Id': {json.dumps(SERVER_FN_HASH)},
-      'X-Server-Instance': 'server-fn:1'
-    }},
-    credentials: 'include',
-    signal: controller.signal,
-    body: {json.dumps(body)}
-  }}).then(async (response) => {{
-    if (response.status === 401 || response.status === 403) {{
-      throw new Error('UNAUTHORIZED:' + response.status);
-    }}
-    if (!response.ok) {{
-      throw new Error('HTTP:' + response.status);
-    }}
-    const subscription = findSubscription(parse(await response.text()), 0);
-    if (!subscription) {{
-      throw new Error('PARSE_FAILED');
-    }}
-    emit({{kind: 'quota', generation, raw: {{subscription}}}});
-  }}).catch((error) => {{
-    controller.abort();
-    const message = String(error && error.message || error);
-    emit({{
-      kind: message.startsWith('UNAUTHORIZED:') ? 'unauthorized' : 'error',
-      generation,
-      message: message.slice(0, 120)
-    }});
-  }}).finally(() => clearTimeout(deadline));
-}})();
+  };
+  const parseResetSeconds = (text) => {
+    let s = 0;
+    const d = text.match(/(\d+)\s*(?:天|days?|day)/);
+    const h = text.match(/(\d+)\s*(?:小时|hours?|hour)/);
+    const m = text.match(/(\d+)\s*(?:分钟|minutes?|minute)/);
+    if (d) s += parseInt(d[1]) * 86400;
+    if (h) s += parseInt(h[1]) * 3600;
+    if (m) s += parseInt(m[1]) * 60;
+    return s > 0 ? s : null;
+  };
+  const extract = () => {
+    const text = document.body ? document.body.innerText : '';
+    if (!text) { setTimeout(extract, 1000); return; }
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+    const pcts = [];
+    const resets = [];
+    for (const line of lines) {
+      const pct = line.match(/^(\d{1,3})\s*%$/);
+      if (pct) pcts.push(parseInt(pct[1]));
+      if (/重置|reset|Resets/i.test(line)) resets.push(parseResetSeconds(line));
+    }
+    if (pcts.length < 3) {
+      if (generation <= 50) setTimeout(extract, 1000);
+      else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
+      return;
+    }
+    const take = (arr, i) => i < arr.length ? arr[i] : null;
+    emit({
+      kind: 'quota', generation, raw: {
+        subscription: {
+          rollingUsage: {usagePercent: pcts[0], resetInSec: take(resets, 0) || 0},
+          weeklyUsage: {usagePercent: pcts[1], resetInSec: take(resets, 1) || 0},
+          monthlyUsage: {usagePercent: pcts[2], resetInSec: take(resets, 2) || 0}
+        }
+      }
+    });
+  };
+  setTimeout(extract, 2500);
+})();
 """
+    return template.replace("__PREFIX__", json.dumps(BRIDGE_PREFIX)).replace(
+        "__GEN__", str(generation)
+    )
 
 
 class OpenCodeWebSession(QObject):
@@ -266,12 +254,15 @@ class OpenCodeWebSession(QObject):
         self.view.setUrl(QUrl(self.workspace_url))
 
     def _run_fetch_script(self) -> None:
-        script = opencode_usage_fetch_script(self.workspace_url, self._refresh_generation)
+        script = opencode_dom_extract_script(self.workspace_url, self._refresh_generation)
         if not script:
-            _logger.warning("OpenCode quota fetch script empty; workspace id missing")
+            _logger.warning("OpenCode DOM extract script empty; workspace id missing")
             self._finish_refresh_with_error("refresh_failed")
             return
-        _logger.info("OpenCode quota fetch script running generation=%s", self._refresh_generation)
+        _logger.info(
+            "OpenCode DOM extract script running generation=%s",
+            self._refresh_generation,
+        )
         self._start_refresh_watchdog()
         self.view.runJavaScript(script, lambda _result: None)
 
