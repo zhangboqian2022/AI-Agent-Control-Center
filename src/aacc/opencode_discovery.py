@@ -16,10 +16,10 @@ import os
 import re
 import sqlite3
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import psutil
@@ -29,7 +29,12 @@ from aacc.kimi_discovery import Clock, ProcessAlive
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 
 _NAME_MAX_LENGTH = 20
-_DEFAULT_DB_PATH = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+_OPENCODE_DB_NAMES = (
+    "opencode.db",
+    "opencode-stable.db",
+    "opencode-beta.db",
+    "opencode-nightly.db",
+)
 _SESSION_QUERY = """
 SELECT id, title, directory, agent, model, time_created, time_updated
 FROM session
@@ -66,9 +71,42 @@ def _default_connect(db_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
 
 
-def _default_terminal_config() -> TerminalConfig:
+def default_opencode_db_paths(
+    *,
+    platform: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> tuple[Path, ...]:
+    """Return the documented OpenCode data locations for the current platform."""
+    current_platform = platform or sys.platform
+    current_home = home or Path.home()
+    current_environ = os.environ if environ is None else environ
+    if current_platform == "win32":
+        roots: list[Path] = []
+        local_app_data = current_environ.get("LOCALAPPDATA")
+        if local_app_data:
+            roots.append(Path(local_app_data) / "opencode")
+        # CLI installs may keep the XDG-compatible database under the profile.
+        roots.append(current_home / ".local" / "share" / "opencode")
+    else:
+        data_root = current_environ.get("XDG_DATA_HOME")
+        roots = [
+            Path(data_root) / "opencode"
+            if data_root
+            else current_home / ".local" / "share" / "opencode"
+        ]
+    return tuple(root / name for root in roots for name in _OPENCODE_DB_NAMES)
+
+
+def _default_db_path() -> Path:
+    candidates = default_opencode_db_paths()
+    return next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+
+
+def _default_terminal_config(work_dir: str | None = None) -> TerminalConfig:
     if sys.platform == "win32":
-        return TerminalConfig(type="windows_terminal", window_title="opencode")
+        title = PureWindowsPath(work_dir).name if work_dir else "opencode"
+        return TerminalConfig(type="windows_terminal", window_title=title or "opencode")
     return TerminalConfig(type="terminal_app", app_bundle_id="com.apple.Terminal")
 
 
@@ -202,7 +240,7 @@ class OpenCodeLocalDiscovery:
         max_tasks: int = 20,
         connect_factory: ConnectFactory | None = None,
     ) -> None:
-        self.db_path = db_path or _DEFAULT_DB_PATH
+        self.db_path = db_path or _default_db_path()
         self.now = now
         self.process_alive = process_alive
         self.process_alive_for_session = process_alive_for_session
@@ -267,7 +305,7 @@ class OpenCodeLocalDiscovery:
                             :_NAME_MAX_LENGTH
                         ],
                         agent=AgentConfig(type="opencode_cli", display_name="OpenCode"),
-                        terminal=_default_terminal_config(),
+                        terminal=_default_terminal_config(session.work_dir),
                     ),
                     state=TaskState(
                         task_id=task_id,
