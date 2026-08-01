@@ -92,6 +92,32 @@ def test_runtime_task_registration_persists_state_and_notifies(tmp_path: Path) -
     service.close()
 
 
+def test_repeated_runtime_registration_does_not_reinitialize_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = manager(tmp_path)
+    task = TaskConfig(
+        id="codex:repeat",
+        slot=5,
+        name="重复注册任务",
+        agent=AgentConfig(type="codex_cli"),
+    )
+    initialize_calls = 0
+    original_initialize = service.store.initialize
+
+    def record_initialize(tasks: list[TaskConfig]) -> None:
+        nonlocal initialize_calls
+        initialize_calls += 1
+        original_initialize(tasks)
+
+    monkeypatch.setattr(service.store, "initialize", record_initialize)
+    service.register(task, TaskState.new(task.id, "running", source="codex_local"))
+    service.register(task, TaskState.new(task.id, "waiting_input", source="codex_local"))
+
+    assert initialize_calls == 0
+    service.close()
+
+
 def test_duplicate_update_does_not_grow_history_or_notify(tmp_path: Path) -> None:
     service = manager(tmp_path)
     seen: list[TaskStatus] = []

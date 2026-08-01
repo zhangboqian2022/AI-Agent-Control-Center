@@ -6,6 +6,12 @@ An adapter translates a third-party agent’s process or output into the shared 
 
 To add a built-in agent, add a conservative display name, process match, and line-based status patterns to `PRESETS` in `src/aacc/adapters.py`. Patterns should contain an explicit line start or context; avoid isolated generic words such as `allow` or `done`. `GenericCLIAdapter` removes ANSI escapes, rejects lines longer than 4096 characters, and applies a 20 ms timeout to each regex search.
 
+Configured non-native adapters are polled by the runtime adapter discovery
+service for process-level evidence. A live matching process is reported as
+running and its disappearance as stopped; the service never promotes process
+exit to completed and never reads agent output. Use the local API, CLI, or
+`aacc-run` when agent-specific completion or approval events are available.
+
 Structured hooks should send `status`, a `message` of at most 2000 characters, a unique `source`, and a `confidence` value between 0 and 1 to `POST /api/v1/tasks/{task_id}/status`. Hook failure must never block the agent. Do not send full prompts, private code, passwords, or API keys to AACC.
 
 Every new adapter needs tests for process detection, each explicit status pattern, ambiguous text that must not match, ANSI input, and oversized lines. Do not add agent-specific branching to the core GUI or API.

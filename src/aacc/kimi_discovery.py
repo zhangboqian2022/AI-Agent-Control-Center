@@ -97,18 +97,17 @@ def kimi_session_activity_at(
     return latest
 
 
-def kimi_session_turn_completed(session_dir: Path) -> bool | None:
+def kimi_session_turn_completed(session_dir: Path) -> str | None:
     """Detect a finished turn from the wire, reading event types only.
 
     A completed turn ends with a `usage.record` event scoped to the turn, or
-    with an explicit turn-ending event (`turn.cancel`); any later
+    with an explicit cancellation event (`turn.cancel`); any later
     turn-boundary event (prompt, loop activity, llm request) means the
-    session is working again. Returns True for finished, False for active,
-    and None when no turn signal exists in the scanned range — either the
-    scan budget was exhausted before either signal, or the wire simply has
-    no turn events yet (a session that was only opened). An undetermined
-    scan must never fabricate completion, and a turnless session must never
-    fabricate activity.
+    session is working again. Returns ``"completed"``, ``"cancelled"`` or
+    ``"active"`` and None when no turn signal exists in the scanned range —
+    either the scan budget was exhausted before either signal, or the wire
+    simply has no turn events yet. An undetermined scan must never fabricate
+    completion, and a turnless session must never fabricate activity.
     """
     wire_path = session_dir / "agents" / "main" / "wire.jsonl"
     truncated = [False]
@@ -118,12 +117,12 @@ def kimi_session_turn_completed(session_dir: Path) -> bool | None:
             size = handle.tell()
             for line in _reverse_complete_lines(handle, size, _WIRE_SCAN_BUDGET_BYTES, truncated):
                 event_type, usage_scope = _wire_event(line)
-                if event_type in _TURN_ACTIVE_TYPES:
-                    return False
                 if event_type in _TURN_ENDED_TYPES:
-                    return True
+                    return "cancelled"
                 if event_type == "usage.record" and usage_scope == "turn":
-                    return True
+                    return "completed"
+                if event_type in _TURN_ACTIVE_TYPES:
+                    return "active"
     except OSError:
         return None
     return None
@@ -140,13 +139,15 @@ def evaluate_kimi_session_status(
 ) -> KimiSessionStatus:
     """Apply the Kimi Code status decision tree to one session directory."""
     activity_at = kimi_session_activity_at(session_dir, file_modified_at)
-    turn_completed = kimi_session_turn_completed(session_dir)
-    if turn_completed is True:
+    turn_status = kimi_session_turn_completed(session_dir)
+    if turn_status == "cancelled":
+        return KimiSessionStatus(TaskStatus.CANCELLED, "已取消", 0.96, activity_at)
+    if turn_status == "completed":
         return KimiSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.96, activity_at)
     if activity_at is not None and (now - activity_at).total_seconds() <= activity_window_seconds:
         return KimiSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, activity_at)
     if (
-        turn_completed is False
+        turn_status == "active"
         and activity_at is not None
         and (now - activity_at).total_seconds() <= active_turn_window_seconds
     ):
@@ -416,7 +417,7 @@ class KimiLocalDiscovery:
     def _activity_at(self, session_dir: Path) -> datetime | None:
         return kimi_session_activity_at(session_dir, self.file_modified_at)
 
-    def _turn_completed(self, session_dir: Path) -> bool | None:
+    def _turn_completed(self, session_dir: Path) -> str | None:
         return kimi_session_turn_completed(session_dir)
 
     @staticmethod

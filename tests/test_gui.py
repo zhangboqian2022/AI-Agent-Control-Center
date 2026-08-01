@@ -37,6 +37,7 @@ from aacc.gui import (
     SettingsDialog,
     TaskCard,
     _elapsed,
+    _task_message_text,
     status_name,
 )
 from aacc.i18n import EN_US, ZH_CN, LanguageManager
@@ -47,6 +48,19 @@ from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, Terminal
 from aacc.opencode_discovery import OpenCodeSession
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
+
+
+def test_discovery_message_retranslates_in_english_without_mutating_state() -> None:
+    language_manager = LanguageManager(EN_US)
+    state = TaskState.new(
+        "codex:session",
+        TaskStatus.RUNNING,
+        message="正在修改代码",
+        source="codex_local",
+    )
+
+    assert _task_message_text(state, language_manager) == "Modifying code"
+    assert state.message == "正在修改代码"
 
 
 def build_window(
@@ -93,7 +107,7 @@ def test_header_language_button_switches_live_and_persists(tmp_path: Path, qtbot
     assert window.language_button.text() == "中"
     assert window.language_button.toolTip() == "切换到中文"
     assert window.running_group_label.text() == "Running"
-    assert window.retained_group_label.text() == "Completed · Retained until removed"
+    assert window.retained_group_label.text() == "Completed · Retained"
     assert window.empty_tasks_label.text().startswith("No Codex / Kimi Code")
     assert window.task_summary_label.text() == "Running: 0 · Completed: 0 · 0 tasks"
     assert window.about_button.toolTip() == "About"
@@ -883,7 +897,7 @@ def test_existing_task_and_quota_widgets_retranslate_without_refreshing_services
     language_manager.set_language(EN_US)
 
     assert card.state is card_state_before
-    assert card.status_label.text() == "Waiting for approval"
+    assert card.status_label.text() == "Pending"
     assert "Click to switch tasks" in card.toolTip()
     assert card.remove_button is not None
     assert card.remove_button.accessibleName() == "Remove from panel"
@@ -1122,8 +1136,8 @@ def test_status_names_and_terminal_elapsed_label_retranslate_live(qapp: object) 
     language_manager.set_language(EN_US)
     card.retranslate_ui()
 
-    assert status_name(TaskStatus.WAITING_APPROVAL, language_manager) == ("Waiting for approval")
-    assert card.status_label.text() == "Waiting for approval"
+    assert status_name(TaskStatus.WAITING_APPROVAL, language_manager) == "Pending"
+    assert card.status_label.text() == "Pending"
     assert card.message_label.text() == "No message"
     assert card.updated_label.text().startswith("Last activity ")
     started_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
@@ -1887,6 +1901,7 @@ def test_kimi_card_shows_work_dir_basename_next_to_status(tmp_path: Path, qtbot:
     assert card.workdir_label.text() == "· codelight"
     assert not card.workdir_label.isHidden()
     assert card.workdir_label.toolTip() == "/Users/test/Desktop/codelight"
+    assert card.status_label.toolTip() == "执行中"
     manager.close()
 
 
@@ -1919,19 +1934,58 @@ def test_opencode_card_shows_work_dir_basename_next_to_status(
     manager.close()
 
 
-def test_codex_card_hides_work_dir_label(tmp_path: Path, qtbot: object) -> None:
+def test_codex_card_shows_work_dir_basename_next_to_status(tmp_path: Path, qtbot: object) -> None:
     window, manager = build_window(tmp_path, qtbot)
     task = TaskConfig(
-        id="codex:no-dir",
+        id="codex:workdir",
         slot=1,
-        name="Codex 任务",
+        name="带目录的 Codex 任务",
         agent=AgentConfig(type="codex_cli", display_name="Codex"),
     )
-    manager.register(task, TaskState.new(task.id, "running", source="codex_local"))
-    window.set_codex_selected_ids({"no-dir"})
+    manager.register(
+        task,
+        TaskState.new(
+            task.id,
+            "running",
+            source="codex_local",
+            metadata={"work_dir": "/Users/test/Desktop/codelight"},
+        ),
+    )
+    window.set_codex_selected_ids({"workdir"})
     card = window.cards[task.id]
 
-    assert card.workdir_label.isHidden()
+    assert card.workdir_label.text() == "· codelight"
+    assert not card.workdir_label.isHidden()
+    assert card.workdir_label.toolTip() == "/Users/test/Desktop/codelight"
+    manager.close()
+
+
+def test_codex_work_dir_card_does_not_force_horizontal_scroll(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:narrow-workdir",
+        slot=1,
+        name="Upgrade dependencies",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(
+        task,
+        TaskState.new(
+            task.id,
+            "waiting-approval",
+            message="Approve: write pyproject.toml",
+            source="codex_local",
+            metadata={"work_dir": "C:/AACC-Demo/sample-project"},
+        ),
+    )
+    window.set_codex_selected_ids({"narrow-workdir"})
+    window.resize(420, 650)
+    window.show()
+    QApplication.processEvents()
+
+    assert not window.cards_scroll.horizontalScrollBar().isVisible()
     manager.close()
 
 

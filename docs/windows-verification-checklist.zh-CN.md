@@ -1,4 +1,4 @@
-# Windows 10/11 人工验证清单 — AACC 1.4.2
+# Windows 10/11 人工验证清单 — AACC 1.4.4-rc.1
 
 只记录实际观察结果；未勾选项不代表兼容性承诺。GitHub Actions 在 Windows
 Server 2022/2025 上执行构建与自动化产品冒烟，但它**不能**替代本清单中的消费级
@@ -6,7 +6,7 @@ Windows 10/11 真机验证，也不能替代另一账户拒读测试。
 完成本清单只构成 Kimi 会话保留与退出验证所需 macOS 与 Windows 人工
 签字中的 Windows 部分。
 
-候选安装包：`AACC-1.4.2-Setup.exe`
+候选安装包：`AACC-1.4.4rc1-Setup.exe`
 
 验证人：
 
@@ -21,7 +21,7 @@ Windows 版本（`Windows 10` 或 `Windows 11`）、版本号与内部版本：
 Commit 与候选文件 SHA-256：
 
 - [ ] **校验值与 SmartScreen**：Setup 的 SHA-256 与
-  `AACC-1.4.2-Setup.exe.sha256` 一致；启动未签名候选版时出现预期的“未知
+  `AACC-1.4.4rc1-Setup.exe.sha256` 一致；启动未签名候选版时出现预期的“未知
   发布者”/SmartScreen 路径，选择“更多信息 → 仍要运行”后进入安装器。
 - [ ] **当前用户安装**：Setup 不请求管理员提权，并安装到
   `%LocalAppData%\Programs\AACC`。
@@ -50,6 +50,10 @@ Commit 与候选文件 SHA-256：
   会员后严格按 `5H`、`WEEK`、`MONTH` 排列。每个可用窗口显示完整本地重置
   日期时间；百分比已知但没有可信重置时间时，重置位置显示 `--`；不可用百分比
   也为 `--`，不能伪装成 `0%`。
+- [ ] **OpenCode parity**：配置 OpenCode 工作区地址，通过专用 Edge 配置登录，确认
+  滚动/每周/每月额度行均可用。确认 `%LOCALAPPDATA%\AACC\opencode-edge-profile`
+  与 Kimi 配置完全隔离；强制关闭 OpenCode 终端后任务灯从蓝色立即变为绿色；
+  发现的会话显示工作目录名，并能聚焦对应的 Windows Terminal 窗口。
 - [ ] **设置与专用 Edge 会话**：置顶和 API 凭证重置可持久化；确认 AACC 专用
   Edge 配置目录让 Kimi 第一方会话在重启 AACC 和 Windows 后仍有效。检查
   `%APPDATA%\AACC\kimi-web-session-state.json`，确认 AACC 只保存受保护的

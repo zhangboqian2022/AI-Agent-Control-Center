@@ -91,6 +91,42 @@ def test_save_config_rejects_symlink_parent(tmp_path: Path) -> None:
         save_config(link_dir / "config.yaml", default_config())
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="dir_fd is POSIX-only")
+def test_temporary_config_name_retries_collisions_and_fails_after_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent_descriptor = os.open(tmp_path, os.O_RDONLY)
+    try:
+        (tmp_path / ".config.yaml.fixed").write_text("occupied", encoding="utf-8")
+        monkeypatch.setattr(config_module.secrets, "token_hex", lambda _length: "fixed")
+        with pytest.raises(FileExistsError, match="unique AACC"):
+            config_module._open_posix_temporary(parent_descriptor, ".config.yaml.")
+    finally:
+        os.close(parent_descriptor)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="dir_fd is POSIX-only")
+def test_save_config_closes_anchored_parent_when_temp_creation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[int] = []
+    original_close = os.close
+
+    def record_close(descriptor: int) -> None:
+        closed.append(descriptor)
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "close", record_close)
+    monkeypatch.setattr(
+        config_module,
+        "_open_posix_temporary",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("temporary allocation failed")),
+    )
+    with pytest.raises(RuntimeError, match="temporary allocation failed"):
+        save_config(tmp_path / "config.yaml", default_config())
+    assert closed
+
+
 @pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX permission bits are not enforced on Windows"
 )
@@ -139,7 +175,7 @@ def test_atomic_save_keeps_original_if_replace_fails(
     path.write_text(original, encoding="utf-8")
     config = create_default_config(tmp_path / "other.yaml")
 
-    def fail_replace(_source: Path, _destination: Path) -> None:
+    def fail_replace(*_args: object, **_kwargs: object) -> None:
         raise OSError("simulated interruption")
 
     monkeypatch.setattr(os, "replace", fail_replace)
@@ -148,6 +184,27 @@ def test_atomic_save_keeps_original_if_replace_fails(
 
     assert path.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob(".config.yaml.*"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="dir_fd is POSIX-only")
+def test_save_config_renames_inside_an_anchored_parent_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "config.yaml"
+    replace_calls: list[tuple[object, ...]] = []
+    original_replace = os.replace
+
+    def record_replace(*args: object, **kwargs: object) -> None:
+        replace_calls.append((*args, *kwargs.values()))
+        original_replace(*args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", record_replace)
+    save_config(path, default_config())
+
+    assert replace_calls
+    assert len(replace_calls[0]) == 4
+    assert isinstance(replace_calls[0][2], int)
+    assert replace_calls[0][2] == replace_calls[0][3]
 
 
 def test_save_config_does_not_replace_target_when_protection_fails(
@@ -351,9 +408,35 @@ def test_opencode_workspace_url_rejects_http_scheme() -> None:
         AppConfig(opencode_workspace_url="http://opencode.ai/workspace/wrk_1")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://opencode.ai/workspace/wrk_1/go?tab=quota",
+        "https://opencode.ai/workspace/wrk_1/go#quota",
+    ],
+)
+def test_opencode_workspace_url_rejects_query_and_fragment(url: str) -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(opencode_workspace_url=url)
+
+
 def test_opencode_workspace_url_rejects_non_workspace_path() -> None:
     with pytest.raises(ValidationError):
         AppConfig(opencode_workspace_url="https://opencode.ai/zen")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://opencode.ai/workspace/../admin",
+        "https://opencode.ai/workspace/%2e%2e/admin",
+        "https://opencode.ai/workspace/wrk.1",
+        "https://opencode.ai/workspace/wrk_1/extra",
+    ],
+)
+def test_opencode_workspace_url_rejects_non_whitelisted_workspace_path(url: str) -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(opencode_workspace_url=url)
 
 
 def test_opencode_workspace_url_rejects_urlparse_failure(monkeypatch) -> None:

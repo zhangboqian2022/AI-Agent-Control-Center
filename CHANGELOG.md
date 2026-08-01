@@ -2,14 +2,27 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
-## 1.4.3-rc.3 — 2026-08-01
+## 1.4.4-rc.1 — 2026-08-01
 
-[Bilingual release notes](docs/release-notes-1.4.3rc3.md)
+[Bilingual release notes](docs/release-notes-1.4.4rc1.md)
 
-- [Feature] OpenCode Go-plan usage bar (macOS): a self-owned web view signs you into opencode.ai, extracts the rendered rolling/weekly/monthly usage from the /go workspace page, and shows percentage + reset countdown in a three-row strip below the Kimi bar; cookie persists across restarts.
-- [Feature] OpenCode CLI task discovery: read-only polling of the local opencode SQLite database infers per-session status (pending permission → waiting approval; active streaming → running; finished turn → completed; stale + process alive → waiting input; process gone → completed) with the existing circular status lights.
+- [Fix] Make OpenCode and Kimi terminal states truthful: approval, failure, cancellation, explicit completion, and process disappearance no longer collapse into a misleading green or blue state.
+- [Stability] Reject stale terminal restarts, allow fresh process evidence to replace the initial idle baseline, and stop repeated runtime task registration from reinitializing SQLite.
+- [Integration] Wire configured non-native Agent adapters into a conservative process-level discovery service; process disappearance is STOPPED and never claimed as agent-specific completion.
+- [Security] Require unique desktop targets and verify foreground identity immediately before input injection on both macOS and Windows; ambiguous or changed targets fail closed.
+- [Security] Anchor POSIX config replacement to an opened parent directory, disable proxy inheritance for loopback status calls, escape CR/LF in AppleScript strings, and avoid absolute Daimon paths in INFO logs.
+- [Build] Align macOS RC artifact naming with the public `1.4.4-rc.1` version, keep Windows Setup on PEP 440 `1.4.4rc1`, and replace the hard-coded macOS bundle build number.
+
+## 1.4.3 — 2026-08-01
+
+[Bilingual release notes](docs/release-notes-1.4.3.md)
+
+- [Feature] OpenCode Go-plan quota bar on macOS and Windows: macOS uses a native web view; Windows uses an isolated AACC-owned Edge profile and a strict CDP boundary. Both extract only rendered rolling/weekly/monthly quota from the configured /go workspace page.
+- [Feature] OpenCode CLI task discovery: read-only polling of the local opencode SQLite database infers per-session status (pending permission → waiting approval; active streaming → running; finished turn → completed; stale + process alive → waiting input; process gone → completed) with the existing circular status lights. Windows resolves its native database locations and binds terminal focus to the session work directory.
 - [Fix] A finished opencode turn (step-finish / tool completed) now shows the green completed state immediately instead of staying blue.
-- [Delivery] macOS-only increment; the Windows build remains at 1.4.3-rc.2 with no new artifact.
+- [Fix] If the opencode process disappears after a forced stop, the matching session now leaves the blue running state immediately instead of waiting for the activity timeout.
+- [Fix] OpenCode Edge login, quota parsing, profile cleanup, and target selection are isolated from Kimi and fail closed on foreign pages, unsafe CDP endpoints, malformed payloads, or expired authorization.
+- [Delivery] Formal 1.4.3 release ships verified macOS DMG and Windows Setup assets. GitHub Actions adds Windows 10/11 compatibility-contract jobs; these execute on hosted Windows Server and do not claim consumer hardware validation.
 
 ## 1.4.3-rc.2 — 2026-07-31
 

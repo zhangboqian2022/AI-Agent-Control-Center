@@ -6,6 +6,7 @@ import secrets
 import sys
 import tempfile
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -113,11 +114,38 @@ def _prepare_parent(path: Path) -> None:
     protect_directory(path.parent, platform=sys.platform)
 
 
+def _open_posix_temporary(parent_descriptor: int, prefix: str) -> tuple[int, str]:
+    """Create an exclusive temporary file relative to an open parent dir."""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    for _ in range(10):
+        name = f"{prefix}{secrets.token_hex(12)}"
+        try:
+            descriptor = os.open(name, flags, 0o600, dir_fd=parent_descriptor)
+        except FileExistsError:
+            continue
+        return descriptor, name
+    raise FileExistsError("could not allocate a unique AACC configuration temporary file")
+
+
 def save_config(path: Path, config: AppConfig) -> None:
     _reject_unsafe_path(path)
     _prepare_parent(path)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = Path(temporary_name)
+    parent_descriptor = -1
+    anchored_posix = sys.platform != "win32"
+    if anchored_posix:
+        parent_descriptor = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            descriptor, temporary_name = _open_posix_temporary(parent_descriptor, f".{path.name}.")
+        except Exception:
+            os.close(parent_descriptor)
+            raise
+        temporary = path.parent / temporary_name
+    else:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        temporary = Path(temporary_name)
     try:
         if sys.platform == "win32":
             os.close(descriptor)
@@ -140,21 +168,27 @@ def save_config(path: Path, config: AppConfig) -> None:
             )
             handle.flush()
             os.fsync(handle.fileno())
-        protect_file(temporary, platform=sys.platform)
-        os.replace(temporary, path)
-        if sys.platform != "win32":
-            # Windows cannot open a directory handle with os.open; the file
-            # flush+fsync above is kept on every platform.
-            directory_descriptor = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_descriptor)
-            finally:
-                os.close(directory_descriptor)
+        if sys.platform == "win32":
+            protect_file(temporary, platform=sys.platform)
+            os.replace(temporary, path)
+        else:
+            os.replace(
+                temporary_name,
+                path.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+            os.fsync(parent_descriptor)
     except FileProtectionError:
         _logger.critical("Unable to protect the AACC configuration file")
         raise
     finally:
-        temporary.unlink(missing_ok=True)
+        if anchored_posix:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary_name, dir_fd=parent_descriptor)
+            os.close(parent_descriptor)
+        else:
+            temporary.unlink(missing_ok=True)
 
 
 def _migrate(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:

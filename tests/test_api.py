@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import aacc
-from aacc.api import create_api
+from aacc.api import StatusRequest, create_api
 from aacc.automation import AutomationError
 from aacc.automation_executor import AutomationExecutor
 from aacc.config import default_config
@@ -22,6 +22,10 @@ def api_client(tmp_path: Path) -> tuple[TestClient, str, TaskManager]:
 
 def auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_status_request_normalizes_unknown_source_to_api() -> None:
+    assert StatusRequest(status="running", source="untrusted-adapter").source == "api"
 
 
 def test_health_is_available_without_token(tmp_path: Path) -> None:

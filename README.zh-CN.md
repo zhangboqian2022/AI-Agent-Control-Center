@@ -2,13 +2,13 @@
 
 > 面向本机 AI Coding Agent 的桌面状态与控制中心，支持 macOS 13+ 与 Windows 10+。
 
-[English README](README.md) · [下载 AACC 1.4.2](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.2) · [发布说明](docs/release-notes-1.4.2.md) · [产品设计](docs/product-design.zh-CN.md)
+[English README](README.md) · [下载 AACC 1.4.4-rc.1](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.4-rc.1) · [发布说明](docs/release-notes-1.4.4rc1.md) · [产品设计](docs/product-design.zh-CN.md)
 
 AACC 是一个本机优先的跨平台悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
 
-![AACC 面板：不同状态的任务卡片](docs/images/panel-overview.png)
+![AACC 1.4.4-rc.1 面板：额度与任务状态](docs/images/panel-overview-1.4.4-rc.1.png)
 
-_使用合成演示数据生成的界面示意图，不含真实账户或任务数据。_
+_AACC 1.4.4-rc.1 界面示意图，使用合成演示数据，不含真实账户或任务数据。_
 
 ![平台](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![许可证](https://img.shields.io/badge/license-MIT-blue) ![本机优先](https://img.shields.io/badge/privacy-local--first-18a999)
 
@@ -22,27 +22,27 @@ _使用合成演示数据生成的界面示意图，不含真实账户或任务�
 - **中英文即时切换：** 首次启动跟随系统语言；面板头部的 `EN`/`中` 操作可在 macOS 与 Windows 上立即切换完整界面，明确选择会持久保存。紧凑模式保留在设置和托盘菜单。切换语言不会刷新额度，也不会改变监控任务或登录状态。
 - **明确的退出入口：** 头部电源按钮会完整退出应用。Windows 托盘图标左键显示/隐藏 AACC，右键打开持续可用的菜单，其中“退出 AACC”会关闭全部 AACC 后台服务。
 - **及时且克制的概括：** 每 5 秒检查 Codex 元数据，用“正在修改代码”“正在运行测试”等固定短语反馈活动，不展示原始载荷。
-- **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示；OpenCode 显示 Go 套餐滚动/每周/每月用量。每个可用重置时间都直接写在行内；真实 `0%` 明确显示为 `0%`，只有未知数据才显示 `--`。
-- **OpenCode Go 套餐用量条：** macOS 下自持网页视图登录 opencode.ai（GitHub/Google），从 /go 工作区页面提取已渲染的滚动/每周/每月用量（百分比 + 重置倒计时），三行展示在 Kimi 额度条下方。Cookie 跨 AACC 重启持久保留；绝不读取 prompt、回复、工具命令或 reasoning 内容。在 `config.yaml` 配置 `opencode_workspace_url`。
-- **OpenCode CLI 任务发现：** 每 5 秒只读轮询 opencode 本地 SQLite 数据库，从消息部件快照推断任务状态：权限挂起 → 黄灯"等待同意"；进行中 → 蓝灯"进行中"；停滞 + 进程在 → 黄灯"等待输入"；进程退出 → 绿灯"已完成"。只读取部件类型/状态/时间戳——绝不读取文本内容。
+- **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示；OpenCode 显示 Go 套餐滚动/每周/每月额度。每个可用重置时间都直接写在行内；真实 `0%` 明确显示为 `0%`，只有未知数据才显示 `--`。
+- **OpenCode Go 套餐额度条：** macOS 使用自持网页视图，Windows 使用独立的 AACC 专用 Microsoft Edge 配置目录和 CDP；两边都登录 opencode.ai（GitHub/Google），从 /go 工作区页面提取已渲染的滚动/每周/每月额度（百分比 + 重置倒计时），三行展示在 Kimi 额度条下方。绝不读取 prompt、回复、工具命令或 reasoning 内容。在 `config.yaml` 配置 `opencode_workspace_url`。
+- **OpenCode CLI 任务发现：** 每 5 秒只读轮询 opencode 本地 SQLite 数据库，从消息部件快照推断任务状态：权限挂起 → 黄灯“等待同意”；进行中 → 蓝灯“进行中”；停滞 + 进程在 → 黄灯“等待输入”；有明确完成证据 → 绿灯“已完成”；进程消失但没有完成证据 → 停止态，不伪造完成。Windows 优先读取 `%LOCALAPPDATA%\opencode\opencode.db`，并按会话工作目录定位终端。只读取部件类型/状态/时间戳——绝不读取文本内容。
 - **Kimi 会员额度缓存：** Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置；Kimi Code OAuth 凭据由 AACC 凭据保护另行保存。网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；查询不消耗生成 Token。
 - **本机优先：** 只读取判断状态所需的本机任务元数据，不上传对话内容。
 - **可靠的完成判断：** 优先依据 Codex `task_started` 与 `task_complete` 会话事件，避免任务完成后仍错误显示“执行中”。
 - **发现故障可见：** Codex 元数据连续读取失败时显示可恢复的黄色告警条，不再静默冻结旧状态。
 - **控制串行且界面流畅：** 聚焦与输入作为完整事务进入有界工作线程，并发调用不会错窗，面板也不会被阻塞。
 - **克制的桌面控制：** 单击卡片只选中任务；只有右键菜单的“切换到任务”才会聚焦 Codex。按键输入仅允许白名单按键。
-- **可扩展接入：** 支持 Codex CLI/App、Claude Code、Kimi Code、通用 CLI，以及本地 API、CLI 和包装器接入。
+- **可扩展接入：** 支持 Codex CLI/App、Claude Code、Kimi Code、通用 CLI，以及本地 API、CLI 和包装器接入。非原生 Adapter 只提供保守的进程级运行/停止证据，不声称具备 Agent 专属的完成语义。
 
 ## 安装
 
-### 推荐：下载 DMG
+### 推荐：下载 RC DMG
 
-下载 [AACC-1.4.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
+下载 [AACC-1.4.4-rc.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4-rc.1.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
 
 此社区版本使用 ad-hoc 签名，尚未经过 Apple 公证。请先下载配套的 `.dmg.sha256` 资产，并对比：
 
 ```bash
-shasum -a 256 AACC-1.4.2.dmg
+shasum -a 256 AACC-1.4.4-rc.1.dmg
 ```
 
 仅在校验值一致后，若 macOS 拦截首次启动，再到“系统设置 → 隐私与安全性”选择“仍要打开”。如果该标准路径仍失败，最后才在本机移除隔离属性：
@@ -71,13 +71,15 @@ cd AI-Agent-Control-Center
 ./scripts/build_dmg.sh
 ```
 
-### Windows 1.4.2
+### Windows 1.4.4-rc.1
 
-Windows 主下载文件是 [`AACC-1.4.2-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.2/AACC-1.4.2-Setup.exe)，并配套 `AACC-1.4.2-Setup.exe.sha256`。
+Windows RC 主下载文件是 [`AACC-1.4.4rc1-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4rc1-Setup.exe)，并配套 `AACC-1.4.4rc1-Setup.exe.sha256`。
 
 Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC` 下由 AACC 管理的设置、历史、数据库、凭据和 Kimi 复用决定。
 
 Windows Kimi 登录使用系统已安装的 Microsoft Edge，并把会话隔离在 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile`；Setup 不再安装额外浏览器运行时。首次在专用 Edge 窗口登录成功后，AACC 会关闭该窗口，并每五分钟用同一独立会话在后台刷新额度，直到手动退出或 Kimi 令会话失效。AACC 不读取日常 Edge 配置。
+
+Windows OpenCode 额度使用另一套 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\opencode-edge-profile`，与 Kimi 完全隔离。OpenCode CLI 优先从 `%LOCALAPPDATA%\opencode\opencode.db` 发现会话（另有用户目录回退位置），并在任务卡有工作目录时展示目录名。
 
 Windows 版本尚未签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对配套 SHA-256，再选择“更多信息 → 仍要运行”。敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。Windows Server 2022/2025 托管产品测试已通过，但这不代表已完成消费级 Windows 10/11 人工验证。
 

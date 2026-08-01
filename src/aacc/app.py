@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 import aacc
 from aacc.accessibility import is_accessibility_trusted, open_accessibility_settings
+from aacc.adapter_discovery_service import AdapterDiscoveryService
 from aacc.api import create_api
 from aacc.automation import create_automation
 from aacc.automation_executor import AutomationController, AutomationExecutor
@@ -67,6 +68,7 @@ class Runtime:
     kimi_discovery: KimiDiscoveryService
     kimi_desktop_discovery: KimiDesktopDiscoveryService
     opencode_discovery: OpenCodeDiscoveryService
+    adapter_discovery: AdapterDiscoveryService | None = None
     codex_quota_service: CodexQuotaService | None = None
     quota_service: QuotaService | None = None
     kimi_web_quota_service: KimiWebQuotaService | None = None
@@ -91,6 +93,10 @@ class Runtime:
                 else lambda: None,
             ),
             ("opencode-discovery", self.opencode_discovery.stop),
+            (
+                "adapter-discovery",
+                self.adapter_discovery.stop if self.adapter_discovery is not None else lambda: None,
+            ),
             (
                 "opencode-web-quota",
                 self.opencode_web_quota_service.stop
@@ -137,8 +143,6 @@ def _default_opencode_web_quota_service_factory(
     config: AppConfig,
     language_manager: LanguageManager | None = None,
 ) -> OpenCodeWebQuotaService | None:
-    if sys.platform == "win32":
-        return None
     service = OpenCodeWebQuotaService(
         config_dir,
         language_manager=language_manager,
@@ -283,6 +287,7 @@ def build_runtime(
         kimi_discovery=KimiDiscoveryService(manager),
         kimi_desktop_discovery=KimiDesktopDiscoveryService(manager),
         opencode_discovery=OpenCodeDiscoveryService(manager),
+        adapter_discovery=AdapterDiscoveryService(manager, config=config),
         codex_quota_service=codex_quota_factory(),
         quota_service=quota_service,
         kimi_web_quota_service=kimi_web_quota_service,
@@ -597,6 +602,11 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
             runtime.opencode_discovery.start()
             if cleaned:
                 return
+            adapter_discovery = getattr(runtime, "adapter_discovery", None)
+            if adapter_discovery is not None:
+                adapter_discovery.start()
+                if cleaned:
+                    return
             if runtime.quota_service is not None:
                 runtime.quota_service.start()
                 if cleaned:

@@ -130,6 +130,8 @@ if user32 is not None:  # pragma: no cover - requires Windows
         wintypes.LPARAM,
     ]
     user32.PostMessageW.restype = wintypes.BOOL
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
 
 if kernel32 is not None:  # pragma: no cover - requires Windows
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
@@ -148,7 +150,7 @@ if kernel32 is not None:  # pragma: no cover - requires Windows
 
 
 def find_window_by_title(substring: str) -> int | None:
-    """First visible top-level window whose title contains the substring."""
+    """Unique visible top-level window whose title contains the substring."""
     u32 = _require_user32()
     needle = substring.casefold()
     found: list[int] = []
@@ -165,7 +167,13 @@ def find_window_by_title(substring: str) -> int | None:
         return True
 
     u32.EnumWindows(_callback, 0)
-    return found[0] if found else None
+    return found[0] if len(found) == 1 else None
+
+
+def foreground_window() -> int:
+    """Return the current foreground window handle, or zero when unavailable."""
+    u32 = _require_user32()
+    return int(u32.GetForegroundWindow() or 0)
 
 
 def find_exact_windows(title: str) -> tuple[int, ...]:

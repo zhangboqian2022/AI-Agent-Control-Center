@@ -422,7 +422,7 @@ def test_cancelled_turn_is_not_reported_running(tmp_path: Path) -> None:
         agent_process_alive=lambda: True,
     ).discover()
 
-    assert tasks[0].state.status is TaskStatus.COMPLETED
+    assert tasks[0].state.status is TaskStatus.CANCELLED
 
 
 def test_session_without_turn_events_is_not_reported_running(tmp_path: Path) -> None:
