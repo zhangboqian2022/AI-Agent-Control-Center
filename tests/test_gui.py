@@ -1731,6 +1731,44 @@ def test_rotate_credentials_shows_token_and_copies_only_on_request(
     manager.close()
 
 
+def test_rotate_credentials_shows_command_execution_warning(
+    tmp_path: Path, qtbot: object, monkeypatch: object
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config = create_default_config(config_path)
+    store = StateStore(tmp_path / "gui.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    warnings: list[str] = []
+    warning_styles: list[str] = []
+
+    def execute_box(box: QMessageBox) -> QMessageBox.StandardButton:
+        if box.standardButtons() & QMessageBox.StandardButton.Yes:
+            warnings.append(box.informativeText())
+            label = box.findChild(QLabel, "qt_msgbox_informativelabel")
+            warning_styles.append(label.styleSheet() if label is not None else "")
+            return QMessageBox.StandardButton.Cancel
+        return QMessageBox.StandardButton.Close
+
+    monkeypatch.setattr(QMessageBox, "exec", execute_box)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        rotate_api_token_callback=lambda: rotate_api_token(config_path, config),
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    window.rotate_credentials()
+
+    assert warnings == [
+        "警告：API Token 等效于键盘输入权限；泄露后，配合 Enter 可能在终端目标中执行命令。"
+    ]
+    assert warning_styles == ["color: #b42318; font-weight: 600;"]
+    manager.close()
+
+
 def test_discovery_warning_banner_copies_sanitized_diagnostics(
     tmp_path: Path, qtbot: object
 ) -> None:

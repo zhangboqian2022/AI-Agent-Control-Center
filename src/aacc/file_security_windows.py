@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import ntpath
+import os
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -150,3 +152,227 @@ def protect_windows_path(
         raise FileProtectionError(
             f"Windows credential protection failed ({type(error).__name__})"
         ) from None
+
+
+def replace_windows_file(
+    source: Path,
+    target: Path,
+    *,
+    source_handle: int | None = None,
+) -> None:
+    """Replace a sibling file through an opened Windows directory handle.
+
+    ``os.replace`` resolves both paths afresh.  On Windows that leaves a
+    same-user writer exposed to a directory-reparse-point swap between the
+    protection checks and publication.  ``FILE_RENAME_INFO.RootDirectory``
+    makes the final rename relative to the directory handle that was opened
+    with reparse-point traversal disabled.
+    """
+    source_parent = os.path.normcase(os.path.abspath(os.fspath(source.parent)))
+    target_parent = os.path.normcase(os.path.abspath(os.fspath(target.parent)))
+    if source_parent != target_parent:
+        raise FileProtectionError("Windows atomic replacement requires files in the same directory")
+    source_name = source.name
+    target_name = target.name
+    if (
+        not source_name
+        or not target_name
+        or any(separator in source_name or separator in target_name for separator in ("/", "\\"))
+    ):
+        raise FileProtectionError("Windows atomic replacement requires simple file names")
+    if os.name != "nt":
+        raise FileProtectionError("Windows atomic replacement is unavailable on this platform")
+
+    import ctypes
+    from ctypes import wintypes
+
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        raise FileProtectionError("Windows atomic replacement is unavailable on this platform")
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    invalid_handle = ctypes.c_void_p(-1).value
+    file_share_all = 0x00000001 | 0x00000002 | 0x00000004
+    file_read_attributes = 0x00000080
+    file_list_directory = 0x00000001
+    file_add_file = 0x00000002
+    file_delete = 0x00010000
+    file_flag_backup_semantics = 0x02000000
+    file_flag_open_reparse_point = 0x00200000
+    open_existing = 3
+    file_attribute_reparse_point = 0x00000400
+    file_rename_info = 3
+    file_attribute_tag_info = 9
+
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE,
+        wintypes.INT,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    kernel32.GetFinalPathNameByHandleW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    kernel32.SetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        wintypes.INT,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    kernel32.SetFileInformationByHandle.restype = wintypes.BOOL
+    kernel32.GetLongPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    kernel32.GetLongPathNameW.restype = wintypes.DWORD
+
+    class FileAttributeTagInfo(ctypes.Structure):
+        _fields_ = [
+            ("file_attributes", wintypes.DWORD),
+            ("reparse_tag", wintypes.DWORD),
+        ]
+
+    handle_alignment = ctypes.alignment(wintypes.HANDLE)
+
+    class FileRenameInfo(ctypes.Structure):
+        _fields_ = [
+            ("replace_if_exists", wintypes.BOOLEAN),
+            ("_padding", ctypes.c_ubyte * (handle_alignment - 1)),
+            ("root_directory", wintypes.HANDLE),
+            ("file_name_length", wintypes.DWORD),
+            ("file_name", wintypes.WCHAR * 1),
+        ]
+
+    def fail() -> FileProtectionError:
+        return FileProtectionError("Windows atomic replacement failed")
+
+    def open_handle(path: Path, access: int, flags: int) -> Any:
+        handle = kernel32.CreateFileW(
+            os.fspath(path),
+            access,
+            file_share_all,
+            None,
+            open_existing,
+            flags,
+            None,
+        )
+        if not handle or handle.value == invalid_handle:
+            raise fail()
+        return handle
+
+    def reject_reparse(handle: Any) -> None:
+        attributes = FileAttributeTagInfo()
+        if not kernel32.GetFileInformationByHandleEx(
+            handle,
+            file_attribute_tag_info,
+            ctypes.byref(attributes),
+            ctypes.sizeof(attributes),
+        ):
+            raise fail()
+        if attributes.file_attributes & file_attribute_reparse_point:
+            raise FileProtectionError("Windows atomic replacement rejected a reparse point")
+
+    def final_path(handle: Any) -> str:
+        capacity = 260
+        for _ in range(3):
+            buffer = ctypes.create_unicode_buffer(capacity)
+            length = kernel32.GetFinalPathNameByHandleW(handle, buffer, capacity, 0)
+            if length == 0:
+                raise fail()
+            if length < capacity:
+                return buffer.value
+            capacity = length + 1
+        raise fail()
+
+    def long_path(path: str) -> str:
+        required = kernel32.GetLongPathNameW(path, None, 0)
+        if required == 0:
+            raise fail()
+        for _ in range(3):
+            buffer = ctypes.create_unicode_buffer(required + 1)
+            length = kernel32.GetLongPathNameW(path, buffer, len(buffer))
+            if length == 0:
+                raise fail()
+            if length < len(buffer):
+                return buffer.value
+            required = length
+        raise fail()
+
+    def comparable_path(path: str) -> str:
+        if path.startswith("\\\\?\\UNC\\"):
+            path = "\\\\" + path[8:]
+        elif path.startswith("\\\\?\\"):
+            path = path[4:]
+        return ntpath.normcase(ntpath.normpath(path))
+
+    parent_handle: Any = None
+    source_handle_owned = source_handle is None
+    native_source_handle: Any = None
+    try:
+        parent_handle = open_handle(
+            target.parent,
+            file_list_directory | file_add_file | file_read_attributes | file_delete,
+            file_flag_backup_semantics | file_flag_open_reparse_point,
+        )
+        reject_reparse(parent_handle)
+        parent_final = comparable_path(final_path(parent_handle))
+        expected_parent = comparable_path(long_path(os.path.abspath(os.fspath(target.parent))))
+        if parent_final != expected_parent:
+            raise FileProtectionError("Windows atomic replacement rejected a redirected directory")
+
+        if source_handle is None:
+            native_source_handle = open_handle(
+                source,
+                file_read_attributes | file_delete,
+                file_flag_open_reparse_point,
+            )
+        else:
+            native_source_handle = wintypes.HANDLE(source_handle)
+        reject_reparse(native_source_handle)
+        source_final = comparable_path(final_path(native_source_handle))
+        if ntpath.dirname(source_final) != parent_final:
+            raise FileProtectionError(
+                "Windows atomic replacement source is outside the target directory"
+            )
+
+        file_name = target_name.encode("utf-16-le")
+        name_offset = FileRenameInfo.file_name.offset
+        buffer = ctypes.create_string_buffer(ctypes.sizeof(FileRenameInfo) + len(file_name))
+        rename_info = ctypes.cast(buffer, ctypes.POINTER(FileRenameInfo)).contents
+        rename_info.replace_if_exists = 1
+        rename_info.root_directory = parent_handle
+        rename_info.file_name_length = len(file_name)
+        ctypes.memmove(
+            ctypes.addressof(buffer) + name_offset,
+            file_name,
+            len(file_name),
+        )
+        if not kernel32.SetFileInformationByHandle(
+            native_source_handle,
+            file_rename_info,
+            ctypes.byref(buffer),
+            len(buffer),
+        ):
+            raise fail()
+    except FileProtectionError:
+        raise
+    except Exception:
+        raise fail() from None
+    finally:
+        if source_handle_owned and native_source_handle is not None:
+            kernel32.CloseHandle(native_source_handle)
+        if parent_handle is not None:
+            kernel32.CloseHandle(parent_handle)

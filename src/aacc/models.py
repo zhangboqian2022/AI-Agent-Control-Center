@@ -41,8 +41,8 @@ class APIConfig(BaseModel):
     @field_validator("host")
     @classmethod
     def loopback_only(cls, value: str) -> str:
-        if value != "127.0.0.1":
-            raise ValueError("AACC V1.0 API host must be 127.0.0.1")
+        if value not in {"127.0.0.1", "::1"}:
+            raise ValueError("AACC V1.0 API host must be loopback (127.0.0.1 or ::1)")
         return value
 
 

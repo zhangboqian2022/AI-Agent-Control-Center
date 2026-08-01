@@ -39,7 +39,7 @@ _AACC 1.4.4-rc.1 illustrative UI with synthetic demo data; no real account or ta
 
 Download [AACC-1.4.4-rc.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4-rc.1.dmg), open it, and drag `AACC.app` to Applications.
 
-This community build uses an ad-hoc signature and is not notarized by Apple. First download the matching `.dmg.sha256` asset and compare it with:
+This community build is not Developer ID-signed and is not notarized by Apple. Depending on the build keychain, the app may carry an ad-hoc signature or the local-development self-signature; neither establishes Apple distribution trust. First download the matching `.dmg.sha256` asset and compare it with:
 
 ```bash
 shasum -a 256 AACC-1.4.4-rc.1.dmg
@@ -81,7 +81,14 @@ Windows Kimi login uses the installed Microsoft Edge browser with an AACC-owned 
 
 Windows OpenCode quota uses a different AACC-owned Edge profile at `%LOCALAPPDATA%\AACC\opencode-edge-profile`; it never shares Kimi's profile. The OpenCode CLI database is discovered from `%LOCALAPPDATA%\opencode\opencode.db` (with documented profile fallback locations), and the task card shows its session work-directory name when available.
 
-The Windows build is unsigned, so Windows may show an Unknown publisher or SmartScreen warning. Verify the matching SHA-256 before choosing **More info → Run anyway**. Sensitive configuration, database, and credential files use a native protected DACL limited to the current user, Local System, and Administrators. Packaged Codex quota queries run through a fixed-purpose broker beside `AACC.exe`; the broker accepts only the read-only Codex app-server command and contains its process tree. Hosted Windows Server 2022/2025 product tests passed; this does not claim completed consumer Windows 10/11 manual verification.
+The Windows build is not Authenticode-signed, so Windows may show an Unknown publisher or SmartScreen warning. Verify the matching SHA-256 before choosing **More info → Run anyway**:
+
+```powershell
+(Get-FileHash .\AACC-1.4.4rc1-Setup.exe -Algorithm SHA256).Hash
+Get-Content .\AACC-1.4.4rc1-Setup.exe.sha256
+```
+
+Sensitive configuration, database, and credential files use a native protected DACL limited to the current user, Local System, and Administrators. Packaged Codex quota queries run through a fixed-purpose broker beside `AACC.exe`; the broker accepts only the read-only Codex app-server command and contains its process tree. Hosted Windows Server 2022/2025 product tests passed; this does not claim completed consumer Windows 10/11 manual verification.
 
 Developers can still build the onedir payload from source with Python 3.12+, [uv](https://docs.astral.sh/uv/), and `.\scripts\build_windows.ps1`. The portable bundle is a CI/debugging artifact, not the primary user download.
 
@@ -92,7 +99,7 @@ Capability comparison with the macOS build:
 | Window focus | Bundle ID + AppleScript | Window-title matching (no bundle ID) |
 | Voice input | macOS dictation | Win+H |
 | Accessibility permission | Required for injection and hotkeys | Not required |
-| Signing | Ad-hoc, Gatekeeper prompt | Unsigned, SmartScreen prompt |
+| Signing | No Developer ID / no notarization; ad-hoc or local-development signature | No Authenticode signature; SmartScreen prompt |
 
 ## Use AACC with Codex
 
@@ -124,9 +131,13 @@ aacc list
 aacc doctor
 ```
 
-The API is bound only to `http://127.0.0.1:17650` and requires a random token generated in the local config file. It is intentionally not a remote-control API.
+The API is bound only to loopback (`http://127.0.0.1:17650` or
+`http://[::1]:17650`) and requires a random token generated in the local config
+file. It is intentionally not a remote-control API.
 
 Use **Settings → Reset API credentials** to rotate the token locally. The previous token becomes invalid immediately and the new token is copied once. Keyboard injection and global hotkeys require macOS Accessibility permission; AACC detects a missing permission and opens the correct System Settings pane on request.
+
+⚠️ **Security warning for `/send-text`:** the API token grants keyboard-equivalent text injection. If the token is leaked, an attacker who can call the local API can combine arbitrary text with the allowlisted `Enter` key and execute commands in a terminal-like target. Treat this token as a password-grade secret.
 
 ## Architecture and privacy
 
@@ -147,6 +158,7 @@ Security boundaries:
 - Loopback-only API with a random Bearer token.
 - No arbitrary shell command endpoint and no `shell=True` subprocess calls.
 - Allowed injected keys are limited to Enter, Esc, arrows, Ctrl+C, `1`, and `2`.
+- `/send-text` plus the allowlisted `Enter` key is equivalent to interactive typing in a terminal target; protect the API token accordingly.
 - Target app/window activation must succeed before input is sent.
 - Logs redact common tokens, passwords, and Authorization headers.
 

@@ -91,6 +91,27 @@ def test_save_config_rejects_symlink_parent(tmp_path: Path) -> None:
         save_config(link_dir / "config.yaml", default_config())
 
 
+def test_save_config_uses_windows_atomic_replace_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(config_module, "protect_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(config_module, "protect_directory", lambda *_args, **_kwargs: None)
+    replacements: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        config_module,
+        "atomic_replace",
+        lambda source, target, **_kwargs: replacements.append((Path(source), Path(target))),
+    )
+
+    path = tmp_path / "config.yaml"
+    save_config(path, default_config())
+
+    assert len(replacements) == 1
+    assert replacements[0][1] == path
+    assert replacements[0][0].parent == path.parent
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="dir_fd is POSIX-only")
 def test_temporary_config_name_retries_collisions_and_fails_after_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

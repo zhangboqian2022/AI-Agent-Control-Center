@@ -39,3 +39,19 @@ def protect_directory(
         protect_windows_path(path, directory=True)
     else:
         os.chmod(path, 0o700)
+
+
+def atomic_replace(
+    source: Path,
+    target: Path,
+    *,
+    platform: str = sys.platform,
+    source_handle: int | None = None,
+) -> None:
+    """Publish a protected sibling file without weakening platform guarantees."""
+    if platform == "win32" and os.name == "nt":
+        from aacc.file_security_windows import replace_windows_file
+
+        replace_windows_file(source, target, source_handle=source_handle)
+        return
+    os.replace(source, target)

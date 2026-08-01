@@ -273,6 +273,8 @@ bool ParsePid(const std::wstring& value, DWORD* pid) noexcept {
     return true;
 }
 
+bool NormalizeExistingPath(const std::wstring& original, std::wstring* normalized);
+
 bool ValidateOptions(const Options& options) noexcept {
     if (options.parent_pid == 0 ||
         !HasSafeBrokerPathSyntax(options.bundle_dir) ||
@@ -280,6 +282,13 @@ bool ValidateOptions(const Options& options) noexcept {
         !IsAbsolutePath(options.bundle_dir) ||
         !IsAbsolutePath(options.codex_path) ||
         !HasAllowedTargetExtension(options.codex_path)) {
+        return false;
+    }
+
+    std::wstring normalized_bundle;
+    std::wstring normalized_codex;
+    if (!NormalizeExistingPath(options.bundle_dir, &normalized_bundle) ||
+        !NormalizeExistingPath(options.codex_path, &normalized_codex)) {
         return false;
     }
 
@@ -349,6 +358,31 @@ void TrimTrailingSeparators(std::wstring* path) {
     }
 }
 
+bool ExpandLongPath(std::wstring* path) {
+    DWORD required = GetLongPathNameW(path->c_str(), nullptr, 0);
+    if (required == 0) {
+        return false;
+    }
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        std::vector<wchar_t> buffer(static_cast<size_t>(required) + 1, L'\0');
+        const DWORD length = GetLongPathNameW(
+            path->c_str(),
+            buffer.data(),
+            static_cast<DWORD>(buffer.size()));
+        if (length == 0) {
+            return false;
+        }
+        if (length < buffer.size()) {
+            path->assign(buffer.data(), length);
+            ReplaceSeparators(path);
+            TrimTrailingSeparators(path);
+            return !path->empty();
+        }
+        required = length;
+    }
+    return false;
+}
+
 std::wstring TrimAndUnquotePathEntry(const std::wstring& entry) {
     size_t start = 0;
     size_t end = entry.size();
@@ -389,7 +423,11 @@ bool NormalizePath(const std::wstring& original, std::wstring* normalized) {
     }
     ReplaceSeparators(normalized);
     TrimTrailingSeparators(normalized);
-    return !normalized->empty();
+    return !normalized->empty() && ExpandLongPath(normalized);
+}
+
+bool NormalizeExistingPath(const std::wstring& original, std::wstring* normalized) {
+    return NormalizePath(original, normalized);
 }
 
 bool IsPathRootedIn(
@@ -463,7 +501,9 @@ bool BuildSanitizedEnvironment(
     const std::wstring& codex_path,
     EnvironmentBlock* output) {
     std::wstring normalized_bundle;
-    if (!NormalizePath(bundle_dir, &normalized_bundle)) {
+    std::wstring normalized_codex;
+    if (!NormalizeExistingPath(bundle_dir, &normalized_bundle) ||
+        !NormalizeExistingPath(codex_path, &normalized_codex)) {
         SetLastError(ERROR_INVALID_NAME);
         return false;
     }
@@ -497,7 +537,7 @@ bool BuildSanitizedEnvironment(
     // cmd expands this reserved private variable exactly once. Replacing any
     // inherited value prevents injection; user variables other than PATH stay
     // unchanged.
-    entries.push_back(target_prefix + codex_path);
+    entries.push_back(target_prefix + normalized_codex);
 
     std::sort(entries.begin(), entries.end(), EnvironmentEntryLess);
     output->characters.clear();

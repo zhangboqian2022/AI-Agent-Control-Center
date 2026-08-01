@@ -191,11 +191,17 @@ def test_broker_rejects_unsafe_windows_path_syntax_before_filesystem_io() -> Non
     assert "index != 1" in source
     assert "!HasSafeBrokerPathSyntax(options.bundle_dir)" in source
     assert "!HasSafeBrokerPathSyntax(options.codex_path)" in source
+    assert "GetLongPathNameW" in source
+    assert "NormalizeExistingPath(options.bundle_dir" in source
+    assert "NormalizeExistingPath(options.codex_path" in source
+    assert "NormalizeExistingPath(bundle_dir, &normalized_bundle)" in source
+    assert "NormalizeExistingPath(codex_path, &normalized_codex)" in source
 
     validation = source.index("bool ValidateOptions")
     syntax_check = source.index("HasSafeBrokerPathSyntax", validation)
+    long_path_check = source.index("NormalizeExistingPath", validation)
     filesystem_check = source.index("GetFileAttributesW", validation)
-    assert syntax_check < filesystem_check
+    assert syntax_check < long_path_check < filesystem_check
 
 
 def test_broker_source_has_fixed_sanitized_diagnostics_and_stages() -> None:

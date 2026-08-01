@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 
 from aacc.config import load_config
-from aacc.constants import DEFAULT_CONFIG_PATH
+from aacc.constants import DEFAULT_CONFIG_PATH, local_api_url
 
 
 def terminate_process(process: subprocess.Popen[bytes], timeout: float = 3.0) -> None:
@@ -37,7 +37,11 @@ def _status(
     config = load_config(config_path)
     with suppress(httpx.HTTPError), httpx.Client(timeout=1.5, trust_env=False) as client:
         client.post(
-            f"http://{config.app.api.host}:{config.app.api.port}/api/v1/tasks/{task_id}/status",
+            local_api_url(
+                config.app.api.host,
+                config.app.api.port,
+                f"/api/v1/tasks/{task_id}/status",
+            ),
             headers={"Authorization": f"Bearer {config.app.api.token}"},
             json={
                 "status": state,

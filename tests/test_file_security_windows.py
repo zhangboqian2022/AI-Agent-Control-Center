@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ from aacc.file_security_windows import (
     SYSTEM_SID,
     WindowsSecurityApi,
     protect_windows_path,
+    replace_windows_file,
 )
 from aacc.persistence import StateStore
 
@@ -51,6 +53,37 @@ class FakeWindowsSecurityApi:
     ) -> None:
         assert self.replacements[-1] == (path, expected_sids, directory)
         self.verified = True
+
+
+def test_windows_atomic_replace_rejects_different_parent_paths(tmp_path: Path) -> None:
+    source = tmp_path / "one" / "temporary"
+    target = tmp_path / "two" / "target"
+
+    with pytest.raises(FileProtectionError, match="same directory"):
+        replace_windows_file(source, target)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="native helper is available on Windows")
+def test_windows_atomic_replace_does_not_fallback_on_non_windows(tmp_path: Path) -> None:
+    source = tmp_path / "temporary"
+    target = tmp_path / "target"
+    source.write_text("secret", encoding="utf-8")
+
+    with pytest.raises(FileProtectionError, match="unavailable"):
+        replace_windows_file(source, target)
+
+    assert source.read_text(encoding="utf-8") == "secret"
+    assert not target.exists()
+
+
+def test_windows_atomic_replace_native_contract_retains_handle_and_buffer() -> None:
+    from aacc import file_security_windows
+
+    source = inspect.getsource(file_security_windows.replace_windows_file)
+    assert "source_handle: int | None = None" in source
+    assert "native_source_handle = wintypes.HANDLE(source_handle)" in source
+    assert "ctypes.sizeof(FileRenameInfo) + len(file_name)" in source
+    assert "os.replace(" not in source
 
 
 def test_windows_file_acl_is_replaced_with_exact_protected_allowlist(

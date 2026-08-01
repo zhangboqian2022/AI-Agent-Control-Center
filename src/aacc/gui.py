@@ -2067,7 +2067,7 @@ class MainWindow(QWidget):
         self.cards_scroll.setWidget(self.cards_container)
         layout.addWidget(self.cards_scroll, 1)
         footer = QHBoxLayout()
-        self.connection_label = QLabel("● API 127.0.0.1")
+        self.connection_label = QLabel(f"● API {self.config.app.api.host}")
         self.connection_label.setObjectName("footer")
         footer.addWidget(self.connection_label)
         footer.addStretch()
@@ -3128,6 +3128,10 @@ class MainWindow(QWidget):
         confirmation.setIcon(QMessageBox.Icon.Question)
         confirmation.setWindowTitle(self.language_manager.text("credentials.reset_title"))
         confirmation.setText(self.language_manager.text("credentials.reset_prompt"))
+        confirmation.setInformativeText(self.language_manager.text("credentials.reset_warning"))
+        warning_label = confirmation.findChild(QLabel, "qt_msgbox_informativelabel")
+        if warning_label is not None:
+            warning_label.setStyleSheet("color: #b42318; font-weight: 600;")
         confirmation.setStandardButtons(
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes
         )

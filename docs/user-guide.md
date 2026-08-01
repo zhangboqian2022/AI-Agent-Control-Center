@@ -48,7 +48,7 @@ Windows 上的 OpenCode 额度使用独立的 AACC 专用 Edge 配置目录 `%LO
 
 默认 F13–F16 聚焦任务 1–4，F17 发送 Enter，F18/F19 发送 1/2，F20 在 macOS 触发系统听写、在 Windows 触发 Win+H 语音输入。可以用 Karabiner-Elements、Fn 层或键盘固件将物理按键映射到这些功能键。macOS 的全局监听与键盘注入需要辅助功能权限；缺失时 AACC 会给出说明并可直达系统设置。Windows 使用原生全局热键与窗口 API，无需辅助功能授权。两个平台均可通过 `keyboard_injection: false` 完全关闭发送能力。
 
-在“设置 → 重置 API 凭证”可替换本地 API Token；旧 Token 立即失效，新 Token 只复制一次。
+在“设置 → 重置 API 凭证”可替换本地 API Token；旧 Token 立即失效，新 Token 只复制一次。**安全警告：** Token 具有等效键盘输入的文本注入权限；一旦泄露，`/send-text` 配合白名单中的 `Enter` 可能在终端类目标中执行命令。请按密码级机密保护 Token。
 
 ## 开机启动
 
