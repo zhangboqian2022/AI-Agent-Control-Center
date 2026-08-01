@@ -9,8 +9,9 @@ command -v uv >/dev/null 2>&1 || { echo "错误：需要先安装 uv" >&2; exit 
 AACC_VERSION="${AACC_VERSION:-$(uv version --short)}"
 codesign_identity="${AACC_CODESIGN_IDENTITY:-}"
 notary_profile="${AACC_NOTARY_PROFILE:-}"
-# Default output: AACC-${AACC_VERSION}.dmg
-output_path="${desktop_dir%/}/AACC-${AACC_VERSION}.dmg"
+AACC_PUBLIC_VERSION="${AACC_PUBLIC_VERSION:-$(python3 -c 'import re, sys; v=sys.argv[1]; m=re.fullmatch(r"(\d+\.\d+\.\d+)rc(\d+)", v); print(f"{m.group(1)}-rc.{m.group(2)}" if m else v)' "$AACC_VERSION")}"
+# Default output: AACC-${AACC_PUBLIC_VERSION}.dmg
+output_path="${desktop_dir%/}/AACC-${AACC_PUBLIC_VERSION}.dmg"
 
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   "$project_root/scripts/build_app.sh"
@@ -19,7 +20,7 @@ elif [[ ! -d "$project_root/dist/AACC.app" ]]; then
   exit 1
 fi
 /usr/bin/hdiutil create \
-  -volname "AACC ${AACC_VERSION}" \
+  -volname "AACC ${AACC_PUBLIC_VERSION}" \
   -srcfolder "$project_root/dist/AACC.app" \
   -format UDZO \
   -ov \

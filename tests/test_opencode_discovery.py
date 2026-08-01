@@ -40,9 +40,9 @@ def _evaluate(snapshot, *, alive: bool, window: float = 90.0) -> OpenCodeSession
     )
 
 
-def test_fresh_pending_tool_is_running() -> None:
+def test_pending_tool_is_waiting_approval_immediately() -> None:
     result = _evaluate(_snapshot("tool", "pending", 5), alive=True)
-    assert result.status is TaskStatus.RUNNING
+    assert result.status is TaskStatus.WAITING_APPROVAL
 
 
 def test_stale_pending_tool_is_waiting_approval() -> None:
@@ -56,16 +56,19 @@ def test_running_tool_is_running() -> None:
     assert result.status is TaskStatus.RUNNING
 
 
-def test_fresh_streaming_part_without_process_is_completed() -> None:
+def test_fresh_streaming_part_without_process_is_stopped() -> None:
     result = _evaluate(_snapshot("text", None, 5), alive=False)
-    assert result.status is TaskStatus.COMPLETED
-    assert result.confidence == 0.92
+    assert result.status is TaskStatus.STOPPED
 
 
-def test_fresh_active_tool_without_process_is_completed() -> None:
-    for state in ("pending", "running"):
-        result = _evaluate(_snapshot("tool", state, 5), alive=False)
-        assert result.status is TaskStatus.COMPLETED, state
+def test_pending_tool_is_actionable_even_if_process_is_gone() -> None:
+    result = _evaluate(_snapshot("tool", "pending", 5), alive=False)
+    assert result.status is TaskStatus.WAITING_APPROVAL
+
+
+def test_running_tool_without_process_is_stopped() -> None:
+    result = _evaluate(_snapshot("tool", "running", 5), alive=False)
+    assert result.status is TaskStatus.STOPPED
 
 
 def test_streaming_parts_within_window_are_running() -> None:
@@ -79,10 +82,25 @@ def test_stale_streaming_part_with_process_is_waiting_input() -> None:
     assert result.status is TaskStatus.WAITING_INPUT
 
 
-def test_stale_streaming_part_without_process_is_completed() -> None:
+def test_stale_streaming_part_without_process_is_stopped() -> None:
     result = _evaluate(_snapshot("text", None, 300), alive=False)
-    assert result.status is TaskStatus.COMPLETED
-    assert result.confidence == 0.92
+    assert result.status is TaskStatus.STOPPED
+
+
+def test_process_exit_race_fails_closed_as_stopped() -> None:
+    alive = iter((True, False))
+    result = evaluate_opencode_session_status(
+        _snapshot("unknown", None, 300),
+        now=_now(),
+        process_alive=lambda: next(alive),
+        activity_window_seconds=90.0,
+    )
+    assert result.status is TaskStatus.STOPPED
+
+
+def test_failed_and_cancelled_tool_states_are_not_completed() -> None:
+    assert _evaluate(_snapshot("tool", "failed", 5), alive=True).status is TaskStatus.ERROR
+    assert _evaluate(_snapshot("tool", "cancelled", 5), alive=True).status is TaskStatus.CANCELLED
 
 
 def test_step_finish_is_completed() -> None:
@@ -208,9 +226,9 @@ def test_no_parts_with_process_is_idle() -> None:
     assert result.status is TaskStatus.IDLE
 
 
-def test_no_parts_without_process_completes_stale_running_state() -> None:
+def test_no_parts_without_process_is_stopped_without_completion_evidence() -> None:
     result = _evaluate(None, alive=False)
-    assert result.status is TaskStatus.COMPLETED
+    assert result.status is TaskStatus.STOPPED
     current = TaskState.new(
         "opencode:session",
         TaskStatus.RUNNING,
@@ -226,8 +244,7 @@ def test_no_parts_without_process_completes_stale_running_state() -> None:
         updated_at=_now(),
     )
     transitioned = StateMachine.transition(current, candidate)
-    assert transitioned is not None
-    assert transitioned.status is TaskStatus.COMPLETED
+    assert transitioned is None or transitioned.status is TaskStatus.STOPPED
 
 
 def test_activity_at_uses_part_timestamp() -> None:
@@ -399,7 +416,7 @@ def test_discover_uses_session_specific_process_liveness(tmp_path: Path) -> None
     tasks = {task.config.id: task for task in discovery.discover()}
 
     assert tasks["opencode:ses_alive"].state.status is TaskStatus.RUNNING
-    assert tasks["opencode:ses_stopped"].state.status is TaskStatus.COMPLETED
+    assert tasks["opencode:ses_stopped"].state.status is TaskStatus.STOPPED
 
 
 def test_discover_selects_only_requested_ids(tmp_path: Path) -> None:
@@ -524,7 +541,7 @@ def test_discovery_uses_session_directory_matching_without_global_process_overri
     tasks = {task.config.id: task for task in OpenCodeLocalDiscovery(db_path=path).discover()}
 
     assert tasks["opencode:ses_match"].state.status is TaskStatus.RUNNING
-    assert tasks["opencode:ses_stopped"].state.status is TaskStatus.COMPLETED
+    assert tasks["opencode:ses_stopped"].state.status is TaskStatus.STOPPED
     assert tasks["opencode:ses_unknown"].state.status is TaskStatus.RUNNING
 
 
@@ -621,7 +638,7 @@ def test_catalog_returns_sessions_sorted(tmp_path: Path) -> None:
     assert [item.session_id for item in catalog] == ["ses_2", "ses_1"]
 
 
-def test_active_session_ids_returns_running_only(tmp_path: Path) -> None:
+def test_active_session_ids_returns_actionable_sessions(tmp_path: Path) -> None:
     from aacc.opencode_discovery import OpenCodeLocalDiscovery
 
     path, connection = _make_db(tmp_path)
@@ -645,4 +662,4 @@ def test_active_session_ids_returns_running_only(tmp_path: Path) -> None:
     connection.commit()
     connection.close()
     discovery = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True)
-    assert discovery.active_session_ids() == {"ses_run"}
+    assert discovery.active_session_ids() == {"ses_run", "ses_wait"}

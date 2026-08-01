@@ -54,8 +54,8 @@ def _default_daimon_root() -> Path:
         if root.exists():
             return root
     _logger.info(
-        "Kimi Desktop daimon root not found; discovery source inactive candidates=%s",
-        [str(root) for root in roots],
+        "Kimi Desktop daimon root not found; discovery source inactive candidates_count=%d",
+        len(roots),
     )
     return roots[0] if roots else _DAIMON_ROOT
 

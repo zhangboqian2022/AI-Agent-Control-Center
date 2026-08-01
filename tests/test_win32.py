@@ -63,6 +63,38 @@ def test_find_window_by_title_requires_windows(monkeypatch: pytest.MonkeyPatch) 
         win32.find_window_by_title("x")
 
 
+def test_find_window_by_title_fails_closed_on_ambiguous_visible_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeUser32:
+        def EnumWindows(self, callback, lparam):  # noqa: N802
+            callback(10, lparam)
+            callback(11, lparam)
+            return 1
+
+        def IsWindowVisible(self, _hwnd):  # noqa: N802
+            return 1
+
+        def GetWindowTextLengthW(self, _hwnd):  # noqa: N802
+            return 4
+
+        def GetWindowTextW(self, _hwnd, buffer, _length):  # noqa: N802
+            buffer.value = "AACC"
+            return 4
+
+    monkeypatch.setattr(win32, "user32", FakeUser32())
+    assert win32.find_window_by_title("aacc") is None
+
+
+def test_foreground_window_returns_current_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeUser32:
+        def GetForegroundWindow(self):  # noqa: N802
+            return 42
+
+    monkeypatch.setattr(win32, "user32", FakeUser32())
+    assert win32.foreground_window() == 42
+
+
 class _FakeShutdownUser32:
     def __init__(self) -> None:
         self.titles = {10: "AI Agent Control Center", 11: "AI Agent Control Center", 12: "Other"}

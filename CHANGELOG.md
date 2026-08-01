@@ -2,6 +2,17 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.4-rc.1 — 2026-08-01
+
+[Bilingual release notes](docs/release-notes-1.4.4rc1.md)
+
+- [Fix] Make OpenCode and Kimi terminal states truthful: approval, failure, cancellation, explicit completion, and process disappearance no longer collapse into a misleading green or blue state.
+- [Stability] Reject stale terminal restarts, allow fresh process evidence to replace the initial idle baseline, and stop repeated runtime task registration from reinitializing SQLite.
+- [Integration] Wire configured non-native Agent adapters into a conservative process-level discovery service; process disappearance is STOPPED and never claimed as agent-specific completion.
+- [Security] Require unique desktop targets and verify foreground identity immediately before input injection on both macOS and Windows; ambiguous or changed targets fail closed.
+- [Security] Anchor POSIX config replacement to an opened parent directory, disable proxy inheritance for loopback status calls, escape CR/LF in AppleScript strings, and avoid absolute Daimon paths in INFO logs.
+- [Build] Align macOS RC artifact naming with the public `1.4.4-rc.1` version, keep Windows Setup on PEP 440 `1.4.4rc1`, and replace the hard-coded macOS bundle build number.
+
 ## 1.4.3 — 2026-08-01
 
 [Bilingual release notes](docs/release-notes-1.4.3.md)

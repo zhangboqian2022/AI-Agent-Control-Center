@@ -80,7 +80,9 @@ TEXT_SCRIPT = 'on run argv\ntell application "System Events" to keystroke (item 
 
 
 def applescript_quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    escaped = (
+        value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r").replace("\n", "\\n")
+    )
     return f'"{escaped}"'
 
 
@@ -129,12 +131,10 @@ class MacAutomation:
                 quoted = applescript_quote(title)
                 lines.extend(
                     [
-                        "repeat with targetWindow in windows",
-                        f"if name of targetWindow contains {quoted} then",
+                        f"set matchingWindows to every window whose name contains {quoted}",
+                        "if count of matchingWindows is not 1 then error number -128",
+                        "set targetWindow to item 1 of matchingWindows",
                         "set index of targetWindow to 1",
-                        "exit repeat",
-                        "end if",
-                        "end repeat",
                     ]
                 )
             lines.append("end tell")
@@ -151,8 +151,10 @@ class MacAutomation:
         if title:
             lines.extend(
                 [
-                    "set targetWindow to first window whose name contains "
+                    "set matchingWindows to every window whose name contains "
                     + applescript_quote(title),
+                    "if count of matchingWindows is not 1 then error number -128",
+                    "set targetWindow to item 1 of matchingWindows",
                     "set miniaturized of targetWindow to false",
                     "set index of targetWindow to 1",
                 ]
@@ -171,6 +173,54 @@ class MacAutomation:
                 "end tell",
             ]
         )
+
+    @staticmethod
+    def _target_bundle_id(task: TaskConfig) -> str | None:
+        terminal = task.terminal
+        if terminal.type == "iterm2":
+            return "com.googlecode.iterm2"
+        if terminal.type == "terminal_app":
+            return terminal.app_bundle_id or "com.apple.Terminal"
+        return terminal.app_bundle_id
+
+    def _frontmost_check_script(self, task: TaskConfig) -> str:
+        terminal = task.terminal
+        bundle_id = self._target_bundle_id(task)
+        if not bundle_id:
+            raise AutomationError(
+                "No app bundle identifier is configured",
+                category="app_unconfigured",
+            )
+        lines = []
+        title = terminal.window_title or terminal.tab_title
+        if title and terminal.type in {"terminal_app", "iterm2"}:
+            quoted_title = applescript_quote(title)
+            lines.extend(
+                [
+                    f"tell application id {applescript_quote(bundle_id)}",
+                    (
+                        f"if (count of (every window whose name contains {quoted_title})) "
+                        "is not 1 then error number -128"
+                    ),
+                    f"if (name of window 1 does not contain {quoted_title}) then error number -128",
+                    "end tell",
+                ]
+            )
+        lines.extend(
+            [
+                'tell application "System Events"',
+                "set frontmostProcess to first application process whose frontmost is true",
+                (
+                    f"if (bundle identifier of frontmostProcess) is not "
+                    f"{applescript_quote(bundle_id)} then error number -128"
+                ),
+                "end tell",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _verify_frontmost_unlocked(self, task: TaskConfig) -> None:
+        self._run(["/usr/bin/osascript", "-e", self._frontmost_check_script(task)])
 
     def _focus_unlocked(self, task: TaskConfig) -> str:
         terminal = task.terminal
@@ -230,6 +280,7 @@ class MacAutomation:
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)
+            self._verify_frontmost_unlocked(task)
             if normalized == "CTRL_C":
                 statement = 'tell application "System Events" to keystroke "c" using control down'
             else:
@@ -260,6 +311,7 @@ class MacAutomation:
             self._focus_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)
+            self._verify_frontmost_unlocked(task)
             self._run(["/usr/bin/osascript", "-e", TEXT_SCRIPT, "--", text])
             return "文本已发送"
 
@@ -271,6 +323,7 @@ class MacAutomation:
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._sleep(self.config.voice.voice_delay_ms / 1000)
             self._check_cancelled(cancel_event)
+            self._verify_frontmost_unlocked(task)
             if self.config.voice.hotkey.upper() != "FN_FN":
                 raise AutomationError(
                     "V1.0 voice hotkey currently supports FN_FN",

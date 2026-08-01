@@ -2,12 +2,12 @@
 set -euo pipefail
 
 if [[ "$#" -ne 1 ]]; then
-  echo "用法：scripts/verify_release.sh <版本号，例如 1.4.0 或 1.4.0-rc.2>" >&2
+  echo "用法：scripts/verify_release.sh <正式版本号，例如 1.4.0>" >&2
   exit 2
 fi
 
 release_version="$1"
-if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "错误：无效版本号：$release_version" >&2
   exit 2
 fi

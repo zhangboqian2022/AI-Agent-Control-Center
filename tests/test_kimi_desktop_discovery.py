@@ -310,6 +310,8 @@ def test_default_daimon_root_logs_when_no_candidate_exists(monkeypatch, tmp_path
         record.levelname == "INFO" and "daimon root not found" in record.getMessage()
         for record in caplog.records
     )
+    assert all(str(missing) not in record.getMessage() for record in caplog.records)
+    assert any("candidates_count=1" in record.getMessage() for record in caplog.records)
 
 
 def test_default_daimon_root_silent_when_candidate_exists(monkeypatch, tmp_path, caplog) -> None:

@@ -28,6 +28,12 @@ def test_fresh_lower_confidence_inference_does_not_override() -> None:
     assert not StateMachine.accept(current, candidate)
 
 
+def test_fresh_active_evidence_can_replace_initial_idle_baseline() -> None:
+    current = state(TaskStatus.IDLE, "system", 0.8)
+    candidate = state(TaskStatus.RUNNING, "process", 0.55)
+    assert StateMachine.accept(current, candidate)
+
+
 def test_stale_state_can_be_replaced_by_lower_confidence_warning() -> None:
     current = state(TaskStatus.RUNNING, "log", 0.8, age=301)
     candidate = state(TaskStatus.WARNING, "process", 0.5)
@@ -96,6 +102,30 @@ def test_terminal_state_restarts_when_new_run_is_first_seen_waiting(
     assert restarted.status is waiting_status
     assert restarted.started_at == candidate.started_at
     assert restarted.finished_at is None
+
+
+def test_terminal_state_rejects_stale_active_candidate() -> None:
+    finished_at = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    completed = TaskState(
+        task_id="task-1",
+        status=TaskStatus.COMPLETED,
+        source="codex_local",
+        confidence=0.96,
+        started_at=finished_at - timedelta(minutes=4),
+        updated_at=finished_at,
+        finished_at=finished_at,
+    )
+    stale = completed.model_copy(
+        update={
+            "status": TaskStatus.RUNNING,
+            "confidence": 0.4,
+            "started_at": finished_at - timedelta(seconds=1),
+            "updated_at": finished_at,
+            "finished_at": None,
+        }
+    )
+
+    assert not StateMachine.accept(completed, stale)
 
 
 def test_active_messages_and_waiting_states_keep_one_run_start() -> None:

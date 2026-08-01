@@ -5,8 +5,8 @@ import struct
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCREENSHOT = ROOT / "docs" / "images" / "panel-overview.png"
-EN_SCREENSHOT = ROOT / "docs" / "images" / "panel-overview.en.png"
+SCREENSHOT = ROOT / "docs" / "images" / "panel-overview-1.4.4-rc.1.png"
+EN_SCREENSHOT = ROOT / "docs" / "images" / "panel-overview-1.4.4-rc.1.en.png"
 
 
 def _read(name: str) -> str:
@@ -46,6 +46,8 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     assert "OPENCODE_MONTH = 68" in script
     assert "OpenCodeQuota" in script
     assert "_DemoOpenCodeWebQuotaService" in script
+    assert "panel-overview-1.4.4-rc.1.en.png" in script
+    assert "panel-overview-1.4.4-rc.1.png" in script
     assert "window.resize(420," in script
     lowered = script.casefold()
     for forbidden in (
@@ -68,14 +70,17 @@ def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
     cases = (
         (
             "README.md",
-            "docs/images/panel-overview-1.4.3.en.png",
-            "_AACC 1.4.3 illustrative UI with synthetic demo data; no real account or task data._",
+            "docs/images/panel-overview-1.4.4-rc.1.en.png",
+            (
+                "_AACC 1.4.4-rc.1 illustrative UI with synthetic demo data; "
+                "no real account or task data._"
+            ),
             ("per-user", "without administrator", "Start Menu", "SmartScreen"),
         ),
         (
             "README.zh-CN.md",
-            "docs/images/panel-overview-1.4.3.png",
-            "_AACC 1.4.3 界面示意图，使用合成演示数据，不含真实账户或任务数据。_",
+            "docs/images/panel-overview-1.4.4-rc.1.png",
+            "_AACC 1.4.4-rc.1 界面示意图，使用合成演示数据，不含真实账户或任务数据。_",
             ("当前用户", "无需管理员", "开始菜单", "SmartScreen"),
         ),
     )
@@ -86,8 +91,8 @@ def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
             r"!\[[^\]]+\]\(" + re.escape(image) + r"\)\n\n" + re.escape(caption),
             text,
         )
-        assert "AACC-1.4.3-Setup.exe" in text
-        assert "AACC-1.4.3-windows-x64.zip" not in text
+        assert "AACC-1.4.4rc1-Setup.exe" in text
+        assert "AACC-1.4.4rc1-windows-x64.zip" not in text
         for term in required_terms:
             assert term in text
 
@@ -98,14 +103,14 @@ def test_each_bilingual_product_document_keeps_the_live_language_contract() -> N
         "immediately",
         "Compact mode remains in Settings and the tray menu",
         "does not refresh quotas or change monitored tasks or login state",
-        "1.4.3",
+        "1.4.4-rc.1",
     )
     chinese_terms = (
         "中英文",
         "即时切换",
         "紧凑模式保留在设置和托盘菜单",
         "不会刷新额度，也不会改变监控任务或登录状态",
-        "1.4.3",
+        "1.4.4-rc.1",
     )
 
     for name in ("README.md", "docs/user-guide.en.md", "CHANGELOG.md"):
@@ -168,19 +173,19 @@ def test_bilingual_guides_describe_setup_lifecycle_and_preserved_appdata() -> No
     cases = (
         (
             "docs/user-guide.en.md",
-            ("AACC-1.4.3-Setup.exe", "per-user", "%LocalAppData%", "%APPDATA%"),
+            ("AACC-1.4.4rc1-Setup.exe", "per-user", "%LocalAppData%", "%APPDATA%"),
         ),
         (
             "docs/user-guide.md",
-            ("AACC-1.4.3-Setup.exe", "当前用户", "%LocalAppData%", "%APPDATA%"),
+            ("AACC-1.4.4rc1-Setup.exe", "当前用户", "%LocalAppData%", "%APPDATA%"),
         ),
         (
             "docs/windows-verification-checklist.en.md",
-            ("AACC-1.4.3-Setup.exe", "Windows 10", "Windows 11", "separate"),
+            ("AACC-1.4.4rc1-Setup.exe", "Windows 10", "Windows 11", "separate"),
         ),
         (
             "docs/windows-verification-checklist.zh-CN.md",
-            ("AACC-1.4.3-Setup.exe", "Windows 10", "Windows 11", "另一"),
+            ("AACC-1.4.4rc1-Setup.exe", "Windows 10", "Windows 11", "另一"),
         ),
     )
 
