@@ -37,6 +37,7 @@ from aacc.gui import (
     SettingsDialog,
     TaskCard,
     _elapsed,
+    _task_message_text,
     status_name,
 )
 from aacc.i18n import EN_US, ZH_CN, LanguageManager
@@ -47,6 +48,19 @@ from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, Terminal
 from aacc.opencode_discovery import OpenCodeSession
 from aacc.persistence import StateStore
 from aacc.task_manager import TaskManager
+
+
+def test_discovery_message_retranslates_in_english_without_mutating_state() -> None:
+    language_manager = LanguageManager(EN_US)
+    state = TaskState.new(
+        "codex:session",
+        TaskStatus.RUNNING,
+        message="正在修改代码",
+        source="codex_local",
+    )
+
+    assert _task_message_text(state, language_manager) == "Modifying code"
+    assert state.message == "正在修改代码"
 
 
 def build_window(

@@ -12,6 +12,7 @@ from typing import Protocol
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
+from aacc.kimi_edge_cdp import EDGE_SHUTDOWN_TIMEOUT_SECONDS
 from aacc.kimi_web_login_state import KimiWebLoginStateStore
 from aacc.opencode_edge_cdp import (
     ManagedOpenCodeEdgeOperation,
@@ -109,7 +110,7 @@ class OpenCodeEdgeSession(QObject):
     def logout(self) -> bool:
         succeeded = self._persist_reuse(False)
         self.login_state_changed.emit(False)
-        if not self._cancel_active(wait=False):
+        if not self._cancel_active(wait=True):
             self._cleanup_after_worker = True
             return succeeded
         return self._finish_logout_cleanup(succeeded)
@@ -118,7 +119,7 @@ class OpenCodeEdgeSession(QObject):
         if self._closed:
             return
         self._closed = True
-        self._cancel_active(wait=False)
+        self._cancel_active(wait=True)
 
     def retranslate_ui(self) -> None:
         """Edge owns the visible login UI; no Qt widget needs translation."""
@@ -203,7 +204,7 @@ class OpenCodeEdgeSession(QObject):
         if cancel is not None:
             cancel.set()
         if wait and thread is not None and thread.is_alive():
-            thread.join(timeout=0)
+            thread.join(timeout=EDGE_SHUTDOWN_TIMEOUT_SECONDS + 1.0)
         if thread is not None and thread.is_alive():
             self._busy = True
             return False

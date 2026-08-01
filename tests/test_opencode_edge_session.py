@@ -212,3 +212,93 @@ def test_cancelled_worker_does_not_emit_error(qapp, tmp_path):
     session.refresh()
 
     assert errors == []
+
+
+def test_session_guards_busy_closed_and_missing_workspace(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"subscription": {}})
+    session = make_session(tmp_path, operation)
+    errors: list[str] = []
+    session.error_occurred.connect(errors.append)
+    session.workspace_url = ""
+    session.open_login()
+    assert errors == [OpenCodeQuotaErrorCategory.REFRESH_FAILED.value]
+
+    session.set_workspace_url(WORKSPACE_URL)
+    session.close()
+    session.open_login()
+    assert errors == [OpenCodeQuotaErrorCategory.REFRESH_FAILED.value]
+
+    busy_session = make_session(
+        tmp_path / "busy",
+        FakeOperation({"subscription": {}}),
+        thread_factory=NeverStopsThread,
+    )
+    busy_errors: list[str] = []
+    busy_session.error_occurred.connect(busy_errors.append)
+    busy_session.open_login()
+    busy_session.open_login()
+    assert busy_errors == [OpenCodeQuotaErrorCategory.REFRESH_FAILED.value]
+    busy_session._cancel_active(wait=True)
+
+
+def test_session_handles_operation_creation_and_state_persistence_failures(
+    qapp, tmp_path, monkeypatch
+):
+    del qapp
+    import aacc.opencode_edge_session as module
+
+    session = make_session(tmp_path, FakeOperation({"subscription": {}}))
+    session._operation = None
+    monkeypatch.setattr(
+        module,
+        "ManagedOpenCodeEdgeOperation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("invalid config")),
+    )
+    errors: list[str] = []
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+    assert errors == [OpenCodeQuotaErrorCategory.REFRESH_FAILED.value]
+
+    class FailingState:
+        def may_reuse(self) -> bool:
+            return False
+
+        def set_may_reuse(self, _value: bool) -> None:
+            raise OSError("state unavailable")
+
+    state_session = make_session(tmp_path / "state", FakeOperation({"subscription": {}}))
+    state_session.login_state = FailingState()  # type: ignore[assignment]
+    state_errors: list[str] = []
+    state_session.error_occurred.connect(state_errors.append)
+    state_session.open_login()
+    assert "state_save_failed" in state_errors
+
+
+def test_session_logout_reports_profile_cleanup_failure(qapp, tmp_path):
+    del qapp
+    session = make_session(
+        tmp_path,
+        FakeOperation({"subscription": {}}),
+        profile_cleaner=lambda *_args: (_ for _ in ()).throw(OSError("locked")),
+    )
+    errors: list[str] = []
+    session.error_occurred.connect(errors.append)
+
+    assert session.logout() is False
+    assert errors == [OpenCodeQuotaErrorCategory.REFRESH_FAILED.value]
+
+
+def test_session_ignores_late_or_closed_operation_results(qapp, tmp_path):
+    del qapp
+    from aacc.opencode_edge_session import OpenCodeEdgeSession
+
+    session = make_session(tmp_path, FakeOperation({"subscription": {}}))
+    quotas: list[object] = []
+    session.quota_received.connect(quotas.append)
+    session._on_operation_finished(999, {"subscription": {}})
+    assert quotas == []
+    session.close()
+    session._on_operation_finished(0, {"subscription": {}})
+    assert quotas == []
+    assert isinstance(session, OpenCodeEdgeSession)

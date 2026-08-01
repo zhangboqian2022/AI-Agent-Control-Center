@@ -190,7 +190,11 @@ def evaluate_opencode_session_status(
     if snapshot is None or snapshot.part_type is None or snapshot.time_updated is None:
         if process_alive():
             return OpenCodeSessionStatus(TaskStatus.IDLE, "空闲", 0.7, None)
-        return OpenCodeSessionStatus(TaskStatus.UNKNOWN, "未检测到运行进程", 0.55, None)
+        # A retained session with no readable part snapshot and no live
+        # OpenCode process cannot still be running.  Treat it as a terminal
+        # observation with the same confidence as other process-exit paths so
+        # a stale RUNNING state is allowed to turn green.
+        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "已完成", 0.92, None)
     if not process_alive():
         return OpenCodeSessionStatus(TaskStatus.COMPLETED, "已完成", 0.92, snapshot.time_updated)
     if snapshot.part_type == "tool" and snapshot.state_status == "pending":

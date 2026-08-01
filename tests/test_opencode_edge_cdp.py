@@ -7,13 +7,16 @@ import pytest
 
 from aacc.opencode_edge_cdp import (
     ManagedOpenCodeEdgeOperation,
+    OpenCodeEdgeCancelledError,
     OpenCodeEdgeQuotaError,
     OpenCodeEdgeUnauthorizedError,
     build_opencode_edge_launch,
+    clear_owned_opencode_profile,
     opencode_dom_extract_expression,
     opencode_edge_profile_path,
     parse_opencode_edge_payload,
     select_opencode_target,
+    validate_owned_opencode_profile,
 )
 
 WORKSPACE_URL = "https://opencode.ai/workspace/wrk_123/go"
@@ -141,6 +144,8 @@ def test_target_must_match_the_configured_workspace_and_url_has_no_suffixes() ->
         )
     with pytest.raises(ValueError):
         opencode_dom_extract_expression(f"{WORKSPACE_URL}?unexpected=1")
+    with pytest.raises(ValueError):
+        opencode_dom_extract_expression(f"{WORKSPACE_URL};unexpected")
 
 
 def test_select_target_skips_foreign_pages_before_configured_workspace() -> None:
@@ -314,3 +319,257 @@ def test_managed_operation_rejects_unsafe_profile(tmp_path: Path) -> None:
 
     with pytest.raises(OpenCodeEdgeQuotaError):
         operation.run(visible=False, cancel=Event())
+
+
+def test_profile_validation_and_logout_are_owned_and_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.opencode_edge_cdp as module
+
+    local = tmp_path / "local"
+    profile = opencode_edge_profile_path(local)
+    profile.mkdir(parents=True)
+    (profile / "cookie").write_text("private", encoding="utf-8")
+    clear_owned_opencode_profile(profile, local)
+    assert not profile.exists()
+
+    profile.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        validate_owned_opencode_profile(profile, local)
+
+    profile.unlink()
+    monkeypatch.setattr(module.os, "replace", lambda *_args: (_ for _ in ()).throw(OSError()))
+    profile.mkdir(parents=True)
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        clear_owned_opencode_profile(profile, local)
+
+    missing_local = tmp_path / "missing"
+    clear_owned_opencode_profile(opencode_edge_profile_path(missing_local), missing_local)
+
+
+def test_profile_logout_retries_quarantined_directory_after_delete_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.opencode_edge_cdp as module
+
+    local = tmp_path / "local"
+    profile = opencode_edge_profile_path(local)
+    profile.mkdir(parents=True)
+    (profile / "cookie").write_text("private", encoding="utf-8")
+    real_rmtree = module.shutil.rmtree
+    failed = False
+
+    def fail_once(path: Path) -> None:
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("profile is still locked")
+        real_rmtree(path)
+
+    monkeypatch.setattr(module.shutil, "rmtree", fail_once)
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        clear_owned_opencode_profile(profile, local)
+    assert not profile.exists()
+    assert list(profile.parent.glob(".opencode-edge-profile.logout-*"))
+
+    monkeypatch.setattr(module.shutil, "rmtree", real_rmtree)
+    clear_owned_opencode_profile(profile, local)
+    assert not list(profile.parent.glob(".opencode-edge-profile.logout-*"))
+
+
+def test_profile_validation_rejects_reparse_parent_and_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.opencode_edge_cdp as module
+
+    local = tmp_path / "local"
+    profile = opencode_edge_profile_path(local)
+    profile.mkdir(parents=True)
+    monkeypatch.setattr(module, "_is_reparse_point", lambda path: path in {local, profile})
+
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        validate_owned_opencode_profile(profile, local)
+
+
+@pytest.mark.parametrize("targets", [None, {}, ["invalid"], [{"type": "other"}]])
+def test_target_selection_rejects_malformed_target_lists(targets: object) -> None:
+    with pytest.raises((OpenCodeEdgeQuotaError, OpenCodeEdgeUnauthorizedError)):
+        select_opencode_target(
+            targets,
+            expected_port=9222,
+            expected_workspace_url=WORKSPACE_URL,
+        )
+
+
+def test_target_selection_rejects_matching_page_without_socket() -> None:
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        select_opencode_target(
+            [{"type": "page", "url": WORKSPACE_URL}],
+            expected_port=9222,
+            expected_workspace_url=WORKSPACE_URL,
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [None, {"kind": "quota", "raw": None}, {"kind": "quota", "raw": {"subscription": None}}],
+)
+def test_payload_parser_rejects_missing_outer_shapes(payload: object) -> None:
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        parse_opencode_edge_payload(payload)
+
+
+def test_payload_parser_rejects_non_finite_and_invalid_reset_values() -> None:
+    base = {
+        "rollingUsage": {"usagePercent": float("nan")},
+        "weeklyUsage": {"usagePercent": 1},
+        "monthlyUsage": {"usagePercent": 2},
+    }
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        parse_opencode_edge_payload({"kind": "quota", "raw": {"subscription": base}})
+
+
+def test_managed_operation_rejects_cancelled_or_failed_start(
+    tmp_path: Path,
+) -> None:
+    profile = _make_edge_profile(tmp_path)
+    cancelled = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        protector=lambda _profile: None,
+    )
+    cancel = Event()
+    cancel.set()
+    with pytest.raises(OpenCodeEdgeCancelledError):
+        cancelled.run(visible=False, cancel=cancel)
+
+    protected_failure = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        protector=lambda _profile: (_ for _ in ()).throw(RuntimeError("ACL")),
+    )
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        protected_failure.run(visible=False, cancel=Event())
+
+    process_failure = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        protector=lambda _profile: None,
+        process_factory=lambda _command: (_ for _ in ()).throw(RuntimeError("start")),
+    )
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        process_failure.run(visible=False, cancel=Event())
+    assert profile.exists()
+
+
+def test_managed_operation_rejects_dead_process_and_endpoint_without_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.opencode_edge_cdp as module
+
+    profile = _make_edge_profile(tmp_path)
+
+    class DeadProcess(FakeProcess):
+        def poll(self) -> int | None:
+            return 1
+
+    dead = DeadProcess()
+    operation = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, dead),
+        monotonic=lambda: 0.0,
+    )
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        operation.run(visible=False, cancel=Event())
+
+    class EndpointWithoutPort:
+        http_origin = "http://127.0.0.1"
+        browser_websocket = "ws://127.0.0.1/devtools/browser/id"
+
+    class FakeBrowser:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeBrowser)
+
+    live = FakeProcess()
+    operation = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, live),
+        socket_factory=lambda _url: object(),
+    )
+    operation._wait_for_endpoint = lambda _process, _cancel: EndpointWithoutPort()  # type: ignore[method-assign]
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        operation.run(visible=False, cancel=Event())
+
+
+def test_managed_operation_wait_and_shutdown_paths_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.opencode_edge_cdp as module
+
+    operation = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 16.0,
+    )
+    process = FakeProcess()
+    cancel = Event()
+    cancel.set()
+    with pytest.raises(OpenCodeEdgeCancelledError):
+        operation._wait_for_endpoint(process, cancel)
+
+    class ErrorProcess(FakeProcess):
+        def poll(self) -> int | None:
+            return 1
+
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        operation._wait_for_endpoint(ErrorProcess(), Event())
+
+    ticks = iter([16.0, 16.0, 40.0])
+    operation = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(ticks),
+    )
+    monkeypatch.setattr(
+        module,
+        "read_devtools_endpoint",
+        lambda _profile: (_ for _ in ()).throw(RuntimeError()),
+    )
+    with pytest.raises(OpenCodeEdgeQuotaError):
+        operation._wait_for_endpoint(process, Event())
+
+    class StubbornProcess(FakeProcess):
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            raise TimeoutError
+
+    terminated: list[int] = []
+    operation = ManagedOpenCodeEdgeOperation(
+        WORKSPACE_URL,
+        local_app_data=tmp_path / "local",
+        executable=Path("msedge.exe"),
+        process_tree_terminator=lambda proc: terminated.append(proc.pid),
+    )
+    operation._shutdown_process(StubbornProcess())
+    assert terminated == [123]

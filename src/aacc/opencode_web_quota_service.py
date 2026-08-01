@@ -105,8 +105,12 @@ class OpenCodeWebQuotaService(QObject):
     def logout(self) -> bool:
         result: bool | None = True
         try:
-            if self._session is not None:
-                result = self._session.logout()
+            # Construct the platform session even when logout happens before
+            # the quota panel was opened. The session owns the persisted
+            # browser permission/profile and must perform the cleanup itself.
+            result = self._ensure_session().logout()
+        except Exception:
+            result = False
         finally:
             self.last_quota = None
         return result is not False

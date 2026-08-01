@@ -151,6 +151,24 @@ AACC_MESSAGE_TEXT_KEYS = {
         for category in AUTOMATION_ERROR_CATEGORIES
     },
 }
+TASK_MESSAGE_KEYS = {
+    "正在运行": "task.message.running",
+    "正在分析任务": "task.message.analyzing",
+    "正在生成回复": "task.message.generating",
+    "正在运行测试": "task.message.testing",
+    "正在构建程序": "task.message.building",
+    "正在检查代码": "task.message.inspecting",
+    "正在执行命令": "task.message.executing",
+    "正在修改代码": "task.message.editing",
+    "正在查询资料": "task.message.researching",
+    "等待输入": "task.message.waiting_input",
+    "等待同意": "task.message.waiting_approval",
+    "空闲": "task.message.idle",
+    "已完成": "task.message.completed",
+    "回合已完成": "task.message.turn_completed",
+    "未检测到运行进程": "task.message.no_process",
+    "最近更新，未检测到运行进程": "task.message.recent_no_process",
+}
 _STANDARD_BUTTON_TEXT_KEYS = {
     QMessageBox.StandardButton.Ok: "common.ok",
     QMessageBox.StandardButton.Yes: "common.yes",
@@ -179,6 +197,9 @@ def _task_message_text(state: TaskState, language: LanguageManager) -> str:
         key = AACC_MESSAGE_TEXT_KEYS.get(category)
         if key is not None:
             return language.text(key)
+    message_key = TASK_MESSAGE_KEYS.get(state.message)
+    if message_key is not None:
+        return language.text(message_key)
     return state.message or language.text("task.no_message")
 
 
