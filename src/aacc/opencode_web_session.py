@@ -84,12 +84,9 @@ def opencode_usage_fetch_script(url: str, generation: int) -> str:
   const parse = (text) => {{
     const trimmed = String(text || '').trim();
     if (!trimmed) return null;
-    if (trimmed.charAt(0) === '{{') {{
-      try {{ return JSON.parse(trimmed); }} catch (_) {{ return null; }}
-    }}
     const equals = trimmed.indexOf('=');
-    const expression = equals === -1 ? trimmed : trimmed.slice(equals + 1);
-    try {{ return eval(expression); }} catch (_) {{ return null; }}
+    const candidate = equals === -1 ? trimmed : trimmed.slice(equals + 1);
+    try {{ return JSON.parse(candidate); }} catch (_) {{ return null; }}
   }};
   fetch('/_server', {{
     method: 'POST',
@@ -370,6 +367,7 @@ class OpenCodeWebSession(QObject):
             self.login_state_changed.emit(False)
             self.error_occurred.emit("unauthorized")
             return
+        _logger.warning("OpenCode bridge error message=%s", str(payload.get("message"))[:200])
         self._finish_refresh_with_error("refresh_failed")
 
     def _close_login_dialog(self) -> None:
