@@ -215,6 +215,13 @@ def test_windows_spec_exists_and_excludes_quartz() -> None:
     assert "styles.qss" in spec
 
 
+def test_windows_spec_includes_opencode_edge_modules_without_qtwebview() -> None:
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    assert "aacc.opencode_edge_cdp" in spec
+    assert "aacc.opencode_edge_session" in spec
+    assert "PySide6.QtWebView" not in spec
+
+
 def test_windows_native_acl_dependency_and_payload_are_pinned() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "pywin32==312; sys_platform == 'win32'" in project["project"]["dependencies"]
@@ -459,6 +466,8 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
         "aacc.kimi_edge_cdp",
         "aacc.kimi_edge_session",
         "aacc.kimi_membership_query",
+        "aacc.opencode_edge_cdp",
+        "aacc.opencode_edge_session",
         "websocket",
     ):
         assert module in workflow
@@ -904,7 +913,7 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "10080" in content
         assert "300-minute" not in content
         assert "300 分钟" not in content
-        assert "shasum -a 256 AACC-1.4.2.dmg" in content
+        assert "shasum -a 256 AACC-1.4.3.dmg" in content
         assert "xattr -cr /Applications/AACC.app" in content
 
 

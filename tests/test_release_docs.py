@@ -41,6 +41,11 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     assert "KIMI_5H = 30" in script
     assert "KIMI_WEEK = 72" in script
     assert "KIMI_MONTH = 31" in script
+    assert "OPENCODE_5H = 12" in script
+    assert "OPENCODE_WEEK = 44" in script
+    assert "OPENCODE_MONTH = 68" in script
+    assert "OpenCodeQuota" in script
+    assert "_DemoOpenCodeWebQuotaService" in script
     assert "window.resize(420," in script
     lowered = script.casefold()
     for forbidden in (
@@ -55,7 +60,7 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     normalized_home = str(Path.home()).casefold().replace("\\", "/")
     assert normalized_home not in normalized_script
     for screenshot in (SCREENSHOT, EN_SCREENSHOT):
-        assert _png_size(screenshot) == (420, 577)
+        assert _png_size(screenshot) == (420, 650)
         assert set(_png_chunk_types(screenshot)) <= {b"IHDR", b"pHYs", b"IDAT", b"IEND"}
 
 
@@ -81,8 +86,8 @@ def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
             r"!\[[^\]]+\]\(" + re.escape(image) + r"\)\n\n" + re.escape(caption),
             text,
         )
-        assert "AACC-1.4.2-Setup.exe" in text
-        assert "AACC-1.4.2-windows-x64.zip" not in text
+        assert "AACC-1.4.3-Setup.exe" in text
+        assert "AACC-1.4.3-windows-x64.zip" not in text
         for term in required_terms:
             assert term in text
 
@@ -93,14 +98,14 @@ def test_each_bilingual_product_document_keeps_the_live_language_contract() -> N
         "immediately",
         "Compact mode remains in Settings and the tray menu",
         "does not refresh quotas or change monitored tasks or login state",
-        "1.4.2",
+        "1.4.3",
     )
     chinese_terms = (
         "中英文",
         "即时切换",
         "紧凑模式保留在设置和托盘菜单",
         "不会刷新额度，也不会改变监控任务或登录状态",
-        "1.4.2",
+        "1.4.3",
     )
 
     for name in ("README.md", "docs/user-guide.en.md", "CHANGELOG.md"):
@@ -163,19 +168,19 @@ def test_bilingual_guides_describe_setup_lifecycle_and_preserved_appdata() -> No
     cases = (
         (
             "docs/user-guide.en.md",
-            ("AACC-1.4.2-Setup.exe", "per-user", "%LocalAppData%", "%APPDATA%"),
+            ("AACC-1.4.3-Setup.exe", "per-user", "%LocalAppData%", "%APPDATA%"),
         ),
         (
             "docs/user-guide.md",
-            ("AACC-1.4.2-Setup.exe", "当前用户", "%LocalAppData%", "%APPDATA%"),
+            ("AACC-1.4.3-Setup.exe", "当前用户", "%LocalAppData%", "%APPDATA%"),
         ),
         (
             "docs/windows-verification-checklist.en.md",
-            ("AACC-1.4.2-Setup.exe", "Windows 10", "Windows 11", "separate"),
+            ("AACC-1.4.3-Setup.exe", "Windows 10", "Windows 11", "separate"),
         ),
         (
             "docs/windows-verification-checklist.zh-CN.md",
-            ("AACC-1.4.2-Setup.exe", "Windows 10", "Windows 11", "另一"),
+            ("AACC-1.4.3-Setup.exe", "Windows 10", "Windows 11", "另一"),
         ),
     )
 

@@ -36,4 +36,4 @@ def test_error_text_maps_both_languages() -> None:
     assert opencode_quota_error_text("unauthorized", en) == (
         "OpenCode sign-in expired. Please authorize again"
     )
-    assert opencode_quota_error_text("refresh_timeout", zh) == "OpenCode 用量刷新超时"
+    assert opencode_quota_error_text("refresh_timeout", zh) == "OpenCode 额度刷新超时"
