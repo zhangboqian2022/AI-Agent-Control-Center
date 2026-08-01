@@ -70,7 +70,7 @@ def opencode_usage_fetch_script(url: str, generation: int) -> str:
   const deadline = setTimeout(() => controller.abort(), 15000);
   const emit = (payload) => {{
     window[payloadKey] = JSON.stringify(payload);
-    document.title = prefix + generation + ':ready:' + Date.now() + ':' + Math.random();
+    document.title = prefix + generation + ':' + (payload.kind || 'unknown') + ':' + Date.now() + ':' + Math.random();
   }};
   const findSubscription = (node, depth) => {{
     if (!node || typeof node !== 'object' || depth > 6) return null;
@@ -352,6 +352,11 @@ class OpenCodeWebSession(QObject):
         except ValueError:
             payload = None
         if not isinstance(payload, dict):
+            _logger.warning(
+                "OpenCode bridge payload not a dict: %r (len=%s)",
+                str(payload_text)[:200],
+                len(str(payload_text)) if payload_text is not None else -1,
+            )
             self._finish_refresh_with_error("refresh_failed")
             return
         if payload.get("generation") != self._active_refresh_generation:
