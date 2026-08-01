@@ -12,7 +12,7 @@ RC worktree before implementation.
 | Discovery repeatedly initializes SQLite | Accept | Runtime registration performs `INSERT OR IGNORE` only for a new task. |
 | Adapter registry exists but is not runtime-wired | Partial/accept boundary | Runtime wiring now provides process-only evidence for configured non-native tasks; agent-specific completion remains out of scope and is documented. |
 | Wrong-window keyboard injection | Accept | Unique target matching and a final foreground identity check fail closed on macOS/Windows. |
-| Config parent-directory TOCTOU | Partial | POSIX save path uses an anchored directory descriptor and relative replace. Windows retains protected DACL boundaries; full cross-platform handle-based rewrite is deferred. |
+| Config parent-directory TOCTOU | Partial | POSIX save path uses an anchored directory descriptor and relative replace. Windows retains the original write handle for identity, publishes through a DELETE-capable handle, and derives the target from a verified non-reparse parent handle's canonical final path; no total race-immunity claim is made. |
 | Absolute Kimi Daimon path in INFO log | Accept | INFO contains only candidate count. |
 | `uv.lock` absent from current repository | Reject | Current Git history and CI require and contain tracked `uv.lock`; the report used an old review copy. |
 | Hosted Windows 10/11 equals real-device verification | Reject | CI labels and checklists explicitly state the evidence limitation. |

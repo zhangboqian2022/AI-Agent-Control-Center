@@ -237,11 +237,12 @@ def replace_windows_file(
 ) -> None:
     """Replace a sibling file through an opened Windows directory handle.
 
-    ``os.replace`` resolves both paths afresh.  On Windows that leaves a
+    ``os.replace`` resolves both paths afresh. On Windows that leaves a
     same-user writer exposed to a directory-reparse-point swap between the
-    protection checks and publication.  ``FILE_RENAME_INFO.RootDirectory``
-    makes the final rename relative to the directory handle that was opened
-    with reparse-point traversal disabled.
+    protection checks and publication. Windows runners reject the relative
+    ``FILE_RENAME_INFO.RootDirectory`` form with ``ERROR_INVALID_PARAMETER``,
+    so the final destination is built from the canonical final path returned
+    by the verified parent handle instead of the caller's path string.
     """
     source_parent = os.path.normcase(os.path.abspath(os.fspath(source.parent)))
     target_parent = os.path.normcase(os.path.abspath(os.fspath(target.parent)))
@@ -434,7 +435,8 @@ def replace_windows_file(
             file_flag_backup_semantics | file_flag_open_reparse_point,
         )
         reject_reparse(parent_handle)
-        parent_final = comparable_path(final_path(parent_handle))
+        parent_final_path = final_path(parent_handle)
+        parent_final = comparable_path(parent_final_path)
         expected_parent = comparable_path(long_path(os.path.abspath(os.fspath(target.parent))))
         if parent_final != expected_parent:
             raise FileProtectionError("Windows atomic replacement rejected a redirected directory")
@@ -465,12 +467,13 @@ def replace_windows_file(
                 "Windows atomic replacement source is outside the target directory"
             )
 
-        file_name = target_name.encode("utf-16-le")
+        destination_path = parent_final_path.rstrip("\\/") + "\\" + target_name
+        file_name = destination_path.encode("utf-16-le")
         name_offset = FileRenameInfo.file_name.offset
         buffer = ctypes.create_string_buffer(ctypes.sizeof(FileRenameInfo) + len(file_name))
         rename_info = ctypes.cast(buffer, ctypes.POINTER(FileRenameInfo)).contents
         rename_info.replace_if_exists = 1
-        rename_info.root_directory = parent_handle
+        rename_info.root_directory = None
         rename_info.file_name_length = len(file_name)
         ctypes.memmove(
             ctypes.addressof(buffer) + name_offset,

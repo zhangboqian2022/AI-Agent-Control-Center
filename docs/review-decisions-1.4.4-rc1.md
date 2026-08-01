@@ -8,7 +8,7 @@
 
 | 项目 | 裁决 | 本轮处理边界 |
 |---|---|---|
-| P1-1 Windows `save_config` / `save_credentials` TOCTOU | 部分接受 / Partially accepted | 风险成立；补齐凭据路径校验，并使用 Windows 句柄相对重命名失败关闭。仅做目录身份前后检查不足以证明竞态免疫。 |
+| P1-1 Windows `save_config` / `save_credentials` TOCTOU | 部分接受 / Partially accepted | 风险成立；补齐凭据路径校验。Windows 保留原始写入句柄做身份锚定，以 DELETE 句柄发布，并从已验证的非 reparse 父目录句柄取得 canonical final path；实测 Windows 2022/2025 对相对 `RootDirectory` 形式返回 `ERROR_INVALID_PARAMETER`，因此不宣称完全竞态免疫。 |
 | P1-2 `/send-text` 风险警示 | 接受 / Accepted | API 行为保持不变；补 GUI 红色警示、双语安全文档和发布说明。 |
 | P2-3 Uvicorn 回环运行时断言 | 接受 / Accepted | 增加显式运行时检查，允许 `127.0.0.1` / `::1`，拒绝其他地址；不使用可被优化掉的裸 `assert`。 |
 | P2-4 Broker 8.3 长路径 | 部分接受 / Partially accepted | 做长路径规范化以防止前缀比较不一致；当前代码未证明存在可利用越权，因此不把它升级为 P1。转换失败按安全边界失败关闭。 |
