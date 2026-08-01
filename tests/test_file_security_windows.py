@@ -85,6 +85,8 @@ def test_windows_atomic_replace_native_contract_retains_handle_and_buffer() -> N
     assert "GetFileInformationByHandle" in source
     assert "source_handle_identity" in source
     assert "source handle identity changed" in source
+    assert "rename_info.root_directory = None" in source
+    assert "parent_final_path" in source
     assert "ctypes.sizeof(FileRenameInfo) + len(file_name)" in source
     assert "os.replace(" not in source
 

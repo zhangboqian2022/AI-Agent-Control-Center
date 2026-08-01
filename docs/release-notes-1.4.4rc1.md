@@ -35,8 +35,10 @@ claim of consumer Windows 10/11 hardware validation.
 - **Local API warning.** The API token reset dialog and API documentation now
   explicitly warn that `/send-text` plus `Enter` can execute commands in a
   terminal-like target if the token is leaked.
-- **Platform hardening.** Windows sensitive-file publication uses a native
-  directory-handle-relative rename and rejects unsafe credential paths;
+- **Platform hardening.** Windows sensitive-file publication retains a
+  DELETE-capable native writer, verifies file identity against the original
+  write handle, derives the destination from a verified non-reparse parent's
+  canonical final path, and rejects unsafe credential paths;
   Uvicorn rechecks the loopback boundary at startup; the Windows broker
   normalizes existing paths through `GetLongPathNameW` before rooted-prefix
   comparisons.
@@ -46,10 +48,11 @@ claim of consumer Windows 10/11 hardware validation.
 - Accepted: OpenCode/Kimi state corrections, lifecycle ordering, SQLite
   registration fix, loopback trust boundary, target fail-closed behavior, and
   release naming/evidence corrections.
-- Partially accepted: Windows configuration TOCTOU (the final rename is now
-  rooted in a verified non-reparse directory handle, but the repository still
-  does not claim immunity against an attacker who can race every path-based
-  temporary-file operation), broker 8.3 normalization (defense-in-depth, not
+- Partially accepted: Windows configuration TOCTOU (the final destination is
+  derived from a verified non-reparse directory handle because the tested
+  Windows 2022/2025 runners reject the relative `RootDirectory` form; the
+  repository still does not claim immunity against an attacker who can race
+  every path-based temporary-file operation), broker 8.3 normalization (defense-in-depth, not
   a reproduced privilege bypass), CI release evidence (provenance is uploaded
   as workflow artifacts and must be attached to a release by the release
   operator), adapter semantics (process-level only), and hosted Windows 10/11
@@ -95,16 +98,18 @@ documented Gatekeeper or SmartScreen path.
   runner、版本的 provenance JSON；这些是 CI 证据输入，不是消费级真机证据。
 - **本地 API 警示。** API Token 重置对话框和 API 文档明确警示：Token 泄露后，
   `/send-text` 配合 `Enter` 可能在终端类目标中执行命令。
-- **平台加固。** Windows 敏感文件发布改为基于已验证的非 reparse 父目录句柄相对重命名，
-  并拒绝不安全凭据路径；Uvicorn 启动前再次检查回环边界；Windows broker 在 rooted-prefix
-  比较前使用 `GetLongPathNameW` 规范化现有路径。
+- **平台加固。** Windows 敏感文件发布使用带 DELETE 权限的原生写入句柄，
+  将原始写入句柄的文件身份与新句柄比对，并从已验证的非 reparse 父目录句柄取得 canonical
+  final path 后发布，同时拒绝不安全凭据路径；Uvicorn 启动前再次检查回环边界；Windows broker
+  在 rooted-prefix 比较前使用 `GetLongPathNameW` 规范化现有路径。
 
 ### 评审决策
 
 - 接受：OpenCode/Kimi 状态修复、生命周期排序、SQLite 注册修复、回环请求信任边界、
   桌面目标失败关闭，以及发布命名和证据边界修正。
-- 部分接受：Windows 配置 TOCTOU（最终重命名已锚定到已验证的非 reparse 父目录句柄，
-  但本仓库不宣称能抵御针对每一个路径式临时文件操作的竞态攻击）、Broker 8.3 规范化
+- 部分接受：Windows 配置 TOCTOU（测试中的 Windows 2022/2025 对相对 `RootDirectory` 形式返回
+  `ERROR_INVALID_PARAMETER`，因此最终目标改由已验证父目录句柄的 canonical final path 派生；
+  本仓库仍不宣称能抵御针对每一个路径式临时文件操作的竞态攻击）、Broker 8.3 规范化
   （纵深防御，未复现权限绕过）、CI 发布证据（provenance 作为 workflow artifact 上传，
   仍需发布人员在对应 Release 中挂载）、Adapter 语义（仅进程级）、托管环境的 Windows
   10/11 兼容契约（不是消费级真机测试）。
