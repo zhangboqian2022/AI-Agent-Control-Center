@@ -81,7 +81,7 @@ def test_windows_atomic_replace_native_contract_retains_handle_and_buffer() -> N
 
     source = inspect.getsource(file_security_windows.replace_windows_file)
     assert "source_handle: int | None = None" in source
-    assert "borrowed_source_handle = wintypes.HANDLE(source_handle)" in source
+    assert "native_source_handle = wintypes.HANDLE(source_handle)" in source
     assert "GetFileInformationByHandle" in source
     assert "source_handle_identity" in source
     assert "source handle identity changed" in source
