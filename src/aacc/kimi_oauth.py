@@ -410,13 +410,22 @@ def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
                 import msvcrt
 
                 protect_file(temporary, platform=sys.platform)
-                source_handle = msvcrt.get_osfhandle(handle.fileno())
+                from aacc.file_security_windows import duplicate_windows_handle
+
+                source_handle = duplicate_windows_handle(msvcrt.get_osfhandle(handle.fileno()))
+        if sys.platform == "win32" and os.name == "nt":
+            from aacc.file_security_windows import close_windows_handle
+
+            try:
                 atomic_replace(
                     temporary,
                     target,
                     platform=sys.platform,
                     source_handle=source_handle,
                 )
+            finally:
+                if source_handle is not None:
+                    close_windows_handle(source_handle)
         if sys.platform == "win32" and os.name != "nt":
             protect_file(temporary, platform=sys.platform)
             atomic_replace(temporary, target, platform=sys.platform)
