@@ -2,7 +2,7 @@
 
 import re as _re
 
-__version__ = "1.4.3rc2"
+__version__ = "1.4.3rc3"
 
 
 def public_version() -> str:

@@ -1,5 +1,14 @@
 # 更新日志
 
+## 1.4.3-rc.3 — 2026-08-01
+
+[中英文发布说明](docs/release-notes-1.4.3rc3.md)
+
+- [功能] OpenCode Go 套餐用量条（macOS）：自持网页视图登录 opencode.ai，从 /go 工作区页面提取已渲染的滚动/每周/每月用量，以三行条显示在 Kimi 额度条下方（百分比 + 重置倒计时）；Cookie 跨重启持久保留。
+- [功能] OpenCode CLI 任务发现：每 5 秒只读轮询本机 opencode SQLite 数据库，推断各会话状态（权限挂起 → 等待同意；流式活动 → 进行中；回合结束 → 已完成；停滞 + 进程在 → 等待输入；进程退出 → 已完成），复用现有圆形状态灯。
+- [修复] opencode 回合结束（step-finish / tool completed）立即显示绿色已完成，不再停留蓝色。
+- [交付] 本次为 macOS 单独递增版本；Windows 构建保持 1.4.3-rc.2，不发布新产物。
+
 ## 1.4.3-rc.2 — 2026-07-31
 
 [中英文发布说明](docs/release-notes-1.4.3rc2.md)
