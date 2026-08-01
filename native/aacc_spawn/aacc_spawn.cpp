@@ -423,11 +423,18 @@ bool NormalizePath(const std::wstring& original, std::wstring* normalized) {
     }
     ReplaceSeparators(normalized);
     TrimTrailingSeparators(normalized);
-    return !normalized->empty() && ExpandLongPath(normalized);
+    if (normalized->empty()) {
+        return false;
+    }
+    // PATH may contain entries that do not exist yet. Normalize their syntax
+    // for prefix comparison, but retain the original absolute form when the
+    // filesystem cannot expand it to a long name.
+    ExpandLongPath(normalized);
+    return true;
 }
 
 bool NormalizeExistingPath(const std::wstring& original, std::wstring* normalized) {
-    return NormalizePath(original, normalized);
+    return NormalizePath(original, normalized) && ExpandLongPath(normalized);
 }
 
 bool IsPathRootedIn(

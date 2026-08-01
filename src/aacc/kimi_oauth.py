@@ -389,7 +389,12 @@ def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
             os.close(descriptor)
             descriptor = -1
             protect_file(temporary, platform=sys.platform)
-            handle_context = temporary.open("w", encoding="utf-8")
+            if os.name == "nt":
+                from aacc.file_security_windows import open_windows_replaceable_text
+
+                handle_context = open_windows_replaceable_text(temporary)
+            else:
+                handle_context = temporary.open("w", encoding="utf-8")
         else:
             try:
                 protect_file(temporary, descriptor=descriptor, platform=sys.platform)

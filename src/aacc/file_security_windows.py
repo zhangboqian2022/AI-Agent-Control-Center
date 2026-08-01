@@ -4,7 +4,7 @@ import importlib
 import ntpath
 import os
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from aacc.file_security import FileProtectionError
 
@@ -154,6 +154,74 @@ def protect_windows_path(
         ) from None
 
 
+def open_windows_replaceable_text(path: Path) -> Any:
+    """Open a sensitive temporary file with DELETE/share-delete semantics.
+
+    The default Python/MSVCRT text open does not promise DELETE access on the
+    underlying handle. Windows therefore cannot publish that still-open file
+    with ``FILE_RENAME_INFO``. This adapter keeps the handle usable by Python
+    while granting the native rename rights explicitly.
+    """
+    if os.name != "nt":
+        raise FileProtectionError("Windows replaceable file access is unavailable on this platform")
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    msvcrt_api: Any = msvcrt
+    os_api: Any = cast(Any, os)
+
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        raise FileProtectionError("Windows replaceable file access is unavailable on this platform")
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    generic_read = 0x80000000
+    generic_write = 0x40000000
+    file_delete = 0x00010000
+    file_share_all = 0x00000001 | 0x00000002 | 0x00000004
+    open_existing = 3
+    file_attribute_normal = 0x00000080
+    invalid_handle = ctypes.c_void_p(-1).value
+    native_handle = kernel32.CreateFileW(
+        os.fspath(path),
+        generic_read | generic_write | file_delete,
+        file_share_all,
+        None,
+        open_existing,
+        file_attribute_normal,
+        None,
+    )
+    if not native_handle or native_handle.value == invalid_handle:
+        raise FileProtectionError("Windows replaceable file access failed")
+    try:
+        descriptor = msvcrt_api.open_osfhandle(
+            native_handle.value,
+            os.O_RDWR | os_api.O_BINARY,
+        )
+    except Exception:
+        kernel32.CloseHandle(native_handle)
+        raise FileProtectionError("Windows replaceable file access failed") from None
+    try:
+        return os.fdopen(descriptor, "w", encoding="utf-8")
+    except Exception:
+        os.close(descriptor)
+        raise FileProtectionError("Windows replaceable file access failed") from None
+
+
 def replace_windows_file(
     source: Path,
     target: Path,
@@ -222,6 +290,11 @@ def replace_windows_file(
         wintypes.DWORD,
     ]
     kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    kernel32.GetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+    ]
+    kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
     kernel32.GetFinalPathNameByHandleW.argtypes = [
         wintypes.HANDLE,
         wintypes.LPWSTR,
@@ -243,6 +316,20 @@ def replace_windows_file(
         _fields_ = [
             ("file_attributes", wintypes.DWORD),
             ("reparse_tag", wintypes.DWORD),
+        ]
+
+    class ByHandleFileInfo(ctypes.Structure):
+        _fields_ = [
+            ("file_attributes", wintypes.DWORD),
+            ("creation_time", wintypes.FILETIME),
+            ("last_access_time", wintypes.FILETIME),
+            ("last_write_time", wintypes.FILETIME),
+            ("volume_serial_number", wintypes.DWORD),
+            ("file_size_high", wintypes.DWORD),
+            ("file_size_low", wintypes.DWORD),
+            ("number_of_links", wintypes.DWORD),
+            ("file_index_high", wintypes.DWORD),
+            ("file_index_low", wintypes.DWORD),
         ]
 
     handle_alignment = ctypes.alignment(wintypes.HANDLE)
@@ -285,6 +372,16 @@ def replace_windows_file(
         if attributes.file_attributes & file_attribute_reparse_point:
             raise FileProtectionError("Windows atomic replacement rejected a reparse point")
 
+    def file_identity(handle: Any) -> tuple[int, int, int]:
+        information = ByHandleFileInfo()
+        if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
+            raise fail()
+        return (
+            int(information.volume_serial_number),
+            int(information.file_index_high),
+            int(information.file_index_low),
+        )
+
     def final_path(handle: Any) -> str:
         capacity = 260
         for _ in range(3):
@@ -319,7 +416,7 @@ def replace_windows_file(
         return ntpath.normcase(ntpath.normpath(path))
 
     parent_handle: Any = None
-    source_handle_owned = source_handle is None
+    source_handle_owned = True
     native_source_handle: Any = None
     try:
         parent_handle = open_handle(
@@ -333,15 +430,26 @@ def replace_windows_file(
         if parent_final != expected_parent:
             raise FileProtectionError("Windows atomic replacement rejected a redirected directory")
 
-        if source_handle is None:
-            native_source_handle = open_handle(
-                source,
-                file_read_attributes | file_delete,
-                file_flag_open_reparse_point,
-            )
-        else:
-            native_source_handle = wintypes.HANDLE(source_handle)
+        source_handle_identity: tuple[int, int, int] | None = None
+        if source_handle is not None:
+            borrowed_source_handle = wintypes.HANDLE(source_handle)
+            reject_reparse(borrowed_source_handle)
+            source_handle_identity = file_identity(borrowed_source_handle)
+        # Python's file handle is intentionally retained by the caller, but it
+        # commonly lacks DELETE access required by FILE_RENAME_INFO. Re-open
+        # the exact sibling with DELETE access and bind it to the original
+        # handle's identity before publishing.
+        native_source_handle = open_handle(
+            source,
+            file_read_attributes | file_delete,
+            file_flag_open_reparse_point,
+        )
         reject_reparse(native_source_handle)
+        if (
+            source_handle_identity is not None
+            and file_identity(native_source_handle) != source_handle_identity
+        ):
+            raise FileProtectionError("Windows atomic replacement source handle identity changed")
         source_final = comparable_path(final_path(native_source_handle))
         if ntpath.dirname(source_final) != parent_final:
             raise FileProtectionError(

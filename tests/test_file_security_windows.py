@@ -81,9 +81,24 @@ def test_windows_atomic_replace_native_contract_retains_handle_and_buffer() -> N
 
     source = inspect.getsource(file_security_windows.replace_windows_file)
     assert "source_handle: int | None = None" in source
-    assert "native_source_handle = wintypes.HANDLE(source_handle)" in source
+    assert "borrowed_source_handle = wintypes.HANDLE(source_handle)" in source
+    assert "GetFileInformationByHandle" in source
+    assert "source_handle_identity" in source
+    assert "source handle identity changed" in source
     assert "ctypes.sizeof(FileRenameInfo) + len(file_name)" in source
     assert "os.replace(" not in source
+
+
+def test_windows_sensitive_writers_request_delete_share_for_native_publish() -> None:
+    config_source = (Path(__file__).resolve().parents[1] / "src" / "aacc" / "config.py").read_text(
+        encoding="utf-8"
+    )
+    oauth_source = (
+        Path(__file__).resolve().parents[1] / "src" / "aacc" / "kimi_oauth.py"
+    ).read_text(encoding="utf-8")
+
+    assert "open_windows_replaceable_text" in config_source
+    assert "open_windows_replaceable_text" in oauth_source
 
 
 def test_windows_file_acl_is_replaced_with_exact_protected_allowlist(
