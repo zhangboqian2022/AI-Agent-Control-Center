@@ -42,13 +42,18 @@ class StateMachine:
         if current.status is TaskStatus.IDLE and candidate.status in cls.RESTART:
             return candidate.updated_at >= current.updated_at
         if current.status in cls.TERMINAL and candidate.status in cls.RESTART:
-            if candidate.updated_at <= current.updated_at:
+            if current.finished_at is None:
+                return candidate.updated_at >= current.updated_at
+            if candidate.started_at is None:
                 return False
-            return not (
-                current.finished_at is not None
-                and candidate.started_at is not None
-                and candidate.started_at <= current.finished_at
-            )
+            if candidate.started_at < current.finished_at:
+                return False
+            if candidate.updated_at == current.updated_at:
+                return (
+                    candidate.started_at == candidate.updated_at
+                    and candidate.started_at == current.finished_at
+                )
+            return candidate.updated_at > current.updated_at
         age = (datetime.now(UTC) - current.updated_at).total_seconds()
         if candidate.confidence < current.confidence and age <= cls.STALE_SECONDS:
             return False
