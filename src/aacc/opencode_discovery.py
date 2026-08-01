@@ -239,10 +239,14 @@ class OpenCodeLocalDiscovery:
         discovered: list[DiscoveredTask] = []
         snapshots = self._latest_part_snapshots([session.session_id for session in sessions])
         for session in sessions:
+
+            def session_process_alive(current: OpenCodeSession = session) -> bool:
+                return is_alive(current)
+
             evaluation = evaluate_opencode_session_status(
                 snapshots.get(session.session_id),
                 now=now,
-                process_alive=lambda session=session: is_alive(session),
+                process_alive=session_process_alive,
                 activity_window_seconds=self.activity_window_seconds,
             )
             activity_at = evaluation.activity_at
