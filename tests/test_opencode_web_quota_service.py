@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Signal
 
@@ -127,6 +128,22 @@ def test_service_logout_clears_snapshot(qapp, tmp_path: Path) -> None:
     assert service.last_quota is None
 
 
+def test_service_logout_creates_session_to_clean_persisted_state(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    del qapp
+    import aacc.opencode_web_quota_service as module
+
+    session = FakeSession()
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module, "_create_native_web_session", lambda *_args, **_kwargs: session)
+    service = OpenCodeWebQuotaService(tmp_path)
+
+    assert service.logout() is True
+    assert session.logouts == 1
+    service.stop()
+
+
 def test_service_open_login_delegates_to_session(qapp, tmp_path: Path) -> None:
     session = FakeSession()
     service = OpenCodeWebQuotaService(tmp_path, session=session)
@@ -143,10 +160,40 @@ def test_service_stop_is_idempotent(qapp, tmp_path: Path) -> None:
     assert session.closed == 1
 
 
-def test_service_creates_native_session_on_demand(qapp, tmp_path: Path) -> None:
+def test_service_creates_native_session_on_demand(qapp, tmp_path: Path, monkeypatch) -> None:
+    import aacc.opencode_web_quota_service as module
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    session = FakeSession()
+    session.storage_path = tmp_path / "opencode-web-session"  # type: ignore[attr-defined]
+    monkeypatch.setattr(module, "_create_native_web_session", lambda *_args, **_kwargs: session)
     service = OpenCodeWebQuotaService(tmp_path)
     assert service._session is None
     session = service._ensure_session()
     assert service._session is session
     assert session.storage_path == tmp_path / "opencode-web-session"
+    service.stop()
+
+
+def test_service_creates_edge_session_on_windows(qapp, tmp_path: Path, monkeypatch) -> None:
+    del qapp
+    import aacc.opencode_web_quota_service as module
+
+    class OpenCodeEdgeSession(FakeSession):
+        def __init__(self, *_args, **_kwargs) -> None:
+            super().__init__()
+
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(
+        module,
+        "import_module",
+        lambda _name: SimpleNamespace(OpenCodeEdgeSession=OpenCodeEdgeSession),
+    )
+    service = OpenCodeWebQuotaService(tmp_path)
+    service.set_workspace_url("https://opencode.ai/workspace/wrk_1/go")
+
+    session = service._ensure_session()
+
+    assert type(session).__name__ == "OpenCodeEdgeSession"
     service.stop()

@@ -1,4 +1,4 @@
-# Windows 10/11 Manual Verification Checklist — AACC 1.4.2
+# Windows 10/11 Manual Verification Checklist — AACC 1.4.3
 
 Record only what is actually observed. Unchecked items are not compatibility
 claims. Hosted GitHub Actions on Windows Server 2022/2025 verifies builds and
@@ -7,7 +7,7 @@ automated product smoke, but it does **not** replace this consumer Windows
 Completing this checklist provides only the Windows half of the required
 macOS and Windows manual sign-off for Kimi session persistence and logout.
 
-Candidate: `AACC-1.4.2-Setup.exe`
+Candidate: `AACC-1.4.3-Setup.exe`
 
 Verifier:
 
@@ -22,7 +22,7 @@ Account type (must be non-administrator for the primary pass):
 Commit and candidate SHA-256:
 
 - [ ] **Checksum and SmartScreen**: the Setup SHA-256 matches
-  `AACC-1.4.2-Setup.exe.sha256`; launching the unsigned candidate shows the
+  `AACC-1.4.3-Setup.exe.sha256`; launching the unsigned candidate shows the
   expected Unknown publisher/SmartScreen path, and **More info → Run anyway**
   opens Setup.
 - [ ] **Per-user install**: Setup does not request administrator elevation and
@@ -60,6 +60,12 @@ Commit and candidate SHA-256:
   membership login; each available row shows a complete local reset date/time,
   a known percentage without a trustworthy reset shows `--` for the reset,
   and unavailable percentages are `--`, never `0%`.
+- [ ] **OpenCode parity**: configure an OpenCode workspace URL, sign in through
+  the managed Edge profile, and confirm rolling/weekly/monthly quota rows. Verify
+  `%LOCALAPPDATA%\AACC\opencode-edge-profile` is separate from Kimi's profile,
+  forced-closing an OpenCode terminal changes its task light from blue to green,
+  and a discovered session shows its work-directory name and focuses the matching
+  Windows Terminal window.
 - [ ] **Settings and dedicated Edge session**: always-on-top and API credential
   reset persist. Confirm the AACC-owned Edge profile retains the first-party
   Kimi session across AACC and Windows restarts. Inspect

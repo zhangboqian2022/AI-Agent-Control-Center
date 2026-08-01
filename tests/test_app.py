@@ -177,6 +177,20 @@ def test_run_application_assembles_one_language_manager_for_runtime_and_window(
     assert runtime.runtime_language_manager is runtime.window_language_manager
 
 
+def test_windows_opencode_factory_keeps_configured_quota_service(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = app_module.load_config(tmp_path / "missing.yaml")
+    config.opencode_workspace_url = "https://opencode.ai/workspace/wrk_1/go"
+    monkeypatch.setattr(app_module.sys, "platform", "win32")
+
+    service = app_module._default_opencode_web_quota_service_factory(tmp_path, config)
+
+    assert service is not None
+    assert service.workspace_url == config.opencode_workspace_url
+    service.stop()
+
+
 def test_windows_listener_is_installed_before_hotkeys_and_survives_hotkey_failure(
     tmp_path: Path, monkeypatch: object
 ) -> None:
@@ -445,6 +459,9 @@ def test_opencode_web_start_skipped_after_shutdown(tmp_path: Path, monkeypatch: 
 def test_deferred_opencode_web_start_failure_stops_partial_service(
     tmp_path: Path, monkeypatch: object
 ) -> None:
+    # This test exercises deferred Qt startup, not the native Windows update
+    # listener. Keep the shell deterministic when the suite runs on Windows.
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
     events: list[str] = []
     runtime = _runtime_for_application_test(events)
 
@@ -1451,13 +1468,14 @@ def test_startup_stops_before_opencode_when_kimi_desktop_start_quits(
     assert "hotkeys-created" not in events
 
 
-def test_default_opencode_factory_skips_windows(monkeypatch) -> None:
+def test_default_opencode_factory_keeps_windows_service(monkeypatch) -> None:
     import aacc.app as app_module
     from aacc.config import default_config
 
     monkeypatch.setattr(app_module.sys, "platform", "win32")
     service = app_module._default_opencode_web_quota_service_factory(Path("."), default_config())
-    assert service is None
+    assert service is not None
+    service.stop()
 
 
 def test_default_opencode_factory_uses_configured_url(monkeypatch) -> None:
