@@ -81,6 +81,78 @@ def test_tool_completed_is_completed_with_or_without_process() -> None:
     assert result.status is TaskStatus.COMPLETED
 
 
+def test_final_text_after_step_finish_is_completed(tmp_path: Path) -> None:
+    from aacc.opencode_discovery import OpenCodeLocalDiscovery
+
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_finished", updated=now)
+    _add_part(
+        connection,
+        "ses_finished",
+        "start",
+        {"type": "step-start"},
+        now - timedelta(seconds=30),
+    )
+    _add_part(
+        connection,
+        "ses_finished",
+        "finish",
+        {"type": "step-finish"},
+        now - timedelta(seconds=10),
+    )
+    _add_part(
+        connection,
+        "ses_finished",
+        "final-text",
+        {"type": "text", "text": "secret"},
+        now,
+    )
+    connection.commit()
+    connection.close()
+
+    task = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True).discover()[0]
+
+    assert task.state.status is TaskStatus.COMPLETED
+    assert "secret" not in str(task.state.metadata)
+
+
+def test_new_step_after_previous_finish_remains_running(tmp_path: Path) -> None:
+    from aacc.opencode_discovery import OpenCodeLocalDiscovery
+
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_running", updated=now)
+    _add_part(
+        connection,
+        "ses_running",
+        "old-start",
+        {"type": "step-start"},
+        now - timedelta(seconds=40),
+    )
+    _add_part(
+        connection,
+        "ses_running",
+        "old-finish",
+        {"type": "step-finish"},
+        now - timedelta(seconds=25),
+    )
+    _add_part(
+        connection,
+        "ses_running",
+        "new-start",
+        {"type": "step-start"},
+        now - timedelta(seconds=5),
+    )
+    _add_part(connection, "ses_running", "new-text", {"type": "text"}, now)
+    connection.commit()
+    connection.close()
+
+    task = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True).discover()[0]
+
+    assert task.state.status is TaskStatus.RUNNING
+
+
 def test_no_parts_with_process_is_idle() -> None:
     result = _evaluate(None, alive=True)
     assert result.status is TaskStatus.IDLE

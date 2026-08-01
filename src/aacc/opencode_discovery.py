@@ -39,8 +39,9 @@ _LATEST_PART_QUERY = """
 SELECT data, time_updated FROM part
 WHERE session_id = ?
 ORDER BY time_updated DESC, id DESC
-LIMIT 1
+LIMIT ?
 """
+_PART_HISTORY_LIMIT = 64
 _STREAMING_PART_TYPES = {"text", "reasoning", "patch", "step-start"}
 _STEP_END_PART_TYPES = {"step-finish", "tool"}
 
@@ -90,6 +91,8 @@ class OpenCodePartSnapshot:
     part_type: str | None
     state_status: str | None
     time_updated: datetime | None
+    completed_at: datetime | None = None
+    step_started_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,12 @@ def evaluate_opencode_session_status(
         )
     if snapshot.part_type == "tool" and snapshot.state_status == "running":
         return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.95, snapshot.time_updated)
+    if (
+        snapshot.completed_at is not None
+        and snapshot.step_started_at is not None
+        and snapshot.completed_at >= snapshot.step_started_at
+    ):
+        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated)
     active = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
     if snapshot.part_type in _STREAMING_PART_TYPES and active:
         return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
@@ -275,15 +284,40 @@ class OpenCodeLocalDiscovery:
             connection = self._connect(self.db_path)
             try:
                 for session_id in session_ids:
-                    row = connection.execute(_LATEST_PART_QUERY, (session_id,)).fetchone()
-                    if row is None:
+                    rows = connection.execute(
+                        _LATEST_PART_QUERY,
+                        (session_id, _PART_HISTORY_LIMIT),
+                    ).fetchall()
+                    if not rows:
                         continue
-                    parsed = self._parse_part_snapshot(row[0])
+                    parsed = self._parse_part_snapshot(rows[0][0])
                     if parsed is not None:
+                        step_started_at: datetime | None = None
+                        completed_at: datetime | None = None
+                        for raw_data, raw_updated in rows:
+                            candidate = self._parse_part_snapshot(raw_data)
+                            if candidate is None:
+                                continue
+                            updated_at = _epoch_ms_to_datetime(raw_updated)
+                            if candidate.part_type == "step-start":
+                                step_started_at = max(
+                                    (step_started_at or datetime.min.replace(tzinfo=UTC)),
+                                    updated_at,
+                                )
+                            if candidate.part_type == "step-finish" or (
+                                candidate.part_type == "tool"
+                                and candidate.state_status == "completed"
+                            ):
+                                completed_at = max(
+                                    (completed_at or datetime.min.replace(tzinfo=UTC)),
+                                    updated_at,
+                                )
                         snapshots[session_id] = OpenCodePartSnapshot(
                             part_type=parsed.part_type,
                             state_status=parsed.state_status,
-                            time_updated=_epoch_ms_to_datetime(row[1]),
+                            time_updated=_epoch_ms_to_datetime(rows[0][1]),
+                            completed_at=completed_at,
+                            step_started_at=step_started_at,
                         )
             finally:
                 connection.close()
