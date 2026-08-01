@@ -113,6 +113,11 @@ def evaluate_opencode_session_status(
             return OpenCodeSessionStatus(TaskStatus.IDLE, "空闲", 0.7, None)
         return OpenCodeSessionStatus(TaskStatus.UNKNOWN, "未检测到运行进程", 0.55, None)
     if snapshot.part_type == "tool" and snapshot.state_status == "pending":
+        fresh = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
+        if fresh:
+            return OpenCodeSessionStatus(
+                TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated
+            )
         return OpenCodeSessionStatus(
             TaskStatus.WAITING_APPROVAL, "等待同意", 0.97, snapshot.time_updated
         )

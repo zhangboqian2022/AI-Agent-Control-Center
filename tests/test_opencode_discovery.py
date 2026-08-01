@@ -36,8 +36,13 @@ def _evaluate(snapshot, *, alive: bool, window: float = 90.0) -> OpenCodeSession
     )
 
 
-def test_pending_tool_is_waiting_approval() -> None:
+def test_fresh_pending_tool_is_running() -> None:
     result = _evaluate(_snapshot("tool", "pending", 5), alive=True)
+    assert result.status is TaskStatus.RUNNING
+
+
+def test_stale_pending_tool_is_waiting_approval() -> None:
+    result = _evaluate(_snapshot("tool", "pending", 300), alive=True)
     assert result.status is TaskStatus.WAITING_APPROVAL
     assert result.confidence == 0.97
 
@@ -173,7 +178,7 @@ def test_discover_reports_waiting_approval(tmp_path: Path, monkeypatch) -> None:
         "ses_1",
         "prt_1",
         {"type": "tool", "state": {"status": "pending"}},
-        updated=datetime.now(UTC),
+        updated=datetime.now(UTC) - timedelta(seconds=300),
     )
     connection.commit()
     connection.close()
@@ -368,7 +373,7 @@ def test_active_session_ids_returns_running_only(tmp_path: Path) -> None:
         "ses_wait",
         "prt_2",
         {"type": "tool", "state": {"status": "pending"}},
-        updated=now,
+        updated=now - timedelta(seconds=300),
     )
     connection.commit()
     connection.close()
