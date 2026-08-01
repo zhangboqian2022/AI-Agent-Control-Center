@@ -459,6 +459,9 @@ def test_opencode_web_start_skipped_after_shutdown(tmp_path: Path, monkeypatch: 
 def test_deferred_opencode_web_start_failure_stops_partial_service(
     tmp_path: Path, monkeypatch: object
 ) -> None:
+    # This test exercises deferred Qt startup, not the native Windows update
+    # listener. Keep the shell deterministic when the suite runs on Windows.
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")  # type: ignore[attr-defined]
     events: list[str] = []
     runtime = _runtime_for_application_test(events)
 
