@@ -13,9 +13,8 @@ from aacc.file_security import FileProtectionError
 from aacc.i18n import EN_US, ZH_CN, LanguageManager
 from aacc.opencode_web_session import (
     BRIDGE_PREFIX,
-    SERVER_FN_HASH,
     OpenCodeWebSession,
-    opencode_usage_fetch_script,
+    opencode_dom_extract_script,
     opencode_webview_user_data_path,
     workspace_id_from_url,
 )
@@ -100,23 +99,15 @@ def test_user_data_path_windows_raises_without_localappdata(monkeypatch, tmp_pat
         opencode_webview_user_data_path(tmp_path)
 
 
-def test_fetch_script_embeds_workspace_id_and_server_hash() -> None:
-    script = opencode_usage_fetch_script(WORKSPACE_URL, 7)
-    assert "wrk_01KYVH7EJDHAAE4TZ51J3TX5CS" in script
-    assert SERVER_FN_HASH in script
-    assert "X-Server-Id" in script
-    assert "X-Server-Instance" in script
-    assert "X-Server-Id" in script and "server-fn:1" in script
-    assert "subscription" in script
+def test_dom_extract_script_contains_text_extraction() -> None:
+    script = opencode_dom_extract_script(WORKSPACE_URL, 7)
+    assert "document.body.innerText" in script
+    assert "parseResetSeconds" in script
     assert "rollingUsage" in script
+    assert "weeklyUsage" in script
+    assert "monthlyUsage" in script
     assert "AACC_OPENCODE_QUOTA:" in script
-    assert "node.rollingUsage || node.weeklyUsage || node.monthlyUsage" in script
-    assert opencode_usage_fetch_script("https://opencode.ai/zen", 1) == ""
-
-
-def test_fetch_script_uses_json_content_type() -> None:
-    script = opencode_usage_fetch_script(WORKSPACE_URL, 1)
-    assert "Content-Type" in script and "application/json" in script
+    assert opencode_dom_extract_script("https://opencode.ai/zen", 1) == ""
 
 
 def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
@@ -133,7 +124,7 @@ def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
     assert session.view.url().toString() == WORKSPACE_URL
     session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
-    assert "_server" in session.view.scripts[-1]
+    assert "document.body.innerText" in session.view.scripts[-1]
 
 
 def test_session_without_workspace_url_is_inert(qapp, tmp_path: Path) -> None:
@@ -154,7 +145,7 @@ def test_refresh_runs_fetch_script_without_reload_when_origin_matches(qapp, tmp_
     session.view._url = QUrl(WORKSPACE_URL)
     session.refresh()
     assert session.view.scripts
-    assert "_server" in session.view.scripts[-1]
+    assert "document.body.innerText" in session.view.scripts[-1]
     assert session.view.url().toString() == WORKSPACE_URL
 
 
@@ -465,7 +456,7 @@ def test_manual_login_dialog_dismissal_resets_state(monkeypatch, qapp, tmp_path:
     session.view.scripts = []
     session.refresh()
     assert session.view.scripts
-    assert "_server" in session.view.scripts[-1]
+    assert "document.body.innerText" in session.view.scripts[-1]
     assert session.view.url().toString() == WORKSPACE_URL
     session.close()
 
