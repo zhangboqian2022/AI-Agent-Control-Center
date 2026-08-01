@@ -28,6 +28,10 @@ increment**: the Windows build remains at 1.4.3-rc.2 with no new artifact.
 - **Fix — finished opencode turns turn green immediately.** A completed turn
   (`step-finish` / `tool completed`) now reports the green completed state
   right away instead of staying blue until the opencode process exits.
+- **Fix — forced-stop sessions leave running state immediately.** When the
+  opencode process disappears after a forced stop, its matching session now
+  reports green completed immediately instead of waiting for the 90-second
+  activity window.
 - **Known limits.** The quota bar depends on the rendered layout of the
   opencode.ai /go workspace page; if opencode.ai changes that page, the
   extraction may need updating. Status inference is approximate (official
@@ -62,6 +66,8 @@ claimed as verified.
   reasoning 内容。
 - **修复 — 完成的 opencode 回合立即变绿。** 回合结束（`step-finish` /
   `tool completed`）立即上报绿色已完成，不再停留蓝色直到 opencode 进程退出。
+- **修复 — 强制结束后立即退出进行中状态。** OpenCode 进程因强制结束消失后，匹配
+  会话立即上报绿色已完成，不再等待 90 秒活动窗口。
 - **已知限制。** 额度条依赖 opencode.ai /go 工作区页面的渲染布局；若 opencode.ai
   改版，提取可能需要跟进。状态推断为近似（官方 idle/busy 是运行时事件，不落库）。
   OpenCode 支持先做 macOS；Windows（Edge 会话与发现）为后续迭代。

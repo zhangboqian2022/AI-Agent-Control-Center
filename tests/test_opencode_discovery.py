@@ -52,6 +52,18 @@ def test_running_tool_is_running() -> None:
     assert result.status is TaskStatus.RUNNING
 
 
+def test_fresh_streaming_part_without_process_is_completed() -> None:
+    result = _evaluate(_snapshot("text", None, 5), alive=False)
+    assert result.status is TaskStatus.COMPLETED
+    assert result.confidence == 0.92
+
+
+def test_fresh_active_tool_without_process_is_completed() -> None:
+    for state in ("pending", "running"):
+        result = _evaluate(_snapshot("tool", state, 5), alive=False)
+        assert result.status is TaskStatus.COMPLETED, state
+
+
 def test_streaming_parts_within_window_are_running() -> None:
     for part_type in ("text", "reasoning", "patch", "step-start"):
         result = _evaluate(_snapshot(part_type, None, 30), alive=True)

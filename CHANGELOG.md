@@ -9,6 +9,7 @@
 - [Feature] OpenCode Go-plan quota bar (macOS): a self-owned web view signs you into opencode.ai, extracts the rendered rolling/weekly/monthly quota from the /go workspace page, and shows percentage + reset countdown in a three-row strip below the Kimi bar; cookie persists across restarts.
 - [Feature] OpenCode CLI task discovery: read-only polling of the local opencode SQLite database infers per-session status (pending permission → waiting approval; active streaming → running; finished turn → completed; stale + process alive → waiting input; process gone → completed) with the existing circular status lights.
 - [Fix] A finished opencode turn (step-finish / tool completed) now shows the green completed state immediately instead of staying blue.
+- [Fix] If the opencode process disappears after a forced stop, the matching session now leaves the blue running state immediately instead of waiting for the activity timeout.
 - [Delivery] macOS-only increment; the Windows build remains at 1.4.3-rc.2 with no new artifact.
 
 ## 1.4.3-rc.2 — 2026-07-31
