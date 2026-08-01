@@ -496,7 +496,7 @@ def replace_windows_file(
     try:
         parent_handle = open_handle(
             target.parent,
-            file_list_directory | file_add_file | file_read_attributes | file_delete,
+            file_list_directory | file_add_file | file_read_attributes,
             file_flag_backup_semantics | file_flag_open_reparse_point,
         )
         reject_reparse(parent_handle)

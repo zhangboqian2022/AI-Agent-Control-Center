@@ -834,7 +834,7 @@ def test_settings_dialog_opencode_login_logout_buttons(qtbot, tmp_path):
     dialog = SettingsDialog(window)
     qtbot.addWidget(dialog)
     buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
-    login = buttons["登录 OpenCode（同步 5H / WEEK / MONTH）"]
+    login = buttons["登录 OpenCode（同步 滚动 / WEEK / MONTH）"]
     logout = buttons["退出 OpenCode"]
     login.click()
     assert service.logins == 1

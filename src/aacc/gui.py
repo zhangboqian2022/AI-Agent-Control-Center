@@ -610,7 +610,7 @@ class QuotaBar(QFrame):
 
 
 class OpenCodeQuotaBar(QFrame):
-    """OpenCode workspace quota strip (5H / WEEK / MONTH) from web session data."""
+    """OpenCode workspace quota strip (ROLLING / WEEK / MONTH) from web session data."""
 
     clicked = Signal()
 
@@ -647,9 +647,9 @@ class OpenCodeQuotaBar(QFrame):
         metric_layout.setColumnStretch(2, 1)
         layout.addLayout(metric_layout, 0, 2, 1, 1)
         layout.setColumnStretch(2, 1)
-        self._rolling_row = _add_quota_metric_row(metric_layout, 0, "5H")
-        self._weekly_row = _add_quota_metric_row(metric_layout, 1, "WEEK")
-        self._monthly_row = _add_quota_metric_row(metric_layout, 2, "MONTH")
+        self._rolling_row = _add_quota_metric_row(metric_layout, 0, "")
+        self._weekly_row = _add_quota_metric_row(metric_layout, 1, "")
+        self._monthly_row = _add_quota_metric_row(metric_layout, 2, "")
         self._metric_rows = [self._rolling_row, self._weekly_row, self._monthly_row]
         self.rolling_label = self._rolling_row.percent_label
         self.rolling_bar = self._rolling_row.progress_bar
@@ -657,7 +657,13 @@ class OpenCodeQuotaBar(QFrame):
         self.weekly_bar = self._weekly_row.progress_bar
         self.monthly_label = self._monthly_row.percent_label
         self.monthly_bar = self._monthly_row.progress_bar
+        self._set_period_labels()
         self.show_unauthorized()
+
+    def _set_period_labels(self) -> None:
+        self._rolling_row.period_label.setText(self.language_manager.text("opencode.rolling"))
+        self._weekly_row.period_label.setText(self.language_manager.text("quota.week"))
+        self._monthly_row.period_label.setText(self.language_manager.text("quota.month"))
 
     def period_labels(self) -> list[str]:
         return [row.period_label.text() for row in self._metric_rows]
@@ -748,9 +754,9 @@ class OpenCodeQuotaBar(QFrame):
         self._show_detail(self._weekly_row, quota.weekly)
         self._show_detail(self._monthly_row, quota.monthly)
         tooltip_lines = [
-            self._detail_tooltip("5H", quota.rolling),
-            self._detail_tooltip("WEEK", quota.weekly),
-            self._detail_tooltip("MONTH", quota.monthly),
+            self._detail_tooltip(self.language_manager.text("opencode.rolling"), quota.rolling),
+            self._detail_tooltip(self.language_manager.text("quota.week"), quota.weekly),
+            self._detail_tooltip(self.language_manager.text("quota.month"), quota.monthly),
         ]
         if quota.fetched_at is not None:
             tooltip_lines.append(
@@ -800,6 +806,7 @@ class OpenCodeQuotaBar(QFrame):
         self.setToolTip(f"{previous}{error_text}\n{retry}")
 
     def retranslate_ui(self) -> None:
+        self._set_period_labels()
         if self._display_state == "pending":
             self.show_pending()
         elif self._display_state == "quota" and self._last_quota is not None:

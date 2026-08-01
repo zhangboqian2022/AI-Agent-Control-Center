@@ -63,6 +63,7 @@ def test_catalog_contains_all_shared_keys() -> None:
         "quota.membership",
         "quota.booster",
         "quota.last_update",
+        "opencode.rolling",
         "task.switch",
         "task.manual_status",
         "task.copy",
@@ -104,6 +105,7 @@ def test_opencode_web_keys_exist_in_both_catalogs() -> None:
         "opencode.web_refresh_failed",
         "opencode.web_parse_failed",
         "opencode.quota",
+        "opencode.rolling",
         "settings.opencode_web_login",
         "settings.opencode_logout",
     ]
