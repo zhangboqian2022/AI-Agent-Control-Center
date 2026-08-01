@@ -6,9 +6,9 @@
 
 AACC 是一个本机优先的跨平台悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
 
-![AACC 面板：不同状态的任务卡片](docs/images/panel-overview.png)
+![AACC 1.4.3 面板：额度与任务状态](docs/images/panel-overview-1.4.3.png)
 
-_使用合成演示数据生成的界面示意图，不含真实账户或任务数据。_
+_AACC 1.4.3 界面示意图，使用合成演示数据，不含真实账户或任务数据。_
 
 ![平台](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![许可证](https://img.shields.io/badge/license-MIT-blue) ![本机优先](https://img.shields.io/badge/privacy-local--first-18a999)
 

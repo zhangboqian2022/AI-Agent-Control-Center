@@ -6,9 +6,9 @@
 
 AACC is a floating cross-platform panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative platform-specific focus/input automation.
 
-![AACC panel with tasks in different states](docs/images/panel-overview.en.png)
+![AACC 1.4.3 panel with quota and task states](docs/images/panel-overview-1.4.3.en.png)
 
-_Illustrative UI with synthetic demo data; no real account or task data._
+_AACC 1.4.3 illustrative UI with synthetic demo data; no real account or task data._
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-black) ![License](https://img.shields.io/badge/license-MIT-blue) ![Local first](https://img.shields.io/badge/privacy-local--first-18a999)
 

@@ -113,4 +113,3 @@
 - [ ] **Step 3: Merge the authorized documentation update into `main`**
 
   Create one non-draft PR from `codex/refresh-product-screenshots` to `main`, wait for its required checks, and merge it only after the changed-image references and asset files are present on the base branch.
-
