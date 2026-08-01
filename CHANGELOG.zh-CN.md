@@ -1,14 +1,15 @@
 # 更新日志
 
-## 1.4.3-rc.3 — 2026-08-01
+## 1.4.3 — 2026-08-01
 
-[中英文发布说明](docs/release-notes-1.4.3rc3.md)
+[中英文发布说明](docs/release-notes-1.4.3.md)
 
-- [功能] OpenCode Go 套餐额度条（macOS）：自持网页视图登录 opencode.ai，从 /go 工作区页面提取已渲染的滚动/每周/每月额度，以三行条显示在 Kimi 额度条下方（百分比 + 重置倒计时）；Cookie 跨重启持久保留。
-- [功能] OpenCode CLI 任务发现：每 5 秒只读轮询本机 opencode SQLite 数据库，推断各会话状态（权限挂起 → 等待同意；流式活动 → 进行中；回合结束 → 已完成；停滞 + 进程在 → 等待输入；进程退出 → 已完成），复用现有圆形状态灯。
+- [功能] OpenCode Go 套餐额度条支持 macOS 与 Windows：macOS 使用原生网页视图；Windows 使用隔离的 AACC 专用 Edge 配置目录和严格 CDP 边界。两边只从配置的 /go 工作区页面提取渲染后的滚动/每周/每月额度。
+- [功能] OpenCode CLI 任务发现：每 5 秒只读轮询本机 opencode SQLite 数据库，推断各会话状态（权限挂起 → 等待同意；流式活动 → 进行中；回合结束 → 已完成；停滞 + 进程在 → 等待输入；进程退出 → 已完成），复用现有圆形状态灯。Windows 增加原生数据库路径发现，并按会话工作目录绑定终端聚焦。
 - [修复] opencode 回合结束（step-finish / tool completed）立即显示绿色已完成，不再停留蓝色。
 - [修复] OpenCode 被强制结束且进程消失后，匹配会话立即退出蓝色进行中状态，不再等待活动超时。
-- [交付] 本次为 macOS 单独递增版本；Windows 构建保持 1.4.3-rc.2，不发布新产物。
+- [修复] OpenCode Edge 登录、额度解析、配置清理和目标选择与 Kimi 隔离；遇到外部页面、不安全 CDP 地址、畸形数据或登录过期时默认拒绝。
+- [交付] 1.4.3 正式版同时发布经过验证的 macOS DMG 与 Windows Setup。GitHub Actions 增加 Windows 10/11 兼容性契约矩阵；实际运行器是托管 Windows Server，不宣称消费级真机验证。
 
 ## 1.4.3-rc.2 — 2026-07-31
 
