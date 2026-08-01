@@ -426,7 +426,7 @@ def replace_windows_file(
         return ntpath.normcase(ntpath.normpath(path))
 
     parent_handle: Any = None
-    source_handle_owned = True
+    source_handle_owned = source_handle is None
     native_source_handle: Any = None
     try:
         parent_handle = open_handle(
@@ -446,15 +446,17 @@ def replace_windows_file(
             borrowed_source_handle = wintypes.HANDLE(source_handle)
             reject_reparse(borrowed_source_handle)
             source_handle_identity = file_identity(borrowed_source_handle)
-        # Python's file handle is intentionally retained by the caller, but it
-        # commonly lacks DELETE access required by FILE_RENAME_INFO. Re-open
-        # the exact sibling with DELETE access and bind it to the original
-        # handle's identity before publishing.
-        native_source_handle = open_handle(
-            source,
-            file_read_attributes | file_delete,
-            file_flag_open_reparse_point,
-        )
+        if source_handle is None:
+            native_source_handle = open_handle(
+                source,
+                file_read_attributes | file_delete,
+                file_flag_open_reparse_point,
+            )
+        else:
+            # The sensitive writers create this handle with DELETE and
+            # FILE_SHARE_DELETE. Publish through the same identity-anchored
+            # handle to avoid a second open/share race on Windows 2022.
+            native_source_handle = wintypes.HANDLE(source_handle)
         reject_reparse(native_source_handle)
         if (
             source_handle_identity is not None
