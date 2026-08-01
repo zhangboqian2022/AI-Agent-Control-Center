@@ -73,6 +73,45 @@ def test_transition_starts_fresh_run_after_terminal_state() -> None:
     assert restarted.finished_at is None
 
 
+def test_terminal_state_accepts_same_tick_fresh_run_boundary() -> None:
+    timestamp = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    completed = TaskState(
+        task_id="task-1",
+        status=TaskStatus.COMPLETED,
+        source="codex_local",
+        updated_at=timestamp,
+        finished_at=timestamp,
+    )
+    candidate = TaskState(
+        task_id="task-1",
+        status=TaskStatus.RUNNING,
+        source="codex_local",
+        started_at=timestamp,
+        updated_at=timestamp,
+    )
+
+    assert StateMachine.accept(completed, candidate)
+
+
+def test_terminal_state_rejects_active_candidate_without_start_boundary() -> None:
+    timestamp = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    completed = TaskState(
+        task_id="task-1",
+        status=TaskStatus.COMPLETED,
+        source="codex_local",
+        updated_at=timestamp,
+        finished_at=timestamp,
+    )
+    candidate = TaskState(
+        task_id="task-1",
+        status=TaskStatus.RUNNING,
+        source="codex_local",
+        updated_at=timestamp + timedelta(seconds=1),
+    )
+
+    assert not StateMachine.accept(completed, candidate)
+
+
 @pytest.mark.parametrize("waiting_status", [TaskStatus.WAITING_INPUT, TaskStatus.WAITING_APPROVAL])
 def test_terminal_state_restarts_when_new_run_is_first_seen_waiting(
     waiting_status: TaskStatus,
