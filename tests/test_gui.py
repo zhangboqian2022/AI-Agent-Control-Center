@@ -883,7 +883,7 @@ def test_existing_task_and_quota_widgets_retranslate_without_refreshing_services
     language_manager.set_language(EN_US)
 
     assert card.state is card_state_before
-    assert card.status_label.text() == "Waiting for approval"
+    assert card.status_label.text() == "Pending"
     assert "Click to switch tasks" in card.toolTip()
     assert card.remove_button is not None
     assert card.remove_button.accessibleName() == "Remove from panel"
@@ -1122,8 +1122,8 @@ def test_status_names_and_terminal_elapsed_label_retranslate_live(qapp: object) 
     language_manager.set_language(EN_US)
     card.retranslate_ui()
 
-    assert status_name(TaskStatus.WAITING_APPROVAL, language_manager) == ("Waiting for approval")
-    assert card.status_label.text() == "Waiting for approval"
+    assert status_name(TaskStatus.WAITING_APPROVAL, language_manager) == "Pending"
+    assert card.status_label.text() == "Pending"
     assert card.message_label.text() == "No message"
     assert card.updated_label.text().startswith("Last activity ")
     started_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
@@ -1887,6 +1887,7 @@ def test_kimi_card_shows_work_dir_basename_next_to_status(tmp_path: Path, qtbot:
     assert card.workdir_label.text() == "· codelight"
     assert not card.workdir_label.isHidden()
     assert card.workdir_label.toolTip() == "/Users/test/Desktop/codelight"
+    assert card.status_label.toolTip() == "执行中"
     manager.close()
 
 

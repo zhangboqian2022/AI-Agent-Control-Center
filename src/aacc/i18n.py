@@ -212,7 +212,7 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "status.thinking": "Thinking",
         "status.running": "Running",
         "status.waiting_input": "Waiting for input",
-        "status.waiting_approval": "Waiting for approval",
+        "status.waiting_approval": "Pending",
         "status.completed": "Completed",
         "status.warning": "Warning",
         "status.error": "Failed",
