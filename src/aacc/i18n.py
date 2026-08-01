@@ -13,6 +13,7 @@ LanguageSubscriberComponent = Literal[
     "main_window",
     "kimi_oauth_dialog",
     "kimi_web_session",
+    "opencode_web_session",
     "test",
 ]
 ZH_CN: Language = "zh_CN"
@@ -23,6 +24,7 @@ LANGUAGE_SUBSCRIBER_COMPONENTS = frozenset(
         "main_window",
         "kimi_oauth_dialog",
         "kimi_web_session",
+        "opencode_web_session",
         "test",
     }
 )
@@ -73,6 +75,14 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "quota.membership": "会员额度",
         "quota.booster": "加油包",
         "quota.last_update": "上次更新 {updated}",
+        "opencode.quota": "OpenCode 用量",
+        "opencode.web_title": "OpenCode 工作区登录",
+        "opencode.web_starting": "正在启动 OpenCode 登录页面，请稍候…",
+        "opencode.web_need_config": "请先在 config.yaml 中配置 opencode_workspace_url",
+        "opencode.web_unauthorized": "OpenCode 登录已过期，请重新授权",
+        "opencode.web_refresh_timeout": "OpenCode 用量刷新超时",
+        "opencode.web_refresh_failed": "OpenCode 用量刷新失败",
+        "opencode.web_parse_failed": "OpenCode 用量数据解析失败",
         "task.switch": "切换到任务",
         "task.manual_status": "手动状态",
         "task.copy": "复制",
@@ -105,6 +115,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "settings.kimi_web_login": "登录 Kimi 会员（同步 5H / WEEK / MONTH）",
         "settings.kimi_edge_login": "使用专用 Edge 登录 Kimi（同步 5H / WEEK / MONTH）",
         "settings.kimi_logout": "退出 Kimi 登录",
+        "settings.opencode_web_login": "登录 OpenCode（同步 5H / WEEK / MONTH）",
+        "settings.opencode_logout": "退出 OpenCode",
         "settings.visible_agents": "显示哪些程序",
         "settings.generic_cli": "Z Code / 通用 CLI",
         "selector.running_hint": "运行中的任务会自动勾选；取消勾选可停止自动监控该任务。",
@@ -234,6 +246,14 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "quota.membership": "Membership quota",
         "quota.booster": "Booster pack",
         "quota.last_update": "Last updated {updated}",
+        "opencode.quota": "OpenCode usage",
+        "opencode.web_title": "OpenCode workspace login",
+        "opencode.web_starting": "Starting the OpenCode login page. Please wait…",
+        "opencode.web_need_config": "Set opencode_workspace_url in config.yaml first",
+        "opencode.web_unauthorized": "OpenCode sign-in expired. Please authorize again",
+        "opencode.web_refresh_timeout": "OpenCode usage refresh timed out",
+        "opencode.web_refresh_failed": "OpenCode usage refresh failed",
+        "opencode.web_parse_failed": "OpenCode usage data could not be parsed",
         "task.switch": "Switch to task",
         "task.manual_status": "Manual status",
         "task.copy": "Copy",
@@ -268,6 +288,8 @@ CATALOGS: dict[Language, dict[str, str]] = {
             "Sign in to Kimi with dedicated Edge (sync 5H / WEEK / MONTH)"
         ),
         "settings.kimi_logout": "Sign out of Kimi",
+        "settings.opencode_web_login": "Sign in to OpenCode (sync 5H / WEEK / MONTH)",
+        "settings.opencode_logout": "Sign out of OpenCode",
         "settings.visible_agents": "Visible applications",
         "settings.generic_cli": "Z Code / Generic CLI",
         "selector.running_hint": (
