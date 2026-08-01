@@ -352,7 +352,7 @@ def replace_windows_file(
 
     def fail() -> FileProtectionError:
         return FileProtectionError(
-            f"Windows atomic replacement failed (winerror={ctypes.get_last_error()})"
+            f"Windows atomic replacement failed (winerror={cast(Any, ctypes).get_last_error()})"
         )
 
     def open_handle(path: Path, access: int, flags: int) -> Any:
