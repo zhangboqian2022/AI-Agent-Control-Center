@@ -1180,7 +1180,11 @@ class TaskCard(QFrame):
         self.status_label.setText(status_name(state.status, self.language_manager))
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
         work_dir = state.metadata.get("work_dir")
-        if self.task.agent.type == "kimi_code" and isinstance(work_dir, str) and work_dir:
+        if (
+            self.task.agent.type in ("kimi_code", "opencode_cli")
+            and isinstance(work_dir, str)
+            and work_dir
+        ):
             self.workdir_label.setText(f"· {PurePath(work_dir).name}")
             self.workdir_label.setToolTip(work_dir)
             self.workdir_label.show()
