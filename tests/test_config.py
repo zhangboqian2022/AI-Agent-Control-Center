@@ -199,7 +199,10 @@ def test_atomic_save_keeps_original_if_replace_fails(
     def fail_replace(*_args: object, **_kwargs: object) -> None:
         raise OSError("simulated interruption")
 
-    monkeypatch.setattr(os, "replace", fail_replace)
+    if sys.platform == "win32":
+        monkeypatch.setattr(config_module, "atomic_replace", fail_replace)
+    else:
+        monkeypatch.setattr(os, "replace", fail_replace)
     with pytest.raises(OSError, match="simulated interruption"):
         save_config(path, config)
 
