@@ -93,7 +93,7 @@ def test_header_language_button_switches_live_and_persists(tmp_path: Path, qtbot
     assert window.language_button.text() == "中"
     assert window.language_button.toolTip() == "切换到中文"
     assert window.running_group_label.text() == "Running"
-    assert window.retained_group_label.text() == "Completed · Retained until removed"
+    assert window.retained_group_label.text() == "Completed · Retained"
     assert window.empty_tasks_label.text().startswith("No Codex / Kimi Code")
     assert window.task_summary_label.text() == "Running: 0 · Completed: 0 · 0 tasks"
     assert window.about_button.toolTip() == "About"
@@ -1942,6 +1942,35 @@ def test_codex_card_shows_work_dir_basename_next_to_status(tmp_path: Path, qtbot
     assert card.workdir_label.text() == "· codelight"
     assert not card.workdir_label.isHidden()
     assert card.workdir_label.toolTip() == "/Users/test/Desktop/codelight"
+    manager.close()
+
+
+def test_codex_work_dir_card_does_not_force_horizontal_scroll(
+    tmp_path: Path, qtbot: object
+) -> None:
+    window, manager = build_window(tmp_path, qtbot)
+    task = TaskConfig(
+        id="codex:narrow-workdir",
+        slot=1,
+        name="Upgrade dependencies",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    manager.register(
+        task,
+        TaskState.new(
+            task.id,
+            "waiting-approval",
+            message="Approve: write pyproject.toml",
+            source="codex_local",
+            metadata={"work_dir": "C:/AACC-Demo/sample-project"},
+        ),
+    )
+    window.set_codex_selected_ids({"narrow-workdir"})
+    window.resize(420, 650)
+    window.show()
+    QApplication.processEvents()
+
+    assert not window.cards_scroll.horizontalScrollBar().isVisible()
     manager.close()
 
 

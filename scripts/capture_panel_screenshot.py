@@ -33,8 +33,9 @@ from aacc.codex_quota_service import CodexQuotaService  # noqa: E402
 from aacc.config import default_config  # noqa: E402
 from aacc.gui import MainWindow  # noqa: E402
 from aacc.i18n import EN_US, ZH_CN, LanguageManager  # noqa: E402
-from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail  # noqa: E402
+from aacc.kimi_quota import BoosterWallet, KimiQuota, QuotaDetail, QuotaStatus  # noqa: E402
 from aacc.models import AgentConfig, TaskConfig, TaskState, TerminalConfig  # noqa: E402
+from aacc.opencode_web_quota import OpenCodeQuota, OpenCodeUsage  # noqa: E402
 from aacc.persistence import StateStore  # noqa: E402
 from aacc.task_manager import TaskManager  # noqa: E402
 
@@ -53,6 +54,9 @@ CODEX_WEEK = 17
 KIMI_5H = 30
 KIMI_WEEK = 72
 KIMI_MONTH = 31
+OPENCODE_5H = 12
+OPENCODE_WEEK = 44
+OPENCODE_MONTH = 68
 
 
 class _DemoDateTime(datetime):
@@ -69,6 +73,21 @@ class _DemoKimiWebQuotaService(QObject):
     error_occurred = Signal(str)
     web_error_occurred = Signal(object)
     code_error_occurred = Signal(object)
+
+    def open_login(self, _parent: object = None) -> None:
+        return
+
+    def refresh_now(self) -> None:
+        return
+
+    def logout(self) -> None:
+        return
+
+
+class _DemoOpenCodeWebQuotaService(QObject):
+    quota_updated = Signal(object)
+    login_state_changed = Signal(bool)
+    error_occurred = Signal(str)
 
     def open_login(self, _parent: object = None) -> None:
         return
@@ -154,6 +173,28 @@ def _demo_quota() -> KimiQuota:
     )
 
 
+def _demo_opencode_quota() -> OpenCodeQuota:
+    return OpenCodeQuota(
+        rolling=OpenCodeUsage(
+            OPENCODE_5H,
+            3600 * 2,
+            DEMO_NOW + timedelta(hours=2),
+        ),
+        weekly=OpenCodeUsage(
+            OPENCODE_WEEK,
+            3600 * 24 * 3,
+            DEMO_NOW + timedelta(days=3),
+        ),
+        monthly=OpenCodeUsage(
+            OPENCODE_MONTH,
+            3600 * 24 * 28,
+            DEMO_NOW + timedelta(days=28),
+        ),
+        status=QuotaStatus.OK,
+        fetched_at=DEMO_NOW,
+    )
+
+
 def main() -> int:
     gui_module.datetime = _DemoDateTime
     app = QApplication(sys.argv)
@@ -165,6 +206,7 @@ def main() -> int:
     store.initialize(config.tasks)
     manager = TaskManager(config, store)
     kimi_web_quota_service = _DemoKimiWebQuotaService()
+    opencode_web_quota_service = _DemoOpenCodeWebQuotaService()
     codex_snapshot = CodexQuotaSnapshot(
         weekly=CodexQuotaWindow(
             used_percent=CODEX_WEEK,
@@ -189,6 +231,7 @@ def main() -> int:
         language_manager=language_manager,
         kimi_web_quota_service=kimi_web_quota_service,  # type: ignore[arg-type]
         codex_quota_service=codex_quota_service,
+        opencode_web_quota_service=opencode_web_quota_service,  # type: ignore[arg-type]
         open_url=lambda _url: None,
     )
     # Keep the full title visible in the fixed-width documentation raster by
@@ -245,6 +288,7 @@ def main() -> int:
             "WAITING_APPROVAL",
             approval_message,
             minutes_ago=12.0,
+            work_dir="C:/AACC-Demo/sample-project",
         ),
         _task(
             "kimi_desktop:demo-notes",
@@ -267,8 +311,10 @@ def main() -> int:
     kimi_web_quota_service.login_state_changed.emit(True)
     kimi_web_quota_service.quota_updated.emit(_demo_quota())
     codex_quota_service.quota_updated.emit(codex_snapshot)
-    window.resize(420, 577)
-    window.setFixedSize(420, 577)
+    opencode_web_quota_service.login_state_changed.emit(True)
+    opencode_web_quota_service.quota_updated.emit(_demo_opencode_quota())
+    window.resize(420, 650)
+    window.setFixedSize(420, 650)
     app.processEvents()
     if title is not None:
         _assert_label_fits(title)
@@ -283,7 +329,7 @@ def main() -> int:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     screenshot = window.grab()
     screenshot_size = (screenshot.width(), screenshot.height())
-    assert screenshot_size == (420, 577), f"unexpected screenshot size: {screenshot_size}"
+    assert screenshot_size == (420, 650), f"unexpected screenshot size: {screenshot_size}"
     if not screenshot.save(str(OUTPUT)):
         print("failed to save screenshot", file=sys.stderr)
         return 1

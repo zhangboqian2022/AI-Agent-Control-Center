@@ -41,6 +41,11 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     assert "KIMI_5H = 30" in script
     assert "KIMI_WEEK = 72" in script
     assert "KIMI_MONTH = 31" in script
+    assert "OPENCODE_5H = 12" in script
+    assert "OPENCODE_WEEK = 44" in script
+    assert "OPENCODE_MONTH = 68" in script
+    assert "OpenCodeQuota" in script
+    assert "_DemoOpenCodeWebQuotaService" in script
     assert "window.resize(420," in script
     lowered = script.casefold()
     for forbidden in (
@@ -55,7 +60,7 @@ def test_screenshot_fixture_is_fixed_and_privacy_safe() -> None:
     normalized_home = str(Path.home()).casefold().replace("\\", "/")
     assert normalized_home not in normalized_script
     for screenshot in (SCREENSHOT, EN_SCREENSHOT):
-        assert _png_size(screenshot) == (420, 577)
+        assert _png_size(screenshot) == (420, 650)
         assert set(_png_chunk_types(screenshot)) <= {b"IHDR", b"pHYs", b"IDAT", b"IEND"}
 
 
