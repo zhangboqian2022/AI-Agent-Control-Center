@@ -42,6 +42,7 @@ ORDER BY time_updated DESC, id DESC
 LIMIT 1
 """
 _STREAMING_PART_TYPES = {"text", "reasoning", "patch", "step-start"}
+_STEP_END_PART_TYPES = {"step-finish", "tool"}
 
 _logger = logging.getLogger("aacc.opencode_discovery")
 
@@ -120,6 +121,8 @@ def evaluate_opencode_session_status(
     active = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
     if snapshot.part_type in _STREAMING_PART_TYPES and active:
         return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
+    if snapshot.part_type in _STEP_END_PART_TYPES:
+        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated)
     if process_alive():
         return OpenCodeSessionStatus(
             TaskStatus.WAITING_INPUT, "等待输入", 0.85, snapshot.time_updated

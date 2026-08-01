@@ -64,13 +64,15 @@ def test_stale_streaming_part_without_process_is_completed() -> None:
     assert result.confidence == 0.92
 
 
-def test_step_finish_with_process_is_waiting_input() -> None:
+def test_step_finish_is_completed() -> None:
     result = _evaluate(_snapshot("step-finish", None, 10), alive=True)
-    assert result.status is TaskStatus.WAITING_INPUT
+    assert result.status is TaskStatus.COMPLETED
 
 
-def test_tool_completed_without_process_is_completed() -> None:
+def test_tool_completed_is_completed_with_or_without_process() -> None:
     result = _evaluate(_snapshot("tool", "completed", 10), alive=False)
+    assert result.status is TaskStatus.COMPLETED
+    result = _evaluate(_snapshot("tool", "completed", 10), alive=True)
     assert result.status is TaskStatus.COMPLETED
 
 
