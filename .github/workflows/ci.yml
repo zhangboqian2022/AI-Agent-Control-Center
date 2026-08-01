@@ -42,7 +42,11 @@ jobs:
           if-no-files-found: warn
       - name: Changed-line coverage
         if: matrix.os == 'macos-latest'
-        run: uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=90 \
+            | tee diff-cover-${{ matrix.os }}.txt
       - name: Dependency vulnerability scan
         run: |
           uv export --locked --extra dev --no-emit-project --format requirements-txt --output-file pip-audit-requirements.txt
@@ -54,6 +58,29 @@ jobs:
         with:
           name: pip-audit-${{ matrix.os }}
           path: pip-audit-${{ matrix.os }}.json
+          if-no-files-found: warn
+      - name: Write CI provenance evidence
+        if: always()
+        env:
+          AACC_CI_REPOSITORY: ${{ github.repository }}
+          AACC_CI_COMMIT: ${{ github.sha }}
+          AACC_CI_REF: ${{ github.ref }}
+          AACC_CI_RUN_ID: ${{ github.run_id }}
+          AACC_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          AACC_CI_RUNNER: ${{ matrix.os }}
+          AACC_CI_JOB_STATUS: ${{ job.status }}
+        run: uv run python scripts/write_ci_evidence.py --output "ci-evidence-${{ matrix.os }}.json"
+      - name: Upload release evidence inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-inputs-${{ matrix.os }}
+          path: |
+            coverage.xml
+            diff-cover-${{ matrix.os }}.txt
+            pip-audit-${{ matrix.os }}.json
+            test-results-${{ matrix.os }}.xml
+            ci-evidence-${{ matrix.os }}.json
           if-no-files-found: warn
       - name: Build macOS app
         if: matrix.os == 'macos-latest'

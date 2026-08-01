@@ -39,7 +39,7 @@ _AACC 1.4.4-rc.1 界面示意图，使用合成演示数据，不含真实账户
 
 下载 [AACC-1.4.4-rc.1.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.4-rc.1/AACC-1.4.4-rc.1.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
 
-此社区版本使用 ad-hoc 签名，尚未经过 Apple 公证。请先下载配套的 `.dmg.sha256` 资产，并对比：
+此社区版本没有 Developer ID 签名，也没有经过 Apple 公证。根据构建时的钥匙串环境，App 可能带有 ad-hoc 签名或本地开发自签名；这两者都不等于 Apple 分发信任。请先下载配套的 `.dmg.sha256` 资产，并对比：
 
 ```bash
 shasum -a 256 AACC-1.4.4-rc.1.dmg
@@ -81,7 +81,14 @@ Windows Kimi 登录使用系统已安装的 Microsoft Edge，并把会话隔离�
 
 Windows OpenCode 额度使用另一套 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\opencode-edge-profile`，与 Kimi 完全隔离。OpenCode CLI 优先从 `%LOCALAPPDATA%\opencode\opencode.db` 发现会话（另有用户目录回退位置），并在任务卡有工作目录时展示目录名。
 
-Windows 版本尚未签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对配套 SHA-256，再选择“更多信息 → 仍要运行”。敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。Windows Server 2022/2025 托管产品测试已通过，但这不代表已完成消费级 Windows 10/11 人工验证。
+Windows 版本没有 Authenticode 签名，因此 Windows 可能显示“未知发布者”或 SmartScreen 提示。请先核对配套 SHA-256，再选择“更多信息 → 仍要运行”：
+
+```powershell
+(Get-FileHash .\AACC-1.4.4rc1-Setup.exe -Algorithm SHA256).Hash
+Get-Content .\AACC-1.4.4rc1-Setup.exe.sha256
+```
+
+敏感配置、数据库和凭据文件使用原生受保护 DACL，仅允许当前用户、Local System 与 Administrators。打包后的 Codex 额度查询通过 `AACC.exe` 旁的固定用途 broker 启动；broker 只接受只读 Codex app-server 命令，并约束其完整进程树。Windows Server 2022/2025 托管产品测试已通过，但这不代表已完成消费级 Windows 10/11 人工验证。
 
 开发者仍可使用 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和 `.\scripts\build_windows.ps1` 从源码生成 onedir 载荷。portable 包只用于 CI/调试，不是面向普通用户的主下载。
 
@@ -92,7 +99,7 @@ Windows 版本尚未签名，因此 Windows 可能显示“未知发布者”或
 | 窗口聚焦 | Bundle ID + AppleScript | 窗口标题匹配（无 bundle id） |
 | 语音输入 | macOS 听写 | Win+H |
 | 辅助功能授权 | 注入/热键需要 | 不需要 |
-| 签名 | ad-hoc，Gatekeeper 提示 | 未签名，SmartScreen 提示 |
+| 签名 | 无 Developer ID / 未公证；ad-hoc 或本地开发自签名 | 无 Authenticode 签名；SmartScreen 提示 |
 
 ## 用 Codex 任务
 
@@ -124,9 +131,12 @@ aacc list
 aacc doctor
 ```
 
-API 只绑定在 `http://127.0.0.1:17650`，使用写入本机配置的随机 Token；它不是远程控制 API。
+API 只绑定在回环地址（`http://127.0.0.1:17650` 或 `http://[::1]:17650`），
+使用写入本机配置的随机 Token；它不是远程控制 API。
 
 可在“设置 → 重置 API 凭证”本地轮换 Token；旧 Token 立即失效，新 Token 只复制一次。键盘输入与全局热键需要 macOS 辅助功能权限，AACC 会检测缺失权限并可跳转到正确的系统设置页面。
+
+⚠️ **`/send-text` 安全警告：** API Token 具有等效键盘输入的文本注入权限。Token 泄露后，调用者可把任意文本与白名单中的 `Enter` 组合，在终端类目标中执行命令。请把 Token 按密码级机密保护。
 
 ## 架构与隐私
 
@@ -147,6 +157,7 @@ PySide6 悬浮面板 · 菜单栏 · localhost API
 - API 只允许 `127.0.0.1`，并使用随机 Bearer Token。
 - 不提供任意 shell 命令接口，子进程不使用 `shell=True`。
 - 注入按键仅限 Enter、Esc、方向键、Ctrl+C、`1`、`2`。
+- `/send-text` 配合白名单中的 `Enter` 等效于终端目标中的交互式输入，必须保护好 API Token。
 - 发送按键前必须成功激活目标 App/窗口。
 - 日志会脱敏常见 Token、密码和 Authorization 头。
 

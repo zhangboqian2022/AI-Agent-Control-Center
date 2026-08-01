@@ -25,7 +25,12 @@ from typing import Any
 
 import httpx
 
-from aacc.file_security import FileProtectionError, protect_directory, protect_file
+from aacc.file_security import (
+    FileProtectionError,
+    atomic_replace,
+    protect_directory,
+    protect_file,
+)
 
 DEFAULT_OAUTH_HOST = "https://auth.kimi.com"
 CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
@@ -325,8 +330,31 @@ def credentials_path(config_dir: Path) -> Path:
     return config_dir / CREDENTIALS_FILE_NAME
 
 
+def _is_reparse_path(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction is not None and is_junction())
+
+
+def _reject_unsafe_credential_path(config_dir: Path, target: Path) -> None:
+    if config_dir.exists() and not config_dir.is_dir():
+        raise ValueError("AACC credential directory must be a directory")
+    if target.exists() and not target.is_file():
+        raise ValueError("AACC credential path must be a regular file")
+    current = target
+    while True:
+        if _is_reparse_path(current):
+            raise ValueError("AACC credential paths must not contain a symbolic link or junction")
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+
 def load_credentials(config_dir: Path) -> dict[str, Any] | None:
     path = credentials_path(config_dir)
+    _reject_unsafe_credential_path(config_dir, path)
     try:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -348,12 +376,15 @@ def load_credentials(config_dir: Path) -> dict[str, Any] | None:
 
 
 def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
+    target = credentials_path(config_dir)
+    _reject_unsafe_credential_path(config_dir, target)
     protect_directory(config_dir, platform=sys.platform)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{CREDENTIALS_FILE_NAME}.", dir=config_dir
     )
     temporary = Path(temporary_name)
     try:
+        source_handle: int | None = None
         if sys.platform == "win32":
             os.close(descriptor)
             descriptor = -1
@@ -370,9 +401,23 @@ def save_credentials(config_dir: Path, data: dict[str, Any]) -> None:
             json.dump(data, handle, indent=2, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
-        protect_file(temporary, platform=sys.platform)
-        target = credentials_path(config_dir)
-        os.replace(temporary, target)
+            if sys.platform == "win32" and os.name == "nt":
+                import msvcrt
+
+                protect_file(temporary, platform=sys.platform)
+                source_handle = msvcrt.get_osfhandle(handle.fileno())
+                atomic_replace(
+                    temporary,
+                    target,
+                    platform=sys.platform,
+                    source_handle=source_handle,
+                )
+        if sys.platform == "win32" and os.name != "nt":
+            protect_file(temporary, platform=sys.platform)
+            atomic_replace(temporary, target, platform=sys.platform)
+        elif sys.platform != "win32":
+            protect_file(temporary, platform=sys.platform)
+            os.replace(temporary, target)
         if sys.platform == "win32":
             with _protected_credential_files_lock:
                 _protected_credential_files[target] = _file_identity(target)

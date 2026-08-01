@@ -617,6 +617,24 @@ def test_api_server_does_not_configure_console_logging(
     assert len(forwarded) == 1
 
 
+def test_api_server_rejects_non_loopback_host_before_uvicorn(
+    monkeypatch: object,
+) -> None:
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(app=SimpleNamespace(api=SimpleNamespace(host="0.0.0.0", port=8787))),
+        manager=SimpleNamespace(),
+        automation_executor=SimpleNamespace(),
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        app_module,
+        "create_api",
+        lambda *_args: pytest.fail("API application must not be created for a non-loopback host"),
+    )
+
+    with pytest.raises(RuntimeError, match="must bind to loopback"):
+        app_module.APIServerThread(runtime)
+
+
 def test_windows_listener_registration_failure_is_visible_sanitized_and_closes_runtime(
     tmp_path: Path, monkeypatch: object
 ) -> None:

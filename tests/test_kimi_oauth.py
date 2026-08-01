@@ -322,6 +322,42 @@ def test_save_credentials_skips_fchmod_on_windows(tmp_path, monkeypatch):
     assert protected_directories == [tmp_path]
 
 
+def test_save_credentials_rejects_symlink_target(tmp_path):
+    target = tmp_path / "outside.json"
+    target.write_text('{"original": true}', encoding="utf-8")
+    credentials_path(tmp_path).symlink_to(target)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        save_credentials(tmp_path, {"api_key": "private-token"})
+
+    assert target.read_text(encoding="utf-8") == '{"original": true}'
+
+
+def test_save_credentials_rejects_symlink_parent(tmp_path):
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link_dir = tmp_path / "link"
+    link_dir.symlink_to(real_dir, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        save_credentials(link_dir, {"api_key": "private-token"})
+
+    assert list(real_dir.iterdir()) == []
+
+
+def test_save_credentials_rejects_symlink_ancestor(tmp_path):
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+    redirect = tmp_path / "redirect"
+    redirect.symlink_to(real_root, target_is_directory=True)
+    config_dir = redirect / "AACC"
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        save_credentials(config_dir, {"api_key": "private-token"})
+
+    assert list(real_root.iterdir()) == []
+
+
 def test_save_credentials_protects_empty_windows_temp_before_secret(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     protected_sizes = []

@@ -20,6 +20,13 @@ DEFAULT_DATABASE_PATH = APP_SUPPORT_DIR / "aacc.db"
 DEFAULT_PORT = 17650
 
 
+def local_api_url(host: str, port: int, path: str) -> str:
+    """Format a loopback API URL, including the brackets required for IPv6."""
+    normalized_host = host.strip("[]") if ":" in host else host
+    display_host = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+    return f"http://{display_host}:{port}{path}"
+
+
 def resolve_database_path() -> Path:
     """Single source for the runtime database path (app, CLI, doctor)."""
     return Path(os.environ.get("AACC_DATABASE_PATH", DEFAULT_DATABASE_PATH))

@@ -312,11 +312,14 @@ class _UvicornLogBridge(logging.Handler):
 
 class APIServerThread:
     def __init__(self, runtime: Runtime) -> None:
+        host = runtime.config.app.api.host
+        if host not in {"127.0.0.1", "::1"}:
+            raise RuntimeError("AACC API must bind to loopback")
         api = create_api(runtime.config, runtime.manager, runtime.automation_executor)
         self.server = uvicorn.Server(
             uvicorn.Config(
                 api,
-                host=runtime.config.app.api.host,
+                host=host,
                 port=runtime.config.app.api.port,
                 log_level="warning",
                 access_log=False,

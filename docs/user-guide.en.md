@@ -52,7 +52,7 @@ The most reliable integration is an agent hook that calls the local API. Without
 
 F13–F16 focus tasks 1–4; F17 sends Enter; F18/F19 send `1`/`2`; F20 starts macOS dictation or Windows Win+H voice input. Karabiner-Elements, an Fn layer, or keyboard firmware can map physical keys to these function keys. On macOS, global listening and key injection require Accessibility permission, and AACC offers a direct System Settings link when it is missing. Windows uses native global-hotkey and window APIs and requires no Accessibility permission. Set `keyboard_injection: false` to disable input actions completely on either platform.
 
-Use **Settings → Reset API credentials** to replace the localhost API token. The old token becomes invalid immediately and the new token is copied once.
+Use **Settings → Reset API credentials** to replace the localhost API token. The old token becomes invalid immediately and the new token is copied once. **Security warning:** the token permits keyboard-equivalent text injection; if it leaks, `/send-text` combined with the allowlisted `Enter` key can execute commands in a terminal-like target. Treat it as a password-grade secret.
 
 ## Launch at login
 

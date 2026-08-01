@@ -55,8 +55,8 @@ def test_status_does_not_use_proxy_environment(monkeypatch: object, tmp_path: Pa
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def post(self, *_args: object, **_kwargs: object) -> None:
-            return None
+        def post(self, url: str, *_args: object, **_kwargs: object) -> None:
+            captured["url"] = url
 
     monkeypatch.setattr(wrapper_module, "load_config", lambda _path: default_config())  # type: ignore[attr-defined]
     monkeypatch.setattr(wrapper_module.httpx, "Client", FakeClient)  # type: ignore[attr-defined]
@@ -64,6 +64,32 @@ def test_status_does_not_use_proxy_environment(monkeypatch: object, tmp_path: Pa
     wrapper_module._status(tmp_path / "config.yaml", "task-1", "running", "test")
 
     assert captured["trust_env"] is False
+
+
+def test_status_brackets_ipv6_loopback_url(monkeypatch: object, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    config = default_config()
+    config.app.api.host = "::1"
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def post(self, url: str, *_args: object, **_kwargs: object) -> None:
+            captured["url"] = url
+
+    monkeypatch.setattr(wrapper_module, "load_config", lambda _path: config)  # type: ignore[attr-defined]
+    monkeypatch.setattr(wrapper_module.httpx, "Client", FakeClient)  # type: ignore[attr-defined]
+
+    wrapper_module._status(tmp_path / "config.yaml", "task-1", "running", "test")
+
+    assert captured["url"] == "http://[::1]:17650/api/v1/tasks/task-1/status"
 
 
 def test_main_reports_success_and_restores_signal_handlers(monkeypatch: object) -> None:

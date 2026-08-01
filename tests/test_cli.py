@@ -5,6 +5,7 @@ import pytest
 import aacc.cli as cli_module
 from aacc.cli import build_parser
 from aacc.config import default_config
+from aacc.constants import local_api_url
 
 
 def test_status_command_accepts_documented_spelling() -> None:
@@ -26,6 +27,13 @@ def test_key_command_uses_whitelisted_choices() -> None:
 def test_doctor_command_parses_without_network_request() -> None:
     args = build_parser().parse_args(["doctor"])
     assert args.command == "doctor"
+
+
+def test_local_api_url_brackets_ipv6_loopback() -> None:
+    assert local_api_url("127.0.0.1", 17650, "/api/v1/health") == (
+        "http://127.0.0.1:17650/api/v1/health"
+    )
+    assert local_api_url("::1", 17650, "/api/v1/health") == ("http://[::1]:17650/api/v1/health")
 
 
 def test_doctor_reports_the_same_database_path_the_app_mounts(

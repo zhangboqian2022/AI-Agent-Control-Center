@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from aacc.config import load_config
-from aacc.constants import DEFAULT_CONFIG_PATH, resolve_database_path
+from aacc.constants import DEFAULT_CONFIG_PATH, local_api_url, resolve_database_path
 
 KEYS = ("enter", "esc", "up", "down", "left", "right", "ctrl_c", "1", "2")
 
@@ -46,7 +46,7 @@ def _request(
     config_path: Path, method: str, path: str, payload: dict[str, Any] | None = None
 ) -> Any:
     config = load_config(config_path)
-    url = f"http://{config.app.api.host}:{config.app.api.port}{path}"
+    url = local_api_url(config.app.api.host, config.app.api.port, path)
     headers = {"Authorization": f"Bearer {config.app.api.token}"}
     with httpx.Client(timeout=3.0, trust_env=False) as client:
         response = client.request(method, url, headers=headers, json=payload)

@@ -13,7 +13,12 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from aacc.file_security import FileProtectionError, protect_directory, protect_file
+from aacc.file_security import (
+    FileProtectionError,
+    atomic_replace,
+    protect_directory,
+    protect_file,
+)
 from aacc.models import AgentConfig, AppConfig, TaskConfig, TerminalConfig
 
 CURRENT_CONFIG_VERSION = 1
@@ -147,6 +152,7 @@ def save_config(path: Path, config: AppConfig) -> None:
         descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         temporary = Path(temporary_name)
     try:
+        source_handle: int | None = None
         if sys.platform == "win32":
             os.close(descriptor)
             descriptor = -1
@@ -168,10 +174,21 @@ def save_config(path: Path, config: AppConfig) -> None:
             )
             handle.flush()
             os.fsync(handle.fileno())
-        if sys.platform == "win32":
+            if sys.platform == "win32" and os.name == "nt":
+                import msvcrt
+
+                protect_file(temporary, platform=sys.platform)
+                source_handle = msvcrt.get_osfhandle(handle.fileno())
+                atomic_replace(
+                    temporary,
+                    path,
+                    platform=sys.platform,
+                    source_handle=source_handle,
+                )
+        if sys.platform == "win32" and os.name != "nt":
             protect_file(temporary, platform=sys.platform)
-            os.replace(temporary, path)
-        else:
+            atomic_replace(temporary, path, platform=sys.platform)
+        elif sys.platform != "win32":
             os.replace(
                 temporary_name,
                 path.name,

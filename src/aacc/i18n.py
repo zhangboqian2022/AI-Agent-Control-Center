@@ -148,6 +148,9 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "clear_completed.prompt.other": "确定从面板移除 {count} 个已完成任务吗？",
         "credentials.reset_title": "重置凭证",
         "credentials.reset_prompt": "旧凭证会立即失效，是否继续？",
+        "credentials.reset_warning": (
+            "警告：API Token 等效于键盘输入权限；泄露后，配合 Enter 可能在终端目标中执行命令。"
+        ),
         "credentials.reset_done_title": "凭证已重置",
         "credentials.reset_done_text": "旧凭证已失效。新凭证如下（不会自动写入剪贴板）：",
         "credentials.copy": "复制",
@@ -341,6 +344,10 @@ CATALOGS: dict[Language, dict[str, str]] = {
         "credentials.reset_title": "Reset credentials",
         "credentials.reset_prompt": (
             "The old credentials will become invalid immediately. Continue?"
+        ),
+        "credentials.reset_warning": (
+            "Warning: The API token permits keyboard-equivalent input; if leaked, text plus Enter "
+            "may execute commands in a terminal target."
         ),
         "credentials.reset_done_title": "Credentials reset",
         "credentials.reset_done_text": (
