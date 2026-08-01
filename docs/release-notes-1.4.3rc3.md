@@ -3,14 +3,14 @@
 ## English
 
 1.4.3-rc.3 is a macOS release candidate on top of 1.4.3-rc.2. It adds OpenCode
-support (Go-plan usage bar + CLI task discovery) and is a **macOS-only
+support (Go-plan quota bar + CLI task discovery) and is a **macOS-only
 increment**: the Windows build remains at 1.4.3-rc.2 with no new artifact.
 
-- **Feature — OpenCode Go-plan usage bar.** A self-owned web view (macOS) signs
+- **Feature — OpenCode Go-plan quota bar.** A self-owned web view (macOS) signs
   you into opencode.ai with GitHub or Google, keeps the session cookie in the
   per-application web storage (persists across AACC restarts), and reads the
-  /go workspace page. The page already renders the Go-plan usage bars, so AACC
-  extracts the rolling / weekly / monthly usage (percentage + reset countdown)
+  /go workspace page. The page already renders the Go-plan quota bars, so AACC
+  extracts the rolling / weekly / monthly quota (percentage + reset countdown)
   directly from the rendered page and displays it in a three-row strip below
   the Kimi quota bar. Configure `opencode_workspace_url` in `config.yaml`.
   No prompt, reply, tool command, or reasoning content is ever read; only the
@@ -28,7 +28,7 @@ increment**: the Windows build remains at 1.4.3-rc.2 with no new artifact.
 - **Fix — finished opencode turns turn green immediately.** A completed turn
   (`step-finish` / `tool completed`) now reports the green completed state
   right away instead of staying blue until the opencode process exits.
-- **Known limits.** The usage bar depends on the rendered layout of the
+- **Known limits.** The quota bar depends on the rendered layout of the
   opencode.ai /go workspace page; if opencode.ai changes that page, the
   extraction may need updating. Status inference is approximate (official
   idle/busy is a runtime event, not persisted). OpenCode support is macOS
@@ -43,13 +43,13 @@ claimed as verified.
 ## 中文
 
 1.4.3-rc.3 是在 1.4.3-rc.2 之上的 macOS 发布候选。本次新增 OpenCode 支持
-（Go 套餐用量条 + CLI 任务发现），且为 **macOS 单独递增**：Windows 构建保持
+（Go 套餐额度条 + CLI 任务发现），且为 **macOS 单独递增**：Windows 构建保持
 1.4.3-rc.2，不发布新产物。
 
-- **功能 — OpenCode Go 套餐用量条。** 自持网页视图（macOS）以 GitHub 或 Google
+- **功能 — OpenCode Go 套餐额度条。** 自持网页视图（macOS）以 GitHub 或 Google
   登录 opencode.ai，会话 Cookie 保存在每应用网页存储（跨 AACC 重启保留），
-  并读取 /go 工作区页面。页面本身已渲染 Go 套餐用量条，因此 AACC 直接从
-  渲染后的页面提取滚动/每周/每月用量（百分比 + 重置倒计时），三行展示在
+  并读取 /go 工作区页面。页面本身已渲染 Go 套餐额度条，因此 AACC 直接从
+  渲染后的页面提取滚动/每周/每月额度（百分比 + 重置倒计时），三行展示在
   Kimi 额度条下方。在 `config.yaml` 配置 `opencode_workspace_url`。
   绝不读取 prompt、回复、工具命令或 reasoning 内容——只提取渲染出的百分比
   与重置文本。
@@ -62,7 +62,7 @@ claimed as verified.
   reasoning 内容。
 - **修复 — 完成的 opencode 回合立即变绿。** 回合结束（`step-finish` /
   `tool completed`）立即上报绿色已完成，不再停留蓝色直到 opencode 进程退出。
-- **已知限制。** 用量条依赖 opencode.ai /go 工作区页面的渲染布局；若 opencode.ai
+- **已知限制。** 额度条依赖 opencode.ai /go 工作区页面的渲染布局；若 opencode.ai
   改版，提取可能需要跟进。状态推断为近似（官方 idle/busy 是运行时事件，不落库）。
   OpenCode 支持先做 macOS；Windows（Edge 会话与发现）为后续迭代。
 

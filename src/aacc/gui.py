@@ -588,7 +588,7 @@ class QuotaBar(QFrame):
 
 
 class OpenCodeQuotaBar(QFrame):
-    """OpenCode workspace usage strip (5H / WEEK / MONTH) from web session data."""
+    """OpenCode workspace quota strip (5H / WEEK / MONTH) from web session data."""
 
     clicked = Signal()
 
@@ -657,16 +657,15 @@ class OpenCodeQuotaBar(QFrame):
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #e06c75;")
         self.summary_label.setText(
-            "OpenCode 用量\n点击授权"
-            if self.language_manager.language == ZH_CN
-            else "OpenCode usage\nAuthorize"
+            f"{self.language_manager.text('opencode.quota')}\n"
+            + ("点击授权" if self.language_manager.language == ZH_CN else "Authorize")
         )
         for row in self._metric_rows:
             _set_quota_metric(row, None, None, self.language_manager)
         self.setToolTip(
-            "点击登录 opencode.ai 工作区，同步 Go 套餐用量"
+            "点击登录 opencode.ai 工作区，同步 Go 套餐额度"
             if self.language_manager.language == ZH_CN
-            else "Sign in to the opencode.ai workspace to sync Go plan usage"
+            else "Sign in to the opencode.ai workspace to sync Go plan quota"
         )
 
     def show_pending(self) -> None:
@@ -705,16 +704,14 @@ class OpenCodeQuotaBar(QFrame):
         if quota.status is QuotaStatus.UNKNOWN:
             self.dot.setStyleSheet("color: #8997aa;")
             self.summary_label.setText(
-                "OpenCode 用量\n数据不可用"
-                if self.language_manager.language == ZH_CN
-                else "OpenCode usage\nUsage unavailable"
+                f"{self.language_manager.text('opencode.quota')}\n"
+                f"{self.language_manager.text('quota.unavailable')}"
             )
         elif quota.status is QuotaStatus.PARTIAL:
             self.dot.setStyleSheet("color: #e5c07b;")
             self.summary_label.setText(
-                "OpenCode 用量\n部分数据"
-                if self.language_manager.language == ZH_CN
-                else "OpenCode usage\nPartial usage data"
+                f"{self.language_manager.text('opencode.quota')}\n"
+                f"{self.language_manager.text('quota.partial')}"
             )
         elif quota.status is QuotaStatus.STALE:
             self.dot.setStyleSheet("color: #8997aa;")
@@ -759,7 +756,8 @@ class OpenCodeQuotaBar(QFrame):
             if self.language_manager.language == ZH_CN
             else format_quota_reset(usage.reset_at, self.language_manager)
         )
-        return f"{name}: {usage.percentage}% ({reset})"
+        percentage = "--" if usage.percentage is None else f"{usage.percentage}%"
+        return f"{name}: {percentage} ({reset})"
 
     def _render_error(self) -> None:
         if self._last_quota is not None:
@@ -772,11 +770,7 @@ class OpenCodeQuotaBar(QFrame):
                 else self.language_manager.text("quota.stale")
             )
         else:
-            state_text = (
-                "数据不可用"
-                if self.language_manager.language == ZH_CN
-                else self.language_manager.text("quota.unavailable")
-            )
+            state_text = self.language_manager.text("quota.unavailable")
         self.summary_label.setText(f"{self.language_manager.text('opencode.quota')}\n{state_text}")
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"

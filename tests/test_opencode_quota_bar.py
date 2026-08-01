@@ -34,6 +34,27 @@ def test_bar_renders_quota_percentages_and_resets(qapp: object) -> None:
     assert all(bar.reset_labels())
 
 
+def test_bar_uses_quota_wording_and_never_renders_none_percent(qapp: object) -> None:
+    now = datetime.now(UTC)
+    bar = OpenCodeQuotaBar(LanguageManager(ZH_CN))
+    bar.show_quota(
+        OpenCodeQuota(
+            rolling=OpenCodeUsage(None, 60, now + timedelta(seconds=60)),
+            weekly=None,
+            monthly=None,
+            status=QuotaStatus.PARTIAL,
+            fetched_at=None,
+        )
+    )
+
+    assert "OpenCode 额度" in bar.summary_label.text()
+    assert "None%" not in bar.toolTip()
+    assert "5H: --" in bar.toolTip()
+
+    english = OpenCodeQuotaBar(LanguageManager(EN_US))
+    assert english.language_manager.text("opencode.quota") == "OpenCode quota"
+
+
 def test_bar_unauthorized_state(qapp: object) -> None:
     bar = OpenCodeQuotaBar()
     bar.show_unauthorized()
@@ -55,7 +76,7 @@ def test_bar_retranslate_switches_language(qapp: object) -> None:
     bar.show_quota(_quota())
     bar.language_manager = LanguageManager(EN_US)
     bar.retranslate_ui()
-    assert bar.summary_label.text() == "OpenCode usage"
+    assert bar.summary_label.text() == "OpenCode quota"
 
 
 def test_bar_pending_state(qtbot) -> None:
@@ -68,7 +89,7 @@ def test_bar_pending_state(qtbot) -> None:
 def test_bar_unknown_quota_shows_unavailable_and_unknown_resets(qtbot) -> None:
     bar = OpenCodeQuotaBar()
     bar.show_quota(OpenCodeQuota(None, None, None, QuotaStatus.UNKNOWN, fetched_at=None))
-    assert "数据不可用" in bar.summary_label.text()
+    assert "额度不可用" in bar.summary_label.text()
     assert "未知" in bar.toolTip()
     assert bar.percent_labels() == ["--", "--", "--"]
 
@@ -76,7 +97,7 @@ def test_bar_unknown_quota_shows_unavailable_and_unknown_resets(qtbot) -> None:
 def test_bar_partial_quota_shows_partial(qtbot) -> None:
     bar = OpenCodeQuotaBar()
     bar.show_quota(OpenCodeQuota(None, None, None, QuotaStatus.PARTIAL, fetched_at=None))
-    assert "部分数据" in bar.summary_label.text()
+    assert "部分额度可用" in bar.summary_label.text()
 
 
 def test_bar_stale_quota_shows_stale(qtbot) -> None:
@@ -96,7 +117,7 @@ def test_bar_show_quota_preserves_last_error(qtbot) -> None:
 def test_bar_error_without_prior_quota_shows_unavailable(qtbot) -> None:
     bar = OpenCodeQuotaBar()
     bar.show_error("refresh_timeout")
-    assert "数据不可用" in bar.summary_label.text()
+    assert "额度不可用" in bar.summary_label.text()
     assert "点击重试" in bar.toolTip()
 
 
