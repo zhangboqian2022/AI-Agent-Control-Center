@@ -15,6 +15,11 @@ CONTAINER_INHERIT_ACE = 0x2
 FILE_ALL_ACCESS = 0x001F01FF
 
 
+def _native_handle_value(handle: Any) -> int | None:
+    value = getattr(handle, "value", handle)
+    return None if value is None else int(value)
+
+
 class SecurityApi(Protocol):
     def current_user_sid(self) -> Any: ...
 
@@ -196,6 +201,7 @@ def open_windows_replaceable_text(path: Path) -> Any:
     open_existing = 3
     file_attribute_normal = 0x00000080
     invalid_handle = ctypes.c_void_p(-1).value
+
     native_handle = kernel32.CreateFileW(
         os.fspath(path),
         generic_read | generic_write | file_delete,
@@ -205,11 +211,12 @@ def open_windows_replaceable_text(path: Path) -> Any:
         file_attribute_normal,
         None,
     )
-    if not native_handle or native_handle.value == invalid_handle:
+    native_value = _native_handle_value(native_handle)
+    if native_value in (None, -1, invalid_handle):
         raise FileProtectionError("Windows replaceable file access failed")
     try:
         descriptor = msvcrt_api.open_osfhandle(
-            native_handle.value,
+            native_value,
             os.O_RDWR | os_api.O_BINARY,
         )
     except Exception:
@@ -356,7 +363,7 @@ def replace_windows_file(
             flags,
             None,
         )
-        if not handle or handle.value == invalid_handle:
+        if _native_handle_value(handle) in (None, -1, invalid_handle):
             raise fail()
         return handle
 
