@@ -97,6 +97,8 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
     script = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
     assert "CFBundleShortVersionString" in script
     assert "CFBundleVersion" in script
+    assert 'CFBundleVersion -string "$AACC_BUNDLE_VERSION"' in script
+    assert 'CFBundleVersion -string "3"' not in script
     assert "--exclude-module mypy" in script
     assert "--hidden-import Quartz" in script
     assert "--hidden-import PySide6.QtWebView" in script
@@ -108,7 +110,7 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
 def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert "path to desktop folder" in script
-    assert "AACC-${AACC_VERSION}.dmg" in script
+    assert "AACC-${AACC_PUBLIC_VERSION}.dmg" in script
     assert "dist/AACC.app" in script
     assert "hdiutil create" in script
     assert "SKIP_BUILD" in script
@@ -213,6 +215,13 @@ def test_windows_spec_exists_and_excludes_quartz() -> None:
     assert "Quartz" in spec  # 出现在 excludes
     assert "BUNDLE" not in spec
     assert "styles.qss" in spec
+
+
+def test_windows_spec_includes_opencode_edge_modules_without_qtwebview() -> None:
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    assert "aacc.opencode_edge_cdp" in spec
+    assert "aacc.opencode_edge_session" in spec
+    assert "PySide6.QtWebView" not in spec
 
 
 def test_windows_native_acl_dependency_and_payload_are_pinned() -> None:
@@ -459,6 +468,8 @@ def test_ci_builds_native_packages_and_checks_windows_module_archive() -> None:
         "aacc.kimi_edge_cdp",
         "aacc.kimi_edge_session",
         "aacc.kimi_membership_query",
+        "aacc.opencode_edge_cdp",
+        "aacc.opencode_edge_session",
         "websocket",
     ):
         assert module in workflow
@@ -904,7 +915,7 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "10080" in content
         assert "300-minute" not in content
         assert "300 分钟" not in content
-        assert "shasum -a 256 AACC-1.4.2.dmg" in content
+        assert "shasum -a 256 AACC-1.4.4-rc.1.dmg" in content
         assert "xattr -cr /Applications/AACC.app" in content
 
 

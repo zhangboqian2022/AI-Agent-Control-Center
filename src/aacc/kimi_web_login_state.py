@@ -12,14 +12,23 @@ from typing import Any
 from aacc.file_security import protect_directory, protect_file
 
 _STATE_FILE_NAME = "kimi-web-session-state.json"
+_ALLOWED_STATE_FILE_NAMES = frozenset({_STATE_FILE_NAME, "opencode-web-session-state.json"})
 _STATE_VERSION = 1
 
 
 class KimiWebLoginStateStore:
     """Persist the user's permission to reuse the OS-owned Kimi web session."""
 
-    def __init__(self, config_dir: Path) -> None:
+    def __init__(
+        self,
+        config_dir: Path,
+        *,
+        state_file_name: str = _STATE_FILE_NAME,
+    ) -> None:
+        if state_file_name not in _ALLOWED_STATE_FILE_NAMES:
+            raise ValueError("unsupported web session state file")
         self._config_dir = config_dir
+        self._state_file_name = state_file_name
 
     def may_reuse(self) -> bool:
         """Return whether automatic access to the native session is permitted."""
@@ -83,7 +92,7 @@ class KimiWebLoginStateStore:
             temporary.unlink(missing_ok=True)
 
     def _path(self) -> Path:
-        return self._config_dir / _STATE_FILE_NAME
+        return self._config_dir / self._state_file_name
 
     @staticmethod
     def _reject_unsafe_path(path: Path) -> None:

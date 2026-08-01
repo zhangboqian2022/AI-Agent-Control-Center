@@ -48,7 +48,7 @@ def _request(
     config = load_config(config_path)
     url = f"http://{config.app.api.host}:{config.app.api.port}{path}"
     headers = {"Authorization": f"Bearer {config.app.api.token}"}
-    with httpx.Client(timeout=3.0) as client:
+    with httpx.Client(timeout=3.0, trust_env=False) as client:
         response = client.request(method, url, headers=headers, json=payload)
     response.raise_for_status()
     return response.json()
@@ -65,9 +65,11 @@ def _doctor(config_path: Path) -> int:
     db_path = resolve_database_path()
     try:
         connection = sqlite3.connect(db_path)
-        connection.execute("PRAGMA quick_check").fetchone()
-        connection.close()
-        checks.append(("SQLite", True, str(db_path)))
+        try:
+            rows = connection.execute("PRAGMA quick_check").fetchall()
+        finally:
+            connection.close()
+        checks.append(("SQLite", rows == [("ok",)], str(db_path)))
     except sqlite3.Error as error:
         checks.append(("SQLite", False, str(error)))
     if config is not None:
@@ -95,7 +97,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.config,
                 "POST",
                 f"/api/v1/tasks/{args.task_id}/status",
-                {"status": args.status, "message": args.message, "source": "cli"},
+                {
+                    "status": args.status,
+                    "message": args.message,
+                    "source": "manual",
+                    "metadata": {"transport": "cli"},
+                },
             )
         elif args.command == "key":
             result = _request(

@@ -27,6 +27,25 @@ class StatusRequest(BaseModel):
     message: str = Field(default="", max_length=2000)
     source: str = Field(default="api", min_length=1, max_length=80)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("source")
+    @classmethod
+    def normalize_source(cls, value: str) -> str:
+        allowed = {
+            "api",
+            "manual",
+            "wrapper",
+            "hook",
+            "process",
+            "log",
+            "codex_local",
+            "kimi_local",
+            "kimi_desktop_local",
+            "opencode_local",
+            "automation",
+        }
+        return value if value in allowed else "api"
 
     @field_validator("status", mode="before")
     @classmethod
@@ -102,6 +121,7 @@ def create_api(
                 message=request.message,
                 source=request.source,
                 confidence=request.confidence,
+                metadata=request.metadata,
             )
         )
 

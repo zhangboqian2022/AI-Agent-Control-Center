@@ -117,6 +117,7 @@ class CodexLocalDiscovery:
             sessions = [session for session in sessions if session["id"] in selected_ids]
         selected = {session["id"] for session in sessions}
         session_signals = self._session_signals(selected)
+        session_work_dirs = self._session_work_dirs(selected)
         active_pids = self._active_pids(selected)
         discovered: list[DiscoveredTask] = []
         for session in sessions:
@@ -163,7 +164,7 @@ class CodexLocalDiscovery:
                         slot=1,
                         name=session["title"] or f"Codex 任务 {conversation_id[:8]}",
                         agent=AgentConfig(type="codex_cli", display_name="Codex"),
-                        terminal=_default_terminal_config(),
+                        terminal=_default_terminal_config(session_work_dirs.get(conversation_id)),
                     ),
                     state=TaskState(
                         task_id=task_id,
@@ -179,6 +180,11 @@ class CodexLocalDiscovery:
                         metadata={
                             "discovered": True,
                             "source_event_at": updated_at.isoformat(),
+                            **(
+                                {"work_dir": session_work_dirs[conversation_id]}
+                                if conversation_id in session_work_dirs
+                                else {}
+                            ),
                         },
                     ),
                 )
@@ -324,6 +330,47 @@ class CodexLocalDiscovery:
         except OSError:
             return {conversation_id: [] for conversation_id in selected_ids}
         return paths_by_id
+
+    def _session_work_dirs(self, selected_ids: set[str]) -> dict[str, str]:
+        work_dirs: dict[str, str] = {}
+        for conversation_id, paths in self._session_paths(selected_ids).items():
+            if not paths:
+                continue
+            try:
+                latest_path = max(paths, key=self.session_modified_at)
+            except OSError:
+                continue
+            work_dir = self._read_session_work_dir(latest_path)
+            if work_dir is not None:
+                work_dirs[conversation_id] = work_dir
+        return work_dirs
+
+    @staticmethod
+    def _read_session_work_dir(path: Path) -> str | None:
+        try:
+            with path.open("rb") as handle:
+                for _ in range(64):
+                    raw_line = handle.readline(MAX_SESSION_METADATA_LINE_BYTES + 1)
+                    if not raw_line:
+                        break
+                    if len(raw_line) > MAX_SESSION_METADATA_LINE_BYTES:
+                        continue
+                    try:
+                        item = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    payload = item.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    for key in ("cwd", "directory"):
+                        value = payload.get(key)
+                        if isinstance(value, str) and value.strip():
+                            return value.strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+        return None
 
     def _is_recent(self, now: datetime, observed_at: datetime) -> bool:
         return (now - observed_at).total_seconds() <= self.activity_window_seconds

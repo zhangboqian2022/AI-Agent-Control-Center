@@ -16,6 +16,15 @@ cd "$project_root"
 command -v uv >/dev/null 2>&1 || { echo "错误：需要先安装 uv" >&2; exit 1; }
 AACC_VERSION="${AACC_VERSION:-$(uv version --short)}"
 uv sync --locked --extra dev
+AACC_PUBLIC_VERSION="${AACC_PUBLIC_VERSION:-$(python3 -c 'import re, sys; v=sys.argv[1]; m=re.fullmatch(r"(\d+\.\d+\.\d+)rc(\d+)", v); print(f"{m.group(1)}-rc.{m.group(2)}" if m else v)' "$AACC_VERSION")}"
+AACC_BUNDLE_VERSION="${AACC_BUNDLE_VERSION:-${AACC_VERSION//./}}"
+AACC_BUNDLE_VERSION="${AACC_BUNDLE_VERSION//rc/}"
+AACC_BUNDLE_VERSION="${AACC_BUNDLE_VERSION//a/}"
+AACC_BUNDLE_VERSION="${AACC_BUNDLE_VERSION//b/}"
+if [[ ! "$AACC_BUNDLE_VERSION" =~ ^[0-9]+$ ]]; then
+  echo "错误：无法生成数值 CFBundleVersion：$AACC_VERSION" >&2
+  exit 1
+fi
 uv run pyinstaller \
   --noconfirm \
   --clean \
@@ -34,9 +43,9 @@ uv run pyinstaller \
   --exclude-module pytest \
   "$project_root/src/aacc/__main__.py"
 
-/usr/bin/plutil -replace CFBundleShortVersionString -string "$AACC_VERSION" \
+/usr/bin/plutil -replace CFBundleShortVersionString -string "$AACC_PUBLIC_VERSION" \
   "$project_root/dist/AACC.app/Contents/Info.plist"
-/usr/bin/plutil -replace CFBundleVersion -string "3" \
+/usr/bin/plutil -replace CFBundleVersion -string "$AACC_BUNDLE_VERSION" \
   "$project_root/dist/AACC.app/Contents/Info.plist"
 
 if command -v codesign >/dev/null 2>&1; then

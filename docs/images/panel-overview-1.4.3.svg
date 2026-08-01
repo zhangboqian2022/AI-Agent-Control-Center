@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="650" viewBox="0 0 420 650">
+  <defs>
+    <linearGradient id="shell" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#182235"/>
+      <stop offset="1" stop-color="#0d1320"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#050913" flood-opacity=".36"/>
+    </filter>
+    <style>
+      .ui { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .mono { font-family: "SFMono-Regular", Menlo, Consolas, monospace; }
+      .title { fill: #f4f7ff; font-size: 15px; font-weight: 800; letter-spacing: 1.6px; }
+      .micro { fill: #91a3c1; font-size: 8px; font-weight: 700; letter-spacing: 1px; }
+      .small { fill: #aab6cc; font-size: 9px; font-weight: 600; }
+      .label { fill: #eef3ff; font-size: 12px; font-weight: 800; }
+      .value { fill: #f6f8ff; font-size: 11px; font-weight: 800; }
+      .muted { fill: #8190a9; font-size: 9px; font-weight: 600; }
+      .task-title { fill: #f8faff; font-size: 14px; font-weight: 800; }
+      .task-meta { fill: #afbdd2; font-size: 9px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect x="8" y="8" width="404" height="634" rx="18" fill="url(#shell)" stroke="#6b7c9b" stroke-width="1"/>
+  <text class="ui title" x="23" y="35">AI AGENT CONTROL CENTER</text>
+  <rect x="320" y="20" width="33" height="20" rx="7" fill="#263248"/>
+  <text class="ui small" x="331" y="34" fill="#9fe9e1">中</text>
+  <rect x="359" y="20" width="21" height="20" rx="7" fill="#263248"/>
+  <text class="ui small" x="366" y="34">i</text>
+  <rect x="386" y="20" width="21" height="20" rx="7" fill="#263248"/>
+  <text class="ui small" x="392" y="34">×</text>
+  <text class="ui micro" x="23" y="51" fill="#58e4d4">LOCAL · SECURE · READY</text>
+  <rect x="331" y="46" width="56" height="15" rx="7" fill="#223047"/>
+  <text class="ui micro" x="342" y="57" fill="#b8c5da">1.4.3 DEMO</text>
+
+  <rect x="22" y="70" width="376" height="47" rx="9" fill="#20293a"/>
+  <circle cx="37" cy="87" r="5" fill="#a6d47d"/>
+  <text class="ui label" x="48" y="91">Codex 额度</text>
+  <text class="ui micro" x="149" y="89">WEEK</text>
+  <text class="ui value" x="204" y="91">17%</text>
+  <rect x="233" y="84" width="28" height="7" rx="3" fill="#334158"/>
+  <rect x="233" y="84" width="5" height="7" rx="3" fill="#4b9cff"/>
+  <text class="ui small" x="270" y="91">8月2日 16:00 重置</text>
+  <text class="ui muted" x="48" y="107">本周窗口 · 10080 分钟</text>
+
+  <rect x="22" y="124" width="376" height="47" rx="9" fill="#20293a"/>
+  <circle cx="37" cy="141" r="5" fill="#a6d47d"/>
+  <text class="ui label" x="48" y="145">Kimi 额度</text>
+  <text class="ui micro" x="149" y="139">5H</text>
+  <text class="ui value" x="204" y="141">30%</text>
+  <rect x="233" y="134" width="28" height="7" rx="3" fill="#334158"/>
+  <rect x="233" y="134" width="8" height="7" rx="3" fill="#4b9cff"/>
+  <text class="ui small" x="270" y="141">7月27日 18:40 重置</text>
+  <text class="ui muted" x="48" y="161">WEEK 72% · MONTH 31%</text>
+
+  <rect x="22" y="178" width="376" height="57" rx="9" fill="#20293a"/>
+  <circle cx="37" cy="195" r="5" fill="#a6d47d"/>
+  <text class="ui label" x="48" y="199">OpenCode 额度</text>
+  <text class="ui micro" x="151" y="194">5H</text>
+  <text class="ui value" x="204" y="196">12%</text>
+  <rect x="233" y="189" width="28" height="7" rx="3" fill="#334158"/>
+  <rect x="233" y="189" width="4" height="7" rx="3" fill="#4b9cff"/>
+  <text class="ui small" x="270" y="196">7月27日 18:00 重置</text>
+  <text class="ui micro" x="151" y="212">WEEK</text>
+  <text class="ui value" x="204" y="214">44%</text>
+  <rect x="233" y="207" width="28" height="7" rx="3" fill="#334158"/>
+  <rect x="233" y="207" width="12" height="7" rx="3" fill="#4b9cff"/>
+  <text class="ui small" x="270" y="214">7月30日 16:00 重置</text>
+  <text class="ui micro" x="151" y="230">MONTH</text>
+  <text class="ui value" x="204" y="232">68%</text>
+  <rect x="233" y="225" width="28" height="7" rx="3" fill="#334158"/>
+  <rect x="233" y="225" width="19" height="7" rx="3" fill="#4b9cff"/>
+  <text class="ui small" x="270" y="232">8月24日 16:00 重置</text>
+
+  <rect x="22" y="247" width="376" height="345" fill="#f0f3f7"/>
+  <text class="ui small" x="23" y="265" fill="#7f96b7">运行中 · 2 · 已完成 · 1 · 显示：3</text>
+  <text class="ui micro" x="23" y="283" fill="#8299ba">运行中</text>
+
+  <g filter="url(#shadow)">
+    <rect x="24" y="289" width="372" height="83" rx="16" fill="#414b5b"/>
+    <circle cx="67" cy="331" r="25" fill="#4b9cff"/>
+    <rect x="113" y="298" width="63" height="16" rx="6" fill="#566276"/>
+    <text class="ui micro" x="123" y="309" fill="#c8d3e6">CODEX</text>
+    <text class="ui small" x="184" y="310" fill="#59d8c7">运行中</text>
+    <text class="ui small" x="244" y="310" fill="#111827">· codelight</text>
+    <text class="ui task-title" x="113" y="332">修复支付回归测试</text>
+    <text class="ui mono task-meta" x="113" y="349">00:03:12</text>
+    <text class="ui task-meta" x="177" y="349">正在修改代码 · src/</text>
+    <text class="ui mono muted" x="113" y="363">+48.2k  ↓6.1k  缓存 76%</text>
+    <text class="ui small" x="371" y="312" fill="#bac6d8">×</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="24" y="381" width="372" height="83" rx="16" fill="#414b5b"/>
+    <circle cx="67" cy="423" r="25" fill="#ffd24f"/>
+    <rect x="113" y="390" width="63" height="16" rx="6" fill="#566276"/>
+    <text class="ui micro" x="123" y="401" fill="#c8d3e6">CODEX</text>
+    <text class="ui small" x="184" y="402" fill="#ffdc63">等待批准</text>
+    <text class="ui small" x="244" y="402" fill="#111827">· codelight</text>
+    <text class="ui task-title" x="113" y="424">升级依赖并跑回归</text>
+    <text class="ui mono task-meta" x="113" y="441">00:12:00</text>
+    <text class="ui task-meta" x="177" y="441">等待批准：写 pyproject.toml</text>
+    <text class="ui small" x="371" y="404" fill="#bac6d8">×</text>
+  </g>
+
+  <text class="ui micro" x="23" y="483" fill="#8299ba">已完成 · 保留</text>
+  <text class="ui small" x="337" y="483" fill="#7f96b7">清除全部</text>
+  <g filter="url(#shadow)">
+    <rect x="24" y="493" width="372" height="83" rx="16" fill="#414b5b"/>
+    <circle cx="67" cy="535" r="25" fill="#3bd89f"/>
+    <rect x="113" y="502" width="86" height="16" rx="6" fill="#566276"/>
+    <text class="ui micro" x="123" y="513" fill="#c8d3e6">KIMI DESKTOP</text>
+    <text class="ui small" x="209" y="514" fill="#35e69b">已完成</text>
+    <text class="ui task-title" x="113" y="536">整理周会纪要</text>
+    <text class="ui mono task-meta" x="113" y="553">总用时 00:00:00</text>
+    <text class="ui task-meta" x="204" y="553">回合已完成</text>
+    <text class="ui small" x="371" y="516" fill="#bac6d8">×</text>
+  </g>
+
+  <circle cx="27" cy="620" r="4" fill="#778baa"/>
+  <text class="ui small" x="38" y="624">API 127.0.0.1</text>
+  <path d="M385 627h13M391 621v7M396 617v11" stroke="#778baa" stroke-width="1.2" fill="none"/>
+</svg>

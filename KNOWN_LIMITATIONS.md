@@ -16,5 +16,6 @@
 - Windows CI runs on hosted Windows Server SKUs; consumer Windows 10/11 behaviors (SmartScreen, tray, window focus/hotkeys, long-running sessions) are covered by a manual verification checklist, not by automation.
 - F13–F20 hotkeys require an Fn-layer mapping on most Windows keyboards.
 
-- OpenCode usage (Go plan) is extracted from the rendered /go workspace page on opencode.ai; if opencode.ai changes that page layout, extraction may need updating. The opencode session cookie lives in the per-application web storage of the macOS web view.
-- OpenCode task status is inferred from local part snapshots (official idle/busy is a runtime event, not persisted) with a 90-second activity window; status is approximate. OpenCode support is macOS first; Windows is a later iteration.
+- OpenCode quota (Go plan) is extracted from the rendered /go workspace page on opencode.ai; if opencode.ai changes that page layout, extraction may need updating. macOS stores the session in the native per-application web view; Windows uses an AACC-owned Edge profile and a CDP boundary, so the two profiles are intentionally not interchangeable.
+- OpenCode task status is inferred from local part snapshots (official idle/busy is a runtime event, not persisted) with a 90-second activity window; status is approximate. Windows database discovery prefers `%LOCALAPPDATA%\opencode\opencode.db` and supports an XDG-compatible profile fallback; alternate OpenCode release-channel database names are searched in a fixed allowlist.
+- Configured non-native adapters provide process-level running/stopped evidence only. They do not parse agent-specific completion, approvals, or output unless a separate structured API, CLI, or wrapper reports that state.

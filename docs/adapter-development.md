@@ -4,6 +4,8 @@ Adapter 的职责是把第三方 Agent 的进程或输出转换为统一 `TaskSt
 
 新增内置 Agent 时，在 `src/aacc/adapters.py` 的 `PRESETS` 中加入保守的显示名、进程匹配与逐行状态正则。匹配应包含明确的行首或上下文，不应使用孤立的 `allow`、`done` 等常见单词。`GenericCLIAdapter` 会清理 ANSI、拒绝超过 4096 字符的行，并对每次正则搜索设置 20ms 超时。
 
+已配置的非原生 Adapter 会由运行时 Adapter 发现服务轮询进程级证据。匹配进程存在时显示运行中，进程消失时显示停止；服务不会把进程退出提升为完成，也不会读取 Agent 输出。若 Agent 有专属完成或审批事件，请使用本地 API、CLI 或 `aacc-run` 上报。
+
 结构化 Hook 应向 `POST /api/v1/tasks/{task_id}/status` 发送 `status`、最多 2000 字符的 `message`、唯一 `source` 和 0–1 的 `confidence`。Hook 失败不得阻塞 Agent。不要向 AACC 发送完整提示词、私有代码、密码或 API Key。
 
 新增 Adapter 必须为进程检测、每个显式状态模式、模糊文本不误报、ANSI 与超长行编写测试。核心 GUI 和 API 不应增加对具体 Agent 类型的分支。
@@ -19,4 +21,3 @@ AACC 同时监控 Kimi 桌面版（Kimi.app，`com.moonshot.kimichat`）的任�
   其余视为聊天会话，仅区分「正在生成回复 / 空闲」。
 - 任务 id 前缀 `kimi_desktop:`，卡片聚焦走 `mac_app` 机制（`open -b`），
   与 Codex 卡片聚焦 Codex.app 相同。
-

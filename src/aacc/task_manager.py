@@ -75,7 +75,8 @@ class TaskManager:
         with self._lock:
             is_new = task.id not in self._tasks
             self._tasks[task.id] = task
-            self.store.register(task)
+            if is_new:
+                self.store.register(task)
         if state is None:
             return self.store.get(task.id)
         if is_new:

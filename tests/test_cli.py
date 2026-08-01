@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pytest
 
+import aacc.cli as cli_module
 from aacc.cli import build_parser
+from aacc.config import default_config
 
 
 def test_status_command_accepts_documented_spelling() -> None:
@@ -48,3 +50,43 @@ def test_resolve_database_path_defaults_to_app_support(
 
     monkeypatch.delenv("AACC_DATABASE_PATH", raising=False)
     assert resolve_database_path() == DEFAULT_DATABASE_PATH
+
+
+def test_status_request_disables_proxy_and_marks_cli_as_manual(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"status": "ok"}
+
+    class Client:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def __enter__(self) -> "Client":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def request(self, _method: str, _url: str, **kwargs: object) -> Response:
+            captured["request"] = kwargs
+            return Response()
+
+    monkeypatch.setattr(cli_module.httpx, "Client", Client)
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: default_config())
+
+    assert cli_module.main(["status", "task-1", "paused"]) == 0
+    request = captured["request"]
+    assert isinstance(request, dict)
+    payload = request["json"]
+    assert isinstance(payload, dict)
+    assert payload["source"] == "manual"
+    assert payload["metadata"] == {"transport": "cli"}
+    assert captured["trust_env"] is False
+    capsys.readouterr()

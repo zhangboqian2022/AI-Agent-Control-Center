@@ -56,12 +56,12 @@ class WindowsAutomation:
                 category="cancelled",
             )
 
-    def _focus_unlocked(self, task: TaskConfig) -> str:
+    def _focus_target_unlocked(self, task: TaskConfig) -> int:
         title = task.terminal.window_title or task.terminal.tab_title or task.name
         hwnd = self._win32.find_window_by_title(title)
         if hwnd is None:
             raise AutomationError(
-                f"未找到标题包含 {title!r} 的窗口",
+                f"未找到唯一标题包含 {title!r} 的窗口",
                 category="window_not_found",
             )
         if not self._win32.focus_window(hwnd):
@@ -69,7 +69,18 @@ class WindowsAutomation:
                 "无法将目标窗口置前",
                 category="window_focus_failed",
             )
+        return int(hwnd)
+
+    def _focus_unlocked(self, task: TaskConfig) -> str:
+        self._focus_target_unlocked(task)
         return f"已聚焦 {task.name}"
+
+    def _verify_foreground_unlocked(self, hwnd: int) -> None:
+        if self._win32.foreground_window() != hwnd:
+            raise AutomationError(
+                "目标窗口焦点在注入前已改变",
+                category="window_focus_failed",
+            )
 
     def focus(self, task: TaskConfig, *, cancel_event: threading.Event | None = None) -> str:
         with self._lock:
@@ -104,9 +115,10 @@ class WindowsAutomation:
                     f"Key {normalized} is not allowed",
                     category="key_not_allowed",
                 )
-            self._focus_unlocked(task)
+            hwnd = self._focus_target_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)
+            self._verify_foreground_unlocked(hwnd)
             if normalized == "CTRL_C":
                 self._win32.send_key_combo(0x43, (self._win32.VK_CONTROL,))
             else:
@@ -133,9 +145,10 @@ class WindowsAutomation:
                     "Text must not contain NUL",
                     category="text_nul",
                 )
-            self._focus_unlocked(task)
+            hwnd = self._focus_target_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._check_cancelled(cancel_event)
+            self._verify_foreground_unlocked(hwnd)
             self._win32.send_unicode_text(text)
             return "文本已发送"
 
@@ -143,10 +156,11 @@ class WindowsAutomation:
         with self._lock:
             self._check_cancelled(cancel_event)
             self._ensure_injection()
-            self._focus_unlocked(task)
+            hwnd = self._focus_target_unlocked(task)
             self._sleep(self.config.voice.focus_delay_ms / 1000)
             self._sleep(self.config.voice.voice_delay_ms / 1000)
             self._check_cancelled(cancel_event)
+            self._verify_foreground_unlocked(hwnd)
             # Windows 语音输入（Win+H），对应 macOS 的系统听写（双击 Fn）。
             self._win32.send_key_combo(0x48, (self._win32.VK_LWIN,))
             return "已触发语音输入"

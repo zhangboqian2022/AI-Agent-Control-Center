@@ -50,3 +50,21 @@ def test_symlink_gate_fails_closed_and_is_never_replaced(tmp_path):
     with pytest.raises(ValueError, match="symbolic link"):
         store.set_may_reuse(False)
     assert target.read_text(encoding="utf-8") == '{"version":1,"reuse_native_session":true}'
+
+
+def test_opencode_state_file_is_isolated_from_kimi_state(tmp_path):
+    store = KimiWebLoginStateStore(
+        tmp_path,
+        state_file_name="opencode-web-session-state.json",
+    )
+
+    store.set_may_reuse(True)
+
+    assert store.may_reuse() is True
+    assert (tmp_path / "opencode-web-session-state.json").is_file()
+    assert not (tmp_path / "kimi-web-session-state.json").exists()
+
+
+def test_unknown_state_file_name_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="unsupported"):
+        KimiWebLoginStateStore(tmp_path, state_file_name="other.json")

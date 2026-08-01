@@ -151,6 +151,24 @@ AACC_MESSAGE_TEXT_KEYS = {
         for category in AUTOMATION_ERROR_CATEGORIES
     },
 }
+TASK_MESSAGE_KEYS = {
+    "正在运行": "task.message.running",
+    "正在分析任务": "task.message.analyzing",
+    "正在生成回复": "task.message.generating",
+    "正在运行测试": "task.message.testing",
+    "正在构建程序": "task.message.building",
+    "正在检查代码": "task.message.inspecting",
+    "正在执行命令": "task.message.executing",
+    "正在修改代码": "task.message.editing",
+    "正在查询资料": "task.message.researching",
+    "等待输入": "task.message.waiting_input",
+    "等待同意": "task.message.waiting_approval",
+    "空闲": "task.message.idle",
+    "已完成": "task.message.completed",
+    "回合已完成": "task.message.turn_completed",
+    "未检测到运行进程": "task.message.no_process",
+    "最近更新，未检测到运行进程": "task.message.recent_no_process",
+}
 _STANDARD_BUTTON_TEXT_KEYS = {
     QMessageBox.StandardButton.Ok: "common.ok",
     QMessageBox.StandardButton.Yes: "common.yes",
@@ -179,6 +197,9 @@ def _task_message_text(state: TaskState, language: LanguageManager) -> str:
         key = AACC_MESSAGE_TEXT_KEYS.get(category)
         if key is not None:
             return language.text(key)
+    message_key = TASK_MESSAGE_KEYS.get(state.message)
+    if message_key is not None:
+        return language.text(message_key)
     return state.message or language.text("task.no_message")
 
 
@@ -248,6 +269,7 @@ class ElidedLabel(QLabel):
 
     def setText(self, text: str) -> None:
         self._full_text = text
+        self.setToolTip(text)
         self._update_elision()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -588,7 +610,7 @@ class QuotaBar(QFrame):
 
 
 class OpenCodeQuotaBar(QFrame):
-    """OpenCode workspace usage strip (5H / WEEK / MONTH) from web session data."""
+    """OpenCode workspace quota strip (5H / WEEK / MONTH) from web session data."""
 
     clicked = Signal()
 
@@ -657,16 +679,15 @@ class OpenCodeQuotaBar(QFrame):
         self._last_quota_tooltip = ""
         self.dot.setStyleSheet("color: #e06c75;")
         self.summary_label.setText(
-            "OpenCode 用量\n点击授权"
-            if self.language_manager.language == ZH_CN
-            else "OpenCode usage\nAuthorize"
+            f"{self.language_manager.text('opencode.quota')}\n"
+            + ("点击授权" if self.language_manager.language == ZH_CN else "Authorize")
         )
         for row in self._metric_rows:
             _set_quota_metric(row, None, None, self.language_manager)
         self.setToolTip(
-            "点击登录 opencode.ai 工作区，同步 Go 套餐用量"
+            "点击登录 opencode.ai 工作区，同步 Go 套餐额度"
             if self.language_manager.language == ZH_CN
-            else "Sign in to the opencode.ai workspace to sync Go plan usage"
+            else "Sign in to the opencode.ai workspace to sync Go plan quota"
         )
 
     def show_pending(self) -> None:
@@ -705,16 +726,14 @@ class OpenCodeQuotaBar(QFrame):
         if quota.status is QuotaStatus.UNKNOWN:
             self.dot.setStyleSheet("color: #8997aa;")
             self.summary_label.setText(
-                "OpenCode 用量\n数据不可用"
-                if self.language_manager.language == ZH_CN
-                else "OpenCode usage\nUsage unavailable"
+                f"{self.language_manager.text('opencode.quota')}\n"
+                f"{self.language_manager.text('quota.unavailable')}"
             )
         elif quota.status is QuotaStatus.PARTIAL:
             self.dot.setStyleSheet("color: #e5c07b;")
             self.summary_label.setText(
-                "OpenCode 用量\n部分数据"
-                if self.language_manager.language == ZH_CN
-                else "OpenCode usage\nPartial usage data"
+                f"{self.language_manager.text('opencode.quota')}\n"
+                f"{self.language_manager.text('quota.partial')}"
             )
         elif quota.status is QuotaStatus.STALE:
             self.dot.setStyleSheet("color: #8997aa;")
@@ -759,7 +778,8 @@ class OpenCodeQuotaBar(QFrame):
             if self.language_manager.language == ZH_CN
             else format_quota_reset(usage.reset_at, self.language_manager)
         )
-        return f"{name}: {usage.percentage}% ({reset})"
+        percentage = "--" if usage.percentage is None else f"{usage.percentage}%"
+        return f"{name}: {percentage} ({reset})"
 
     def _render_error(self) -> None:
         if self._last_quota is not None:
@@ -772,11 +792,7 @@ class OpenCodeQuotaBar(QFrame):
                 else self.language_manager.text("quota.stale")
             )
         else:
-            state_text = (
-                "数据不可用"
-                if self.language_manager.language == ZH_CN
-                else self.language_manager.text("quota.unavailable")
-            )
+            state_text = self.language_manager.text("quota.unavailable")
         self.summary_label.setText(f"{self.language_manager.text('opencode.quota')}\n{state_text}")
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
@@ -1103,15 +1119,17 @@ class TaskCard(QFrame):
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(7)
-        self.status_label = QLabel()
+        self.status_label = ElidedLabel("")
         self.status_label.setObjectName("statusLabel")
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.workdir_label = ElidedLabel("")
         self.workdir_label.setObjectName("workdirLabel")
         self.workdir_label.setMaximumWidth(140)
+        self.workdir_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.workdir_label.hide()
-        meta_row.addWidget(self.agent_label)
-        meta_row.addWidget(self.status_label)
-        meta_row.addWidget(self.workdir_label)
+        meta_row.addWidget(self.agent_label, 0)
+        meta_row.addWidget(self.status_label, 1)
+        meta_row.addWidget(self.workdir_label, 2)
         meta_row.addStretch()
         details_layout.addLayout(meta_row)
 
@@ -1181,7 +1199,7 @@ class TaskCard(QFrame):
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
         work_dir = state.metadata.get("work_dir")
         if (
-            self.task.agent.type in ("kimi_code", "opencode_cli")
+            self.task.agent.type in ("codex_cli", "kimi_code", "opencode_cli")
             and isinstance(work_dir, str)
             and work_dir
         ):
@@ -2021,7 +2039,7 @@ class MainWindow(QWidget):
         self.retained_header = QWidget()
         retained_header_layout = QHBoxLayout(self.retained_header)
         retained_header_layout.setContentsMargins(0, 0, 0, 0)
-        self.retained_group_label = QLabel("已完成 · 保留直到移除")
+        self.retained_group_label = QLabel("已完成 · 保留")
         self.retained_group_label.setObjectName("taskGroupLabel")
         self.clear_retained_button = QPushButton("全部清除")
         self.clear_retained_button.setObjectName("clearRetainedButton")
@@ -2045,6 +2063,7 @@ class MainWindow(QWidget):
         self.cards_scroll.setObjectName("cardsScroll")
         self.cards_scroll.setWidgetResizable(True)
         self.cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.cards_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cards_scroll.setWidget(self.cards_container)
         layout.addWidget(self.cards_scroll, 1)
         footer = QHBoxLayout()
@@ -2105,9 +2124,7 @@ class MainWindow(QWidget):
         self.quit_button.setToolTip(self.language_manager.text("header.quit"))
         self.running_group_label.setText(self.language_manager.text("group.running"))
         self.retained_group_label.setText(
-            "已完成 · 保留直到移除"
-            if self.language_manager.language == ZH_CN
-            else "Completed · Retained until removed"
+            "已完成 · 保留" if self.language_manager.language == ZH_CN else "Completed · Retained"
         )
         self.clear_retained_button.setText(self.language_manager.text("group.clear_all"))
         self.empty_tasks_label.setText(
