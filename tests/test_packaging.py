@@ -215,6 +215,13 @@ def test_windows_spec_exists_and_excludes_quartz() -> None:
     assert "styles.qss" in spec
 
 
+def test_windows_spec_includes_opencode_edge_modules_without_qtwebview() -> None:
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    assert "aacc.opencode_edge_cdp" in spec
+    assert "aacc.opencode_edge_session" in spec
+    assert "PySide6.QtWebView" not in spec
+
+
 def test_windows_native_acl_dependency_and_payload_are_pinned() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "pywin32==312; sys_platform == 'win32'" in project["project"]["dependencies"]
