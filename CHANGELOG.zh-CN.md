@@ -1,5 +1,16 @@
 # 更新日志
 
+## 1.4.4-rc.2 — 2026-08-02
+
+[中英文发布说明](docs/release-notes-1.4.4rc2.md)
+
+- [安全] OAuth 查询参数不再进入日志；`/send-text` 限流（10 次/10 秒 → 429）；API metadata 设边界，未知 `source` 归一化记录告警。
+- [修复] OpenCode 步感知推断：当前 step 内运行中的工具不再被稍晚 text 遮挡，step 结束信号停滞 90 秒后才变绿；个位 `usagePercent`（如 1）不再放大为 100；cwd 不可读兜底只适用于无已知工作目录的会话；DOM 提取重试改用独立尝试计数。
+- [生命周期] `aacc-run` 与 macOS Codex app-server 在 POSIX 上回收进程组；状态机同源覆盖受过期或置信度差距约束。
+- [稳定性] 适配器轮询隔离单适配器故障，每轮共享一次进程快照。
+- [构建] `install.sh` 先构建新运行时再移除旧运行时；`build_dmg.sh` 生成 `.dmg.sha256` 边车文件；`AACC-windows.spec` 从 spec 位置派生根目录。
+- [文档] SECURITY.md 增加最小权限部署指引；Windows 发布说明措辞修正为仅复核前台窗口句柄。
+
 ## 1.4.4-rc.1 — 2026-08-01
 
 [中英文发布说明](docs/release-notes-1.4.4rc1.md)
