@@ -103,15 +103,25 @@ def test_failed_and_cancelled_tool_states_are_not_completed() -> None:
     assert _evaluate(_snapshot("tool", "cancelled", 5), alive=True).status is TaskStatus.CANCELLED
 
 
-def test_step_finish_is_completed() -> None:
+def test_fresh_step_finish_is_running_during_step_gap() -> None:
     result = _evaluate(_snapshot("step-finish", None, 10), alive=True)
+    assert result.status is TaskStatus.RUNNING
+
+
+def test_stale_step_finish_is_completed() -> None:
+    result = _evaluate(_snapshot("step-finish", None, 300), alive=True)
     assert result.status is TaskStatus.COMPLETED
 
 
-def test_tool_completed_is_completed_with_or_without_process() -> None:
+def test_fresh_tool_completed_is_running_with_process_and_completed_without() -> None:
     result = _evaluate(_snapshot("tool", "completed", 10), alive=False)
     assert result.status is TaskStatus.COMPLETED
     result = _evaluate(_snapshot("tool", "completed", 10), alive=True)
+    assert result.status is TaskStatus.RUNNING
+
+
+def test_stale_tool_completed_is_completed() -> None:
+    result = _evaluate(_snapshot("tool", "completed", 300), alive=True)
     assert result.status is TaskStatus.COMPLETED
 
 
@@ -126,21 +136,21 @@ def test_final_text_after_step_finish_is_completed(tmp_path: Path) -> None:
         "ses_finished",
         "start",
         {"type": "step-start"},
-        now - timedelta(seconds=30),
+        now - timedelta(minutes=10),
     )
     _add_part(
         connection,
         "ses_finished",
         "finish",
         {"type": "step-finish"},
-        now - timedelta(seconds=10),
+        now - timedelta(minutes=9),
     )
     _add_part(
         connection,
         "ses_finished",
         "final-text",
         {"type": "text", "text": "secret"},
-        now,
+        now - timedelta(minutes=5),
     )
     connection.commit()
     connection.close()
@@ -389,7 +399,7 @@ def test_discover_orders_by_recency_with_running_first(tmp_path: Path) -> None:
         "ses_new",
         "prt_2",
         {"type": "step-finish"},
-        updated=now - timedelta(minutes=1),
+        updated=now - timedelta(minutes=5),
     )
     connection.commit()
     connection.close()

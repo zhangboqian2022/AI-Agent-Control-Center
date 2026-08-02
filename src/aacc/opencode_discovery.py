@@ -211,16 +211,27 @@ def evaluate_opencode_session_status(
                 TaskStatus.RUNNING, "正在运行", 0.95, snapshot.time_updated
             )
         return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, snapshot.time_updated)
+    step_ended = snapshot.part_type == "step-finish" or (
+        snapshot.part_type == "tool" and state_status == "completed"
+    )
+    if step_ended:
+        stale = (now - snapshot.time_updated).total_seconds() > activity_window_seconds
+        if stale or not process_alive():
+            return OpenCodeSessionStatus(
+                TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated
+            )
+        return OpenCodeSessionStatus(
+            TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated
+        )
     if (
         snapshot.completed_at is not None
         and snapshot.step_started_at is not None
         and snapshot.completed_at >= snapshot.step_started_at
+        and (now - snapshot.completed_at).total_seconds() > activity_window_seconds
     ):
-        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated)
-    if snapshot.part_type == "step-finish" or (
-        snapshot.part_type == "tool" and state_status == "completed"
-    ):
-        return OpenCodeSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated)
+        return OpenCodeSessionStatus(
+            TaskStatus.COMPLETED, "回合已完成", 0.9, snapshot.time_updated
+        )
     if not process_alive():
         return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, snapshot.time_updated)
     active = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
