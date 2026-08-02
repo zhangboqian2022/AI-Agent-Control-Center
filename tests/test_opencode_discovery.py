@@ -688,3 +688,79 @@ def test_active_session_ids_returns_actionable_sessions(tmp_path: Path) -> None:
     connection.close()
     discovery = OpenCodeLocalDiscovery(db_path=path, process_alive=lambda: True)
     assert discovery.active_session_ids() == {"ses_run", "ses_wait"}
+
+
+def test_running_tool_shadowed_by_newer_text_stays_running() -> None:
+    now = _now()
+    snapshot = OpenCodePartSnapshot(
+        part_type="text",
+        state_status=None,
+        time_updated=now - timedelta(seconds=300),
+        running_at=now - timedelta(seconds=250),
+        pending_at=None,
+        completed_at=None,
+        step_started_at=now - timedelta(seconds=280),
+    )
+    result = _evaluate(snapshot, alive=True)
+    assert result.status is TaskStatus.RUNNING
+
+
+def test_running_tool_shadowed_without_process_is_stopped() -> None:
+    now = _now()
+    snapshot = OpenCodePartSnapshot(
+        part_type="text",
+        state_status=None,
+        time_updated=now - timedelta(seconds=300),
+        running_at=now - timedelta(seconds=250),
+        pending_at=None,
+        completed_at=None,
+        step_started_at=now - timedelta(seconds=280),
+    )
+    result = _evaluate(snapshot, alive=False)
+    assert result.status is TaskStatus.STOPPED
+
+
+def test_old_step_running_cannot_override_new_step_completion() -> None:
+    now = _now()
+    snapshot = OpenCodePartSnapshot(
+        part_type="text",
+        state_status=None,
+        time_updated=now - timedelta(seconds=300),
+        running_at=now - timedelta(seconds=400),
+        pending_at=None,
+        completed_at=now - timedelta(seconds=350),
+        step_started_at=now - timedelta(seconds=380),
+    )
+    result = _evaluate(snapshot, alive=True)
+    assert result.status is TaskStatus.COMPLETED
+
+
+def test_shadowed_running_tool_detected_from_db_history(tmp_path: Path) -> None:
+    from aacc.opencode_discovery import OpenCodeLocalDiscovery
+
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_shadow", updated=now)
+    _add_part(
+        connection, "ses_shadow", "st", {"type": "step-start"}, now - timedelta(seconds=400)
+    )
+    _add_part(
+        connection,
+        "ses_shadow",
+        "tool-run",
+        {"type": "tool", "state": {"status": "running"}},
+        now - timedelta(seconds=350),
+    )
+    _add_part(
+        connection, "ses_shadow", "text-late", {"type": "text"}, now - timedelta(seconds=349)
+    )
+    connection.commit()
+    connection.close()
+    discovery = OpenCodeLocalDiscovery(
+        db_path=path,
+        process_alive_for_session=lambda _session_id: True,
+        process_alive=lambda: True,
+    )
+    tasks = discovery.discover()
+    assert len(tasks) == 1
+    assert tasks[0].state.status is TaskStatus.RUNNING
