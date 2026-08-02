@@ -741,9 +741,7 @@ def test_shadowed_running_tool_detected_from_db_history(tmp_path: Path) -> None:
     path, connection = _make_db(tmp_path)
     now = datetime.now(UTC)
     _add_session(connection, "ses_shadow", updated=now)
-    _add_part(
-        connection, "ses_shadow", "st", {"type": "step-start"}, now - timedelta(seconds=400)
-    )
+    _add_part(connection, "ses_shadow", "st", {"type": "step-start"}, now - timedelta(seconds=400))
     _add_part(
         connection,
         "ses_shadow",
@@ -751,9 +749,7 @@ def test_shadowed_running_tool_detected_from_db_history(tmp_path: Path) -> None:
         {"type": "tool", "state": {"status": "running"}},
         now - timedelta(seconds=350),
     )
-    _add_part(
-        connection, "ses_shadow", "text-late", {"type": "text"}, now - timedelta(seconds=349)
-    )
+    _add_part(connection, "ses_shadow", "text-late", {"type": "text"}, now - timedelta(seconds=349))
     connection.commit()
     connection.close()
     discovery = OpenCodeLocalDiscovery(
