@@ -2,6 +2,17 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.4-rc.2 — 2026-08-02
+
+[Bilingual release notes](docs/release-notes-1.4.4rc2.md)
+
+- [Security] OAuth query parameters never reach logs; `/send-text` is rate-limited (10/10s → 429); API metadata is bounded and unknown `source` normalization logs a warning.
+- [Fix] OpenCode step-aware inference: a running tool inside the current step is no longer shadowed by a newer text part, and step-end signals only turn a session green after 90 s of inactivity; single-digit `usagePercent` values (e.g. 1) are no longer scaled to 100; the unreadable-cwd liveness fallback only applies to sessions without a known work directory; DOM extraction retries use an independent attempt counter.
+- [Lifecycle] `aacc-run` and the macOS Codex app-server reap process groups on POSIX; the state machine's same-source override is bounded by staleness or a confidence gap.
+- [Stability] Adapter polling isolates per-adapter failures and shares one process snapshot per round.
+- [Build] `install.sh` builds the new runtime before removing the old one; `build_dmg.sh` emits the `.dmg.sha256` sidecar; `AACC-windows.spec` derives its root from the spec location.
+- [Docs] Least-privilege deployment guidance in SECURITY.md; Windows release-note wording corrected to foreground window-handle re-check only.
+
 ## 1.4.4-rc.1 — 2026-08-01
 
 [Bilingual release notes](docs/release-notes-1.4.4rc1.md)
