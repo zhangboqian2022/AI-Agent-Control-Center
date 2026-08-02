@@ -37,5 +37,9 @@ else
 fi
 
 /usr/bin/hdiutil verify "$output_path"
+(
+  cd "$(dirname "$output_path")"
+  /usr/bin/shasum -a 256 "$(basename "$output_path")" > "$output_path.sha256"
+)
 
 echo "已构建 DMG：$output_path"

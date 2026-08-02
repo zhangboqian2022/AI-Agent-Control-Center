@@ -117,6 +117,15 @@ def test_dmg_build_targets_desktop_and_contains_app_bundle() -> None:
     assert "AACC_NOTARY_PROFILE" in script
 
 
+def test_dmg_build_emits_sha256_sidecar_after_verify() -> None:
+    script = (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
+    verify_index = script.index("hdiutil verify")
+    sidecar_index = script.index(
+        'shasum -a 256 "$(basename "$output_path")" > "$output_path.sha256"'
+    )
+    assert verify_index < sidecar_index
+
+
 def test_release_version_is_consistent_across_project_and_build_scripts() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert __version__ == project["project"]["version"]
@@ -143,6 +152,18 @@ def test_installer_links_runtime_not_repository_virtualenv() -> None:
     assert "uv export --locked --no-dev --no-emit-project" in script
     assert '"${wheels[0]}" --no-deps' in script
     assert "SKIP_BUILD" in script
+
+
+def test_installer_builds_runtime_into_staging_before_swapping() -> None:
+    script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    assert 'staging_root="$(mktemp -d' in script
+    assert 'uv venv "$staging_root/.venv"' in script
+    build_index = script.index("uv build --wheel")
+    install_index = script.index("uv pip install")
+    swap_index = script.index('rm -rf "$runtime_venv"')
+    assert build_index < swap_index
+    assert install_index < swap_index
+    assert script.index('mv "$staging_root/.venv" "$runtime_venv"') > swap_index
 
 
 def test_stylesheet_is_packaged_resource() -> None:
@@ -215,6 +236,12 @@ def test_windows_spec_exists_and_excludes_quartz() -> None:
     assert "Quartz" in spec  # 出现在 excludes
     assert "BUNDLE" not in spec
     assert "styles.qss" in spec
+
+
+def test_windows_spec_root_derives_from_spec_location_not_cwd() -> None:
+    spec = (ROOT / "AACC-windows.spec").read_text(encoding="utf-8")
+    assert "ROOT = os.path.abspath(os.path.dirname(os.path.abspath(SPEC)))" in spec
+    assert "os.getcwd()" not in spec
 
 
 def test_windows_spec_includes_opencode_edge_modules_without_qtwebview() -> None:
