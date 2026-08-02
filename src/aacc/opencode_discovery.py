@@ -279,10 +279,7 @@ class OpenCodeLocalDiscovery:
                     process_alive = self.process_alive()
                 return process_alive
             if session.work_dir:
-                return (
-                    _normalize_process_path(session.work_dir) in process_cwds
-                    or unreadable_process_cwd
-                )
+                return _normalize_process_path(session.work_dir) in process_cwds
             return bool(process_cwds) or unreadable_process_cwd
 
         discovered: list[DiscoveredTask] = []

@@ -42,12 +42,17 @@ class BaseAgentAdapter:
         patterns = self.config.process_patterns + self.config.executable_patterns
         if not patterns:
             return False
+        compiled = [safe_regex.compile(pattern, safe_regex.IGNORECASE) for pattern in patterns]
         for process in psutil.process_iter(["name", "cmdline"]):
             try:
                 info = process.info
                 haystack = " ".join([info.get("name") or "", *(info.get("cmdline") or [])])
-                if any(re.search(pattern, haystack, re.IGNORECASE) for pattern in patterns):
-                    return True
+                for pattern in compiled:
+                    try:
+                        if pattern.search(haystack, timeout=0.02):
+                            return True
+                    except TimeoutError:
+                        continue
             except (psutil.Error, OSError):
                 continue
         return False

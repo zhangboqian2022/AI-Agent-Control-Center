@@ -545,6 +545,31 @@ def test_discovery_uses_session_directory_matching_without_global_process_overri
     assert tasks["opencode:ses_unknown"].state.status is TaskStatus.RUNNING
 
 
+def test_unreadable_cwd_fallback_does_not_keep_known_work_dir_sessions_alive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, connection = _make_db(tmp_path)
+    now = datetime.now(UTC)
+    _add_session(connection, "ses_a", directory="/a", updated=now)
+    _add_session(connection, "ses_unknown", directory=None, updated=now)
+    _add_part(connection, "ses_a", "a-text", {"type": "text"}, updated=now)
+    _add_part(connection, "ses_unknown", "unknown-text", {"type": "text"}, updated=now)
+    connection.commit()
+    connection.close()
+    import aacc.opencode_discovery as module
+
+    monkeypatch.setattr(
+        module,
+        "_matching_process_cwds",
+        lambda: ({module._normalize_process_path("/b")}, True),
+    )
+
+    tasks = {task.config.id: task for task in OpenCodeLocalDiscovery(db_path=path).discover()}
+
+    assert tasks["opencode:ses_a"].state.status is TaskStatus.STOPPED
+    assert tasks["opencode:ses_unknown"].state.status is TaskStatus.RUNNING
+
+
 def test_latest_snapshot_ignores_empty_and_non_string_history_rows(tmp_path: Path) -> None:
     path, connection = _make_db(tmp_path)
     now = datetime.now(UTC)
