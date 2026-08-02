@@ -18,3 +18,7 @@ Do not email API tokens, private prompts, source code, screenshots with secrets,
 ## Security model
 
 AACC is designed for local operation. Its API listens only on loopback and requires a generated Bearer token, and it exposes no standalone shell-execution endpoint. **Security warning:** the API can inject arbitrary text (`/send-text`) together with allowlisted keystrokes (including Enter); against a terminal-like target, that combination is equivalent to the current user's interactive typing ability, up to and including running commands. Treat the API token as a password-grade secret: keep it local and never share or transmit it. macOS automation additionally requires Accessibility permission and a successfully focused target application.
+
+## Least-privilege deployment
+
+For environments that do not need desktop control, set `keyboard_injection: false` in `config.yaml` to disable input actions entirely on both platforms. Note that `/send-text` plus `Enter` is equivalent to the current user's interactive typing ability, so protect the API token accordingly.

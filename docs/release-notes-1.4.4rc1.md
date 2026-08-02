@@ -18,10 +18,16 @@ claim of consumer Windows 10/11 hardware validation.
   separate polling service and report only conservative process-level
   running/stopped evidence. They never infer agent-specific completion and do
   not read prompts, responses, or command output.
-- **Safer desktop control.** Windows title matching is unique and foreground
-  focus is rechecked immediately before input. macOS Terminal/iTerm2 matching
+- **Safer desktop control.** Windows requires a unique window-title match and
+  re-checks the foreground window handle immediately before input; it does not
+  re-verify process identity (PID or image path). macOS Terminal/iTerm2 matching
   is unique and frontmost application/window identity is checked before input.
   Ambiguous or changed targets fail closed.
+- **Least-privilege deployment.** Environments without desktop-control needs
+  can set `keyboard_injection: false` in `config.yaml` to disable all input
+  actions on both platforms; `/send-text` plus `Enter` remains equivalent to
+  the current user's interactive typing ability, so keep the API token
+  protected.
 - **Local security and diagnostics.** POSIX configuration replacement is
   anchored to an opened parent directory; loopback HTTP clients do not inherit
   proxy environment variables; AppleScript CR/LF quoting and Kimi Desktop
@@ -90,9 +96,12 @@ documented Gatekeeper or SmartScreen path.
 - **配置 Adapter 接入运行时。** 非原生的已配置 Adapter 通过独立轮询服务接入，
   只提供保守的进程级运行/停止证据，不推断 Agent 专属完成语义，也不读取 prompt、
   回复或命令输出。
-- **桌面控制失败关闭。** Windows 标题匹配必须唯一，并在注入前立即复核前台窗口；
-  macOS Terminal/iTerm2 标题匹配必须唯一，并在注入前检查前台应用/窗口身份。目标歧义
-  或焦点变化都会拒绝注入。
+- **桌面控制失败关闭。** Windows 要求窗口标题唯一匹配，并在注入前立即复核前台窗口
+  句柄；它不会重新核验进程身份（PID 或镜像路径）。macOS Terminal/iTerm2 标题匹配必须
+  唯一，并在注入前检查前台应用/窗口身份。目标歧义或焦点变化都会拒绝注入。
+- **最小权限部署。** 没有桌面控制需求的环境可在 `config.yaml` 中设置
+  `keyboard_injection: false`，在双平台彻底禁用所有输入动作；`/send-text` 配合 `Enter`
+  仍然等同于当前用户的交互式打字能力，请相应保护好 API Token。
 - **本机安全与诊断。** POSIX 配置替换改为基于已打开父目录的安全相对替换；回环 HTTP
   客户端不继承代理环境变量；AppleScript 的 CR/LF 转义及 Kimi Desktop 候选日志已加固。
 - **发布证据。** macOS 使用公开产物名 `AACC-1.4.4-rc.1.dmg`；Windows 保留 PEP 440
