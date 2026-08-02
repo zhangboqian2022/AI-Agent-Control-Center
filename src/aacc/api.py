@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import logging
 import secrets
+import threading
+import time
+from collections.abc import Callable
 from typing import Annotated, Literal, Protocol
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
@@ -13,6 +18,52 @@ from aacc.models import AppConfig, TaskConfig, TaskState, TaskStatus
 from aacc.task_manager import TaskManager
 
 AllowedKey = Literal["ENTER", "ESC", "UP", "DOWN", "LEFT", "RIGHT", "CTRL_C", "1", "2"]
+
+_METADATA_MAX_KEYS = 20
+_METADATA_KEY_MAX_LENGTH = 64
+_METADATA_MAX_SERIALIZED_BYTES = 8 * 1024
+_KNOWN_SOURCES = {
+    "api",
+    "manual",
+    "wrapper",
+    "hook",
+    "process",
+    "log",
+    "codex_local",
+    "kimi_local",
+    "kimi_desktop_local",
+    "opencode_local",
+    "automation",
+}
+
+_logger = logging.getLogger("aacc.api")
+
+
+class _SlidingWindowCounter:
+    """Minimal thread-safe sliding-window rate limiter keyed by client."""
+
+    def __init__(
+        self,
+        limit: int,
+        window_seconds: float,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self.limit = max(1, limit)
+        self.window_seconds = max(0.1, window_seconds)
+        self._clock = clock or time.monotonic
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        now = self._clock()
+        with self._lock:
+            hits = [hit for hit in self._hits.get(key, []) if now - hit < self.window_seconds]
+            if len(hits) >= self.limit:
+                self._hits[key] = hits
+                return False
+            hits.append(now)
+            self._hits[key] = hits
+            return True
 
 
 class Controller(Protocol):
@@ -32,20 +83,24 @@ class StatusRequest(BaseModel):
     @field_validator("source")
     @classmethod
     def normalize_source(cls, value: str) -> str:
-        allowed = {
-            "api",
-            "manual",
-            "wrapper",
-            "hook",
-            "process",
-            "log",
-            "codex_local",
-            "kimi_local",
-            "kimi_desktop_local",
-            "opencode_local",
-            "automation",
-        }
-        return value if value in allowed else "api"
+        if value not in _KNOWN_SOURCES:
+            _logger.warning("Unknown status source %r downgraded to %r", value[:80], "api")
+            return "api"
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata_bounds(cls, value: dict[str, object]) -> dict[str, object]:
+        if len(value) > _METADATA_MAX_KEYS:
+            raise ValueError(f"metadata must have at most {_METADATA_MAX_KEYS} keys")
+        for key in value:
+            if len(key) > _METADATA_KEY_MAX_LENGTH:
+                raise ValueError(
+                    f"metadata keys must be at most {_METADATA_KEY_MAX_LENGTH} characters"
+                )
+        if len(json.dumps(value)) > _METADATA_MAX_SERIALIZED_BYTES:
+            raise ValueError("metadata serialized size must not exceed 8 KiB")
+        return value
 
     @field_validator("status", mode="before")
     @classmethod
@@ -66,10 +121,29 @@ class TextRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+def bearer_token(authorization: Annotated[str | None, Header()] = None) -> str:
+    """Return the raw Bearer token value for rate-limit keying."""
+    prefix = "Bearer "
+    if authorization is None or not authorization.startswith(prefix):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required"
+        )
+    return authorization[len(prefix) :]
+
+
 def create_api(
-    config: AppConfig, manager: TaskManager, controller: Controller | None = None
+    config: AppConfig,
+    manager: TaskManager,
+    controller: Controller | None = None,
+    *,
+    send_text_rate_limit: int = 10,
+    send_text_rate_window_seconds: float = 10.0,
+    clock: Callable[[], float] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AACC Local API", version=__version__, docs_url=None, redoc_url=None)
+    send_text_limiter = _SlidingWindowCounter(
+        send_text_rate_limit, send_text_rate_window_seconds, clock
+    )
 
     @app.exception_handler(AutomationError)
     async def automation_error(_request: Request, error: AutomationError) -> JSONResponse:
@@ -146,8 +220,16 @@ def create_api(
         return {"result": require_controller().send_key(task, request.key)}
 
     @app.post("/api/v1/tasks/{task_id}/send-text", dependencies=[authorized])
-    def send_text(task_id: str, request: TextRequest) -> dict[str, str]:
+    def send_text(
+        task_id: str,
+        request: TextRequest,
+        token: Annotated[str, Depends(bearer_token)],
+    ) -> dict[str, str]:
         task = task_or_404(task_id)
+        if not send_text_limiter.allow(token):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded"
+            )
         return {"result": require_controller().send_text(task, request.text)}
 
     @app.post("/api/v1/tasks/{task_id}/voice", dependencies=[authorized])

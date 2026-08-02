@@ -63,6 +63,7 @@ def opencode_dom_extract_script(url: str, generation: int) -> str:
 (() => {
   const prefix = __PREFIX__;
   const generation = __GEN__;
+  let attempts = 0;
   const emit = (payload) => {
     document.title = prefix + JSON.stringify(payload);
   };
@@ -88,7 +89,7 @@ def opencode_dom_extract_script(url: str, generation: int) -> str:
       if (/重置|reset|Resets/i.test(line)) resets.push(parseResetSeconds(line));
     }
     if (pcts.length < 3) {
-      if (generation <= 50) setTimeout(extract, 1000);
+      if (++attempts < 50) setTimeout(extract, 1000);
       else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
       return;
     }
@@ -175,9 +176,11 @@ class OpenCodeWebSession(QObject):
         self._start_refresh_generation()
         self._start_refresh_watchdog()
         if self._login_dialog_open or self.view.url().isEmpty() or not self._is_opencode_origin():
+            url = self.view.url()
             _logger.info(
-                "OpenCode quota refresh navigating to workspace url=%s",
-                self.view.url().toString(),
+                "OpenCode quota refresh navigating to workspace origin=%s://%s",
+                url.scheme(),
+                url.host(),
             )
             self._load_workspace_url()
             return

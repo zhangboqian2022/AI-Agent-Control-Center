@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -110,6 +111,14 @@ def test_dom_extract_script_contains_text_extraction() -> None:
     assert opencode_dom_extract_script("https://opencode.ai/zen", 1) == ""
 
 
+def test_dom_extract_script_retry_uses_independent_attempt_counter() -> None:
+    script = opencode_dom_extract_script(WORKSPACE_URL, 51)
+    assert "attempts" in script
+    assert "++attempts" in script
+    assert "generation <=" not in script
+    assert "DOM_TIMEOUT" in script
+
+
 def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)
@@ -125,6 +134,20 @@ def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
     session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
+
+
+def test_refresh_logs_only_scheme_and_host_never_query_params(caplog, qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.view._url = QUrl("https://github.com/login/oauth/authorize?code=SECRET&state=X")
+    with caplog.at_level(logging.INFO, logger="aacc.opencode_web_session"):
+        session.refresh()
+    assert "code=" not in caplog.text
+    assert "state=" not in caplog.text
+    assert "oauth" not in caplog.text
+    assert "github.com" in caplog.text
+    assert "https://github.com" in caplog.text
+    assert session.view.url().toString() == WORKSPACE_URL
 
 
 def test_session_without_workspace_url_is_inert(qapp, tmp_path: Path) -> None:

@@ -1,10 +1,12 @@
 import asyncio
 import re
 import sys
+import time
+from types import SimpleNamespace
 
 import pytest
 
-from aacc.adapters import AdapterRegistry, GenericCLIAdapter, strip_ansi
+from aacc.adapters import AdapterRegistry, BaseAgentAdapter, GenericCLIAdapter, strip_ansi
 from aacc.config import default_config
 from aacc.models import AgentConfig, TaskStatus
 
@@ -101,3 +103,36 @@ def test_codex_default_process_pattern_darwin_unchanged(monkeypatch) -> None:
     from aacc.adapters import _default_codex_process_pattern
 
     assert _default_codex_process_pattern() == r"(?:^|/)codex(?:\s|$)"
+
+
+def test_detect_times_out_and_ignores_pathological_pattern(monkeypatch) -> None:
+    adapter = BaseAgentAdapter(
+        "task-1",
+        AgentConfig(type="generic_cli", process_patterns=[r"(a+)+$"]),
+    )
+    haystack = "a" * 20000 + "b"
+    processes = [SimpleNamespace(info={"name": "proc", "cmdline": [haystack]})]
+    monkeypatch.setattr("aacc.adapters.psutil.process_iter", lambda _attrs: processes)
+
+    async def scenario() -> None:
+        start = time.monotonic()
+        detected = await adapter.detect()
+        elapsed = time.monotonic() - start
+        assert detected is False
+        assert elapsed < 5.0
+
+    asyncio.run(scenario())
+
+
+def test_detect_matches_simple_pattern(monkeypatch) -> None:
+    adapter = BaseAgentAdapter(
+        "task-1",
+        AgentConfig(type="generic_cli", process_patterns=[r"codex"]),
+    )
+    processes = [SimpleNamespace(info={"name": "codex", "cmdline": ["serve"]})]
+    monkeypatch.setattr("aacc.adapters.psutil.process_iter", lambda _attrs: processes)
+
+    async def scenario() -> None:
+        assert await adapter.detect() is True
+
+    asyncio.run(scenario())

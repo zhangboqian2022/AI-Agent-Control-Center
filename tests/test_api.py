@@ -1,3 +1,4 @@
+import logging
 import threading
 from pathlib import Path
 
@@ -26,6 +27,56 @@ def auth(token: str) -> dict[str, str]:
 
 def test_status_request_normalizes_unknown_source_to_api() -> None:
     assert StatusRequest(status="running", source="untrusted-adapter").source == "api"
+
+
+def test_status_metadata_bounds_enforced_by_api(tmp_path: Path) -> None:
+    client, token, manager = api_client(tmp_path)
+
+    too_many_keys = {f"k{i}": "v" for i in range(21)}
+    response = client.post(
+        "/api/v1/tasks/task-1/status",
+        headers=auth(token),
+        json={"status": "running", "metadata": too_many_keys},
+    )
+    assert response.status_code == 422
+
+    long_key = {"k" * 65: "v"}
+    response = client.post(
+        "/api/v1/tasks/task-1/status",
+        headers=auth(token),
+        json={"status": "running", "metadata": long_key},
+    )
+    assert response.status_code == 422
+
+    oversized = {"payload": "x" * (9 * 1024)}
+    response = client.post(
+        "/api/v1/tasks/task-1/status",
+        headers=auth(token),
+        json={"status": "running", "metadata": oversized},
+    )
+    assert response.status_code == 422
+
+    within_bounds = client.post(
+        "/api/v1/tasks/task-1/status",
+        headers=auth(token),
+        json={"status": "running", "metadata": {"k": "v"}},
+    )
+    assert within_bounds.status_code == 200
+    manager.close()
+
+
+def test_unknown_source_downgrade_logs_warning(caplog, tmp_path: Path) -> None:
+    client, token, manager = api_client(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="aacc.api"):
+        response = client.post(
+            "/api/v1/tasks/task-1/status",
+            headers=auth(token),
+            json={"status": "running", "source": "untrusted-adapter"},
+        )
+    assert response.status_code == 200
+    assert response.json()["source"] == "api"
+    assert "untrusted-adapter" in caplog.text
+    manager.close()
 
 
 def test_health_is_available_without_token(tmp_path: Path) -> None:
@@ -149,4 +200,54 @@ def test_executor_controller_is_accepted_by_api(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     executor.close()
+    manager.close()
+
+
+def test_send_text_rate_limit_returns_429_and_resets_after_window(tmp_path: Path) -> None:
+    class CountingController:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def focus(self, _task: object) -> str:
+            return "focused"
+
+        send_key = focus
+        start_voice = focus
+
+        def send_text(self, _task: object, _text: str) -> str:
+            self.calls += 1
+            return "sent"
+
+    clock = {"now": 0.0}
+    config = default_config()
+    store = StateStore(tmp_path / "api.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    controller = CountingController()
+    client = TestClient(
+        create_api(
+            config,
+            manager,
+            controller,
+            send_text_rate_limit=10,
+            send_text_rate_window_seconds=10.0,
+            clock=lambda: clock["now"],
+        ),
+        raise_server_exceptions=False,
+    )
+    token = auth(config.app.api.token)
+    statuses = [
+        client.post(
+            "/api/v1/tasks/task-1/send-text", headers=token, json={"text": "hi"}
+        ).status_code
+        for _ in range(11)
+    ]
+    assert statuses.count(200) == 10
+    assert statuses.count(429) == 1
+    assert statuses[-1] == 429
+
+    clock["now"] = 10.5
+    response = client.post("/api/v1/tasks/task-1/send-text", headers=token, json={"text": "hi"})
+    assert response.status_code == 200
+    assert controller.calls == 11
     manager.close()
