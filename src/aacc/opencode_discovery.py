@@ -228,10 +228,7 @@ def evaluate_opencode_session_status(
         return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
     if (
         snapshot.running_at is not None
-        and (
-            snapshot.completed_at is None
-            or snapshot.running_at > snapshot.completed_at
-        )
+        and (snapshot.completed_at is None or snapshot.running_at > snapshot.completed_at)
         and process_alive()
     ):
         # A tool that is still running inside the current step must keep the
