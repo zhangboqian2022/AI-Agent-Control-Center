@@ -5,6 +5,8 @@ import logging
 import threading
 from collections.abc import Callable
 
+import psutil
+
 from aacc.adapters import AdapterRegistry, GenericCLIAdapter
 from aacc.models import AppConfig, TaskConfig, TaskStatus
 from aacc.task_manager import TaskManager
@@ -62,8 +64,21 @@ class AdapterDiscoveryService:
 
     def poll_once(self) -> int:
         changed = 0
+        try:
+            processes: list[psutil.Process] | None = list(psutil.process_iter(["name", "cmdline"]))
+        except (psutil.Error, OSError):
+            processes = None
         for task, adapter in self._adapters:
-            candidate = asyncio.run(adapter.get_status())
+            try:
+                candidate = asyncio.run(adapter.get_status(processes))
+            except Exception:  # noqa: BLE001 - one failing adapter must not stop the round
+                _logger.warning(
+                    "Adapter poll failed for task %s (%s)",
+                    task.id,
+                    adapter.display_name,
+                    exc_info=True,
+                )
+                continue
             current = self.manager.get(task.id)
             if candidate.status is TaskStatus.STOPPED and current.status not in _ACTIVE:
                 continue

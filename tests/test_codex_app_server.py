@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import queue
 import subprocess
 import sys
@@ -845,6 +846,70 @@ time.sleep(10)
     assert snapshot.status is CodexQuotaStatus.UNKNOWN
     assert children
     assert children[0].poll() is not None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        import os
+
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups only")
+def test_reader_reap_kills_the_spawned_process_group(tmp_path: Path) -> None:
+    spawner = tmp_path / "spawner.py"
+    spawner.write_text(
+        "import signal, subprocess, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "child = subprocess.Popen(\n"
+        "    [sys.executable, '-c', 'import signal, time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)']\n"
+        ")\n"
+        "print(child.pid, flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    reader = CodexAppServerReader(tmp_path / "codex", platform="darwin")
+    process = subprocess.Popen(
+        [sys.executable, str(spawner)],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    grandchild_pid = int(process.stdout.readline())
+
+    reader._reap(process)
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if not _pid_alive(process.pid) and not _pid_alive(grandchild_pid):
+            break
+        time.sleep(0.05)
+    assert not _pid_alive(process.pid)
+    assert not _pid_alive(grandchild_pid)
+
+
+def test_posix_reader_spawns_app_server_in_its_own_session(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX sessions only")
+    popen_kwargs: dict[str, object] = {}
+
+    def popen(args: tuple[str, ...], **kwargs: object) -> subprocess.Popen[str]:
+        popen_kwargs.update(kwargs)
+        return subprocess.Popen(args, **kwargs)
+
+    reader = CodexAppServerReader(
+        tmp_path / "codex",
+        timeout_seconds=0.05,
+        popen=popen,
+        platform="darwin",
+    )
+    reader.read_latest()
+
+    assert popen_kwargs["start_new_session"] is True
 
 
 @pytest.mark.parametrize(

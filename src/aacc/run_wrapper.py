@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import subprocess
 import sys
 import threading
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -14,12 +16,26 @@ from aacc.config import load_config
 from aacc.constants import DEFAULT_CONFIG_PATH, local_api_url
 
 
+def _signal_process_group(process: subprocess.Popen[bytes], sig: int) -> None:
+    """Signal the spawned process group on POSIX, falling back to the child."""
+    if os.name == "posix":
+        try:
+            os.killpg(os.getpgid(process.pid), sig)
+            return
+        except (AttributeError, OSError, ValueError):
+            pass
+    if sig == signal.SIGTERM:
+        process.terminate()
+    else:
+        process.kill()
+
+
 def terminate_process(process: subprocess.Popen[bytes], timeout: float = 3.0) -> None:
-    process.terminate()
+    _signal_process_group(process, signal.SIGTERM)
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
+        _signal_process_group(process, signal.SIGKILL)
         process.wait()
 
 
@@ -72,7 +88,10 @@ def main(argv: list[str] | None = None) -> int:
     }
     process: subprocess.Popen[bytes] | None = None
     try:
-        process = subprocess.Popen(command, shell=False)
+        popen_options: dict[str, Any] = {"shell": False}
+        if os.name == "posix":
+            popen_options["start_new_session"] = True
+        process = subprocess.Popen(command, **popen_options)
         _status(args.config, args.task, "running", f"{command[0]} 正在运行", process.pid)
         while True:
             return_code = process.poll()

@@ -1,5 +1,10 @@
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 import aacc.run_wrapper as wrapper_module
 from aacc.config import default_config
@@ -26,20 +31,90 @@ class FakeProcess:
         return -15
 
 
-def test_terminate_process_waits_for_cooperative_exit() -> None:
+def _noop_group_signal(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    signals: list[int] = []
+    monkeypatch.setattr(
+        wrapper_module, "_signal_process_group", lambda _process, sig: signals.append(sig)
+    )
+    return signals
+
+
+def test_terminate_process_waits_for_cooperative_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     process = FakeProcess()
+    signals = _noop_group_signal(monkeypatch)
     terminate_process(process, timeout=3.0)  # type: ignore[arg-type]
+    assert process.waits == [3.0]
+    assert signals == [signal.SIGTERM]
+
+
+def test_terminate_process_kills_and_reaps_after_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = FakeProcess(timeout=True)
+    signals = _noop_group_signal(monkeypatch)
+    terminate_process(process, timeout=3.0)  # type: ignore[arg-type]
+    assert process.waits == [3.0, None]
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+
+
+def test_signal_process_group_falls_back_to_direct_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = FakeProcess()
+    process.pid = 4242
+    monkeypatch.setattr(
+        wrapper_module.os, "killpg", lambda _pgid, _sig: (_ for _ in ()).throw(OSError())
+    )
+
+    wrapper_module._signal_process_group(process, signal.SIGTERM)
+
     assert process.terminated
     assert not process.killed
-    assert process.waits == [3.0]
 
 
-def test_terminate_process_kills_and_reaps_after_timeout() -> None:
-    process = FakeProcess(timeout=True)
-    terminate_process(process, timeout=3.0)  # type: ignore[arg-type]
-    assert process.terminated
-    assert process.killed
-    assert process.waits == [3.0, None]
+def _pid_alive(pid: int) -> bool:
+    try:
+        import os
+
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups only")
+def test_terminate_process_reaps_the_spawned_process_group(tmp_path: Path) -> None:
+    spawner = tmp_path / "spawner.py"
+    spawner.write_text(
+        "import signal, subprocess, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "child = subprocess.Popen(\n"
+        "    [sys.executable, '-c', 'import signal, time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)']\n"
+        ")\n"
+        "print(child.pid, flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    parent = subprocess.Popen(
+        [sys.executable, str(spawner)],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    grandchild_pid = int(parent.stdout.readline())
+
+    terminate_process(parent)
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if not _pid_alive(parent.pid) and not _pid_alive(grandchild_pid):
+            break
+        time.sleep(0.05)
+    assert not _pid_alive(parent.pid)
+    assert not _pid_alive(grandchild_pid)
 
 
 def test_status_does_not_use_proxy_environment(monkeypatch: object, tmp_path: Path) -> None:

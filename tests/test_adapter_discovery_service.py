@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import psutil
+
 from aacc.adapter_discovery_service import AdapterDiscoveryService
 from aacc.models import AgentConfig, AppConfig, TaskConfig, TaskState, TaskStatus
 from aacc.persistence import StateStore
@@ -14,7 +16,7 @@ class FakeAdapter:
         self.task_id = task_id
         self.status = status
 
-    async def get_status(self) -> TaskState:
+    async def get_status(self, _processes: object = None) -> TaskState:
         await asyncio.sleep(0)
         return TaskState.new(self.task_id, self.status, source="process", confidence=0.55)
 
@@ -92,6 +94,80 @@ def test_adapter_service_swallows_adapter_poll_failure(tmp_path: Path, monkeypat
     monkeypatch.setattr(service, "poll_once", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
 
     assert service.poll_safely() == 0
+    manager.close()
+
+
+def test_adapter_exception_does_not_block_other_adapters(tmp_path: Path) -> None:
+    failing = TaskConfig(
+        id="claude-1",
+        slot=1,
+        name="Claude",
+        agent=AgentConfig(type="claude_code"),
+    )
+    working = TaskConfig(
+        id="z-1",
+        slot=2,
+        name="Z",
+        agent=AgentConfig(type="z_code"),
+    )
+    config = AppConfig(tasks=[failing, working])
+    store = StateStore(tmp_path / "aacc.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+
+    class RaisingAdapter:
+        task_id = failing.id
+        display_name = "Failing"
+
+        async def get_status(self, _processes: object = None) -> TaskState:
+            raise RuntimeError("boom")
+
+    class WorkingAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__(working.id, TaskStatus.RUNNING)
+
+    service = AdapterDiscoveryService(
+        manager,
+        config=config,
+        adapter_factory=lambda task: (
+            RaisingAdapter() if task.id == failing.id else WorkingAdapter()
+        ),
+    )
+
+    assert service.poll_once() == 1
+    assert manager.get(failing.id).status is TaskStatus.IDLE
+    assert manager.get(working.id).status is TaskStatus.RUNNING
+    manager.close()
+
+
+def test_process_snapshot_is_captured_once_per_round(tmp_path: Path, monkeypatch: object) -> None:
+    claude = TaskConfig(
+        id="claude-1",
+        slot=1,
+        name="Claude",
+        agent=AgentConfig(type="claude_code"),
+    )
+    zcode = TaskConfig(
+        id="z-1",
+        slot=2,
+        name="Z",
+        agent=AgentConfig(type="z_code"),
+    )
+    config = AppConfig(tasks=[claude, zcode])
+    store = StateStore(tmp_path / "aacc.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    service = AdapterDiscoveryService(
+        manager,
+        config=config,
+        adapter_factory=lambda _task: FakeAdapter("task", TaskStatus.STOPPED),
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(psutil, "process_iter", lambda _attrs: calls.append(_attrs) or [])
+
+    service.poll_once()
+
+    assert len(calls) == 1
     manager.close()
 
 

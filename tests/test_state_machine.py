@@ -66,6 +66,24 @@ def test_stale_state_can_be_replaced_by_lower_confidence_warning() -> None:
     assert StateMachine.accept(current, candidate)
 
 
+def test_fresh_same_source_very_low_confidence_candidate_is_rejected() -> None:
+    current = state(TaskStatus.RUNNING, "process", 0.95, age=1)
+    candidate = state(TaskStatus.RUNNING, "process", 0.10)
+    assert not StateMachine.accept(current, candidate)
+
+
+def test_fresh_same_source_close_confidence_candidate_is_accepted() -> None:
+    current = state(TaskStatus.RUNNING, "process", 0.95, age=1)
+    candidate = state(TaskStatus.RUNNING, "process", 0.90)
+    assert StateMachine.accept(current, candidate)
+
+
+def test_stale_same_source_low_confidence_candidate_is_accepted() -> None:
+    current = state(TaskStatus.RUNNING, "process", 0.95, age=301)
+    candidate = state(TaskStatus.RUNNING, "process", 0.10)
+    assert StateMachine.accept(current, candidate)
+
+
 def test_terminal_state_restarts_on_explicit_starting_update() -> None:
     current = state(TaskStatus.COMPLETED, "api", 1.0)
     candidate = state(TaskStatus.STARTING, "wrapper", 0.9)
