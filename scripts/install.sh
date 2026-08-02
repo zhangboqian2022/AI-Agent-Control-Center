@@ -29,21 +29,26 @@ elif [[ ! -d "$project_root/dist/AACC.app" ]]; then
   exit 1
 fi
 
-mkdir -p "$runtime_root"
-rm -rf "$runtime_venv" "$runtime_root/wheels"
-uv venv "$runtime_venv"
-uv build --wheel --out-dir "$runtime_root/wheels"
+staging_root="$(mktemp -d -t aacc-runtime.XXXXXX)"
+trap 'rm -rf "$staging_root"' EXIT
+uv build --wheel --out-dir "$staging_root/wheels"
 uv export --locked --no-dev --no-emit-project \
-  --output-file "$runtime_root/requirements.lock" --quiet
+  --output-file "$staging_root/requirements.lock" --quiet
 app_version="$(uv version --short)"
-wheels=("$runtime_root"/wheels/aacc_control_center-"$app_version"-*.whl)
+wheels=("$staging_root"/wheels/aacc_control_center-"$app_version"-*.whl)
 if [[ ! -f "${wheels[0]}" ]]; then
   echo "错误：未生成 AACC runtime wheel" >&2
   exit 1
 fi
-uv pip install --python "$runtime_venv/bin/python" \
-  --requirements "$runtime_root/requirements.lock"
-uv pip install --python "$runtime_venv/bin/python" "${wheels[0]}" --no-deps
+uv venv "$staging_root/.venv"
+uv pip install --python "$staging_root/.venv/bin/python" \
+  --requirements "$staging_root/requirements.lock"
+uv pip install --python "$staging_root/.venv/bin/python" "${wheels[0]}" --no-deps
+mkdir -p "$runtime_root"
+rm -rf "$runtime_venv" "$runtime_root/wheels"
+mv "$staging_root/.venv" "$runtime_venv"
+mv "$staging_root/wheels" "$runtime_root/wheels"
+mv "$staging_root/requirements.lock" "$runtime_root/requirements.lock"
 
 mkdir -p "$user_apps" "$user_bin"
 # 覆盖安装前无条件退出正在运行的旧实例（即使目标目录当前不存在）

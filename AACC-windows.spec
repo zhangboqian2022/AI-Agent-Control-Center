@@ -2,7 +2,7 @@
 import os
 import sys
 
-ROOT = os.path.abspath(os.getcwd())
+ROOT = os.path.abspath(os.path.dirname(os.path.abspath(SPEC)))
 PYWIN32_SYSTEM32 = os.path.join(
     sys.prefix,
     'Lib',
