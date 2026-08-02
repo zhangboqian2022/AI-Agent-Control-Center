@@ -55,13 +55,11 @@ class StateMachine:
                 )
             return candidate.updated_at > current.updated_at
         age = (datetime.now(UTC) - current.updated_at).total_seconds()
-        same_source_newer_state = (
-            current.source == candidate.source and candidate.updated_at > current.updated_at
-        )
+        same_source = current.source == candidate.source
         if (
             candidate.confidence < current.confidence
             and age <= cls.STALE_SECONDS
-            and not same_source_newer_state
+            and not (same_source and candidate.confidence >= current.confidence - 0.2)
         ):
             return False
         return candidate.updated_at >= current.updated_at

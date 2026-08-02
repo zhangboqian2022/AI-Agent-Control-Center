@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from typing import cast
 
 import psutil
@@ -38,12 +38,14 @@ class BaseAgentAdapter:
         self._connected = False
         self._events: asyncio.Queue[TaskState | object] = asyncio.Queue()
 
-    async def detect(self) -> bool:
+    async def detect(self, processes: Iterable[psutil.Process] | None = None) -> bool:
         patterns = self.config.process_patterns + self.config.executable_patterns
         if not patterns:
             return False
         compiled = [safe_regex.compile(pattern, safe_regex.IGNORECASE) for pattern in patterns]
-        for process in psutil.process_iter(["name", "cmdline"]):
+        if processes is None:
+            processes = psutil.process_iter(["name", "cmdline"])
+        for process in processes:
             try:
                 info = process.info
                 haystack = " ".join([info.get("name") or "", *(info.get("cmdline") or [])])
@@ -73,8 +75,8 @@ class BaseAgentAdapter:
                 return
             yield cast(TaskState, event)
 
-    async def get_status(self) -> TaskState:
-        detected = await self.detect()
+    async def get_status(self, processes: Iterable[psutil.Process] | None = None) -> TaskState:
+        detected = await self.detect(processes)
         status = TaskStatus.RUNNING if detected else TaskStatus.STOPPED
         return TaskState.new(self.task_id, status, source="process", confidence=0.55)
 

@@ -5,6 +5,7 @@ import logging
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -43,6 +44,20 @@ RunningDesktopLocator = Callable[[], Path | None]
 QuotaReaderFactory = Callable[[Path], CodexQuotaReaderLike]
 
 _logger = logging.getLogger("aacc.codex_quota")
+
+
+def _signal_process_group(process: subprocess.Popen[str], sig: int) -> None:
+    """Signal the spawned process group on POSIX, falling back to the child."""
+    if os.name == "posix":
+        try:
+            os.killpg(os.getpgid(process.pid), sig)
+            return
+        except (AttributeError, OSError, ValueError):
+            pass
+    if sig == signal.SIGTERM:
+        process.terminate()
+    else:
+        process.kill()
 
 
 def _is_regular_file(path: Path) -> bool:
@@ -254,6 +269,8 @@ class CodexAppServerReader:
                 "errors": "replace",
                 "bufsize": 1,
             }
+            if os.name == "posix":
+                popen_options["start_new_session"] = True
             try:
                 command = self._process_command()
             except Exception:
@@ -392,13 +409,13 @@ class CodexAppServerReader:
         except OSError:
             is_running = False
         if is_running:
-            with suppress(OSError):
-                process.terminate()
+            with suppress(OSError, AttributeError):
+                _signal_process_group(process, signal.SIGTERM)
         try:
             process.wait(timeout=0.5)
         except subprocess.TimeoutExpired:
-            with suppress(OSError):
-                process.kill()
+            with suppress(OSError, AttributeError):
+                _signal_process_group(process, signal.SIGKILL)
             with suppress(OSError, subprocess.TimeoutExpired):
                 process.wait(timeout=0.5)
         except OSError:
