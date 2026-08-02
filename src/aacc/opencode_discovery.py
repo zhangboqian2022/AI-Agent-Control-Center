@@ -170,6 +170,8 @@ class OpenCodePartSnapshot:
     time_updated: datetime | None
     completed_at: datetime | None = None
     step_started_at: datetime | None = None
+    running_at: datetime | None = None
+    pending_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -223,6 +225,18 @@ def evaluate_opencode_session_status(
         return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, snapshot.time_updated)
     active = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
     if snapshot.part_type in _STREAMING_PART_TYPES and active:
+        return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
+    if (
+        snapshot.running_at is not None
+        and (
+            snapshot.completed_at is None
+            or snapshot.running_at > snapshot.completed_at
+        )
+        and process_alive()
+    ):
+        # A tool that is still running inside the current step must keep the
+        # session running even when a slightly newer text part shadows the
+        # tool part in the "latest part" ordering.
         return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
     if process_alive():
         return OpenCodeSessionStatus(
@@ -414,6 +428,9 @@ class OpenCodeLocalDiscovery:
                         continue
                     step_started_at: datetime | None = None
                     completed_at: datetime | None = None
+                    running_at: datetime | None = None
+                    pending_at: datetime | None = None
+                    in_current_step = True
                     for candidate_type, candidate_status, raw_updated in rows:
                         if not isinstance(candidate_type, str):
                             continue
@@ -423,11 +440,31 @@ class OpenCodeLocalDiscovery:
                                 (step_started_at or datetime.min.replace(tzinfo=UTC)),
                                 updated_at,
                             )
-                        if candidate_type == "step-finish" or (
+                        is_step_end = candidate_type == "step-finish" or (
                             candidate_type == "tool" and candidate_status == "completed"
-                        ):
+                        )
+                        if is_step_end:
                             completed_at = max(
                                 (completed_at or datetime.min.replace(tzinfo=UTC)),
+                                updated_at,
+                            )
+                            in_current_step = False
+                            continue
+                        if not in_current_step:
+                            continue
+                        candidate_state = (
+                            candidate_status.casefold()
+                            if isinstance(candidate_status, str)
+                            else None
+                        )
+                        if candidate_type == "tool" and candidate_state == "running":
+                            running_at = max(
+                                (running_at or datetime.min.replace(tzinfo=UTC)),
+                                updated_at,
+                            )
+                        if candidate_type == "tool" and candidate_state == "pending":
+                            pending_at = max(
+                                (pending_at or datetime.min.replace(tzinfo=UTC)),
                                 updated_at,
                             )
                     snapshots[session_id] = OpenCodePartSnapshot(
@@ -436,6 +473,8 @@ class OpenCodeLocalDiscovery:
                         time_updated=_epoch_ms_to_datetime(latest_updated),
                         completed_at=completed_at,
                         step_started_at=step_started_at,
+                        running_at=running_at,
+                        pending_at=pending_at,
                     )
             finally:
                 connection.close()
