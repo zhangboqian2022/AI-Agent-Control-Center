@@ -35,12 +35,20 @@ def test_parse_full_payload_ok() -> None:
     assert quota.monthly is not None and quota.monthly.percentage == 100
 
 
-def test_parse_fraction_percent_scaled() -> None:
+def test_one_percent_is_not_scaled_to_100() -> None:
+    quota = parse_opencode_quota(
+        {"subscription": {"rollingUsage": {"usagePercent": 1, "resetInSec": 60}}},
+        now=_now(),
+    )
+    assert quota.rolling is not None and quota.rolling.percentage == 1
+
+
+def test_fractional_percent_is_rounded_not_scaled() -> None:
     quota = parse_opencode_quota(
         {"subscription": {"rollingUsage": {"usagePercent": 0.42, "resetInSec": 60}}},
         now=_now(),
     )
-    assert quota.rolling is not None and quota.rolling.percentage == 42
+    assert quota.rolling is not None and quota.rolling.percentage == 0
 
 
 def test_parse_partial_when_window_missing() -> None:
