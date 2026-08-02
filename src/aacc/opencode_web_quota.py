@@ -49,8 +49,6 @@ def _percentage(value: object) -> int | None:
     number = _number(value)
     if number is None or number < 0:
         return None
-    if number <= 1:
-        number *= 100
     if number > 100:
         return None
     return math.floor(number + 0.5)
