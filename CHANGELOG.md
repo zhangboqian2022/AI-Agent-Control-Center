@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.4-rc.3 — 2026-08-03
+
+[Bilingual release notes](docs/release-notes-1.4.4rc3.md)
+
+- [Fix] OpenCode cards no longer report a false yellow "waiting for approval": a `pending` tool part only means the call was created but not started (arguments may still be streaming), and opencode does not persist permission requests, so pending is never inferred as an approval wait. Fresh pending parts report running; stale pending parts resolve through the generic stalled-session path (waiting input while the process lives, stopped after exit). This also removes the 0.97-confidence latch that suppressed the blue running state for up to 300 seconds after work resumed.
+
 ## 1.4.4-rc.2 — 2026-08-02
 
 [Bilingual release notes](docs/release-notes-1.4.4rc2.md)
