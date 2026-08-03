@@ -85,12 +85,14 @@ class LocalDiscoveryService[SessionT]:
         thread_name: str,
         error_type: type[Exception],
         brand: str,
+        state_source: str,
     ) -> None:
         self.manager = manager
         self.discovery = discovery
         self.interval_seconds = max(0.5, interval_seconds)
         self._error_type = error_type
         self._brand = brand
+        self._state_source = state_source
         self._manual_ids: set[str] = set()
         self._retained_ids: set[str] = set()
         self._muted_ids: set[str] = set()
@@ -116,6 +118,13 @@ class LocalDiscoveryService[SessionT]:
         tasks = self.discovery.discover(selected_ids)
         for task in tasks:
             self.manager.register(task.config, task.state)
+        self.manager.expire_stale_discovered(
+            source=self._state_source,
+            seen_session_ids={
+                task.state.session_id for task in tasks if task.state.session_id is not None
+            },
+            now=datetime.now(UTC),
+        )
         return len(tasks)
 
     def set_selected_ids(self, selected_ids: set[str]) -> None:
@@ -268,6 +277,7 @@ class CodexDiscoveryService(LocalDiscoveryService[CodexSession]):
             thread_name="aacc-codex-discovery",
             error_type=CodexDiscoveryError,
             brand="Codex",
+            state_source="codex_local",
         )
 
 
@@ -288,6 +298,7 @@ class KimiDiscoveryService(LocalDiscoveryService[KimiSession]):
             thread_name="aacc-kimi-discovery",
             error_type=KimiDiscoveryError,
             brand="Kimi",
+            state_source="kimi_local",
         )
 
 
@@ -308,6 +319,7 @@ class KimiDesktopDiscoveryService(LocalDiscoveryService[KimiDesktopSession]):
             thread_name="aacc-kimi-desktop-discovery",
             error_type=KimiDesktopDiscoveryError,
             brand="Kimi Desktop",
+            state_source="kimi_desktop_local",
         )
 
 
@@ -328,4 +340,5 @@ class OpenCodeDiscoveryService(LocalDiscoveryService[OpenCodeSession]):
             thread_name="aacc-opencode-discovery",
             error_type=OpenCodeDiscoveryError,
             brand="OpenCode",
+            state_source="opencode_local",
         )

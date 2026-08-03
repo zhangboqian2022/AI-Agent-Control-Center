@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -89,6 +89,59 @@ def test_runtime_task_registration_persists_state_and_notifies(tmp_path: Path) -
     assert service.get(task.id).status is TaskStatus.RUNNING
     assert saved.task_id == task.id
     assert seen == [task.id]
+    service.close()
+
+
+def _run_state(task_id: str, session_id: str, updated_at: datetime, source: str) -> TaskState:
+    return TaskState.new(task_id, "running", source=source, confidence=0.9).model_copy(
+        update={"updated_at": updated_at, "session_id": session_id}
+    )
+
+
+def test_expire_stale_discovered_run_states(tmp_path: Path) -> None:
+    service = manager(tmp_path)
+    old_at = datetime.now(UTC) - timedelta(hours=2)
+    fresh_at = datetime.now(UTC) - timedelta(minutes=10)
+    configs = {
+        suffix: TaskConfig(
+            id=f"codex:{suffix}",
+            slot=slot,
+            name=f"任务{suffix}",
+            agent=AgentConfig(type="codex_cli"),
+        )
+        for slot, suffix in enumerate(("stale", "fresh", "seen", "done", "manual"), start=5)
+    }
+    service.register(
+        configs["stale"], _run_state("codex:stale", "stale-session", old_at, "codex_local")
+    )
+    service.register(
+        configs["fresh"], _run_state("codex:fresh", "fresh-session", fresh_at, "codex_local")
+    )
+    service.register(
+        configs["seen"], _run_state("codex:seen", "seen-session", old_at, "codex_local")
+    )
+    service.register(
+        configs["done"],
+        TaskState.new("codex:done", "completed", source="codex_local", confidence=0.96).model_copy(
+            update={"updated_at": old_at, "session_id": "done-session"}
+        ),
+    )
+    service.register(configs["manual"], _run_state("codex:manual", "manual-session", old_at, "api"))
+
+    expired = service.expire_stale_discovered(
+        source="codex_local",
+        seen_session_ids={"seen-session"},
+        now=datetime.now(UTC),
+    )
+
+    assert expired == 1
+    stale_state = service.get("codex:stale")
+    assert stale_state.status is TaskStatus.UNKNOWN
+    assert stale_state.message == "长时间未更新"
+    assert service.get("codex:fresh").status is TaskStatus.RUNNING
+    assert service.get("codex:seen").status is TaskStatus.RUNNING
+    assert service.get("codex:done").status is TaskStatus.COMPLETED
+    assert service.get("codex:manual").status is TaskStatus.RUNNING
     service.close()
 
 

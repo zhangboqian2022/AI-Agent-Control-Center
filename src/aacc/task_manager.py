@@ -4,6 +4,7 @@ import builtins
 import logging
 import threading
 from collections.abc import Callable
+from datetime import datetime
 
 from aacc.models import AppConfig, TaskConfig, TaskState, TaskStatus
 from aacc.persistence import StateStore
@@ -12,6 +13,8 @@ from aacc.state_machine import StateMachine
 Subscriber = Callable[[TaskState], None]
 
 _logger = logging.getLogger("aacc.tasks")
+
+DISCOVERED_RUN_STATE_TTL_SECONDS = 3600.0
 
 
 def _notify(subscribers: tuple[Subscriber, ...], state: TaskState) -> None:
@@ -94,6 +97,47 @@ class TaskManager:
         return self.update(
             TaskState.new(task_id, TaskStatus.IDLE, message="已重置", source="manual")
         )
+
+    def expire_stale_discovered(
+        self,
+        *,
+        source: str,
+        seen_session_ids: set[str],
+        now: datetime,
+        ttl_seconds: float = DISCOVERED_RUN_STATE_TTL_SECONDS,
+    ) -> int:
+        """Expire discovered run-states that no poll round has refreshed.
+
+        Sessions outside the discovery window (unselected or beyond the result
+        limit) never receive fresh candidates, so a stale RUNNING/WAITING state
+        would persist forever. Anything genuinely active heartbeats at least
+        once a minute, so a run-state older than the TTL is a lie and is
+        normalized to UNKNOWN through the regular state machine.
+        """
+        expired = 0
+        for state in self.list():
+            if state.source != source:
+                continue
+            if state.session_id is None or state.session_id in seen_session_ids:
+                continue
+            if state.status not in StateMachine.RUN_STATES:
+                continue
+            if (now - state.updated_at).total_seconds() <= ttl_seconds:
+                continue
+            candidate = state.model_copy(
+                update={
+                    "status": TaskStatus.UNKNOWN,
+                    "message": "长时间未更新",
+                    "confidence": 0.55,
+                    "updated_at": now,
+                    "started_at": None,
+                    "finished_at": None,
+                    "pid": None,
+                }
+            )
+            self.update(candidate)
+            expired += 1
+        return expired
 
     def history(self, task_id: str, limit: int = 100) -> builtins.list[TaskState]:
         self.task_config(task_id)
