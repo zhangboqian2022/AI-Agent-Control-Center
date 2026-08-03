@@ -322,6 +322,59 @@ def test_completed_turn_is_reported_as_completed(tmp_path: Path) -> None:
     assert tasks[0].state.started_at is None
 
 
+def test_completed_turn_with_live_process_is_idle(tmp_path: Path) -> None:
+    # 回合完成但 Kimi 进程仍在（会话还在继续）：卡片应为灰色空闲，
+    # 绿色"回合已完成"只留给进程退出后的终态。
+    home = tmp_path / ".kimi-code"
+    session_id = "session_idle-0012"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="回合间", updated_at="2026-07-18T11:00:00Z")
+    _write_wire_events(
+        session_dir,
+        [
+            {"type": "turn.prompt"},
+            {"type": "usage.record", "usageScope": "turn"},
+        ],
+    )
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": RECENT}),
+        agent_process_alive=lambda: True,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.IDLE
+    assert tasks[0].state.message == "空闲"
+
+
+def test_new_turn_activity_after_idle_returns_to_running(tmp_path: Path) -> None:
+    # 回合间灰灯之后，新一轮活动必须立即恢复蓝灯（0.9 置信度不被状态机压制）。
+    home = tmp_path / ".kimi-code"
+    session_id = "session_resume-0013"
+    _write_index(home, [_index_line(home, session_id)])
+    session_dir = _session_dir(home, "proj", session_id)
+    _write_state(session_dir, title="继续", updated_at="2026-07-18T11:00:00Z")
+    _write_wire_events(
+        session_dir,
+        [
+            {"type": "usage.record", "usageScope": "turn"},
+            {"type": "turn.prompt"},
+            {"type": "llm.request"},
+        ],
+    )
+
+    tasks = KimiLocalDiscovery(
+        home,
+        now=lambda: NOW,
+        file_modified_at=_mtime_map({"wire.jsonl": RECENT}),
+        agent_process_alive=lambda: True,
+    ).discover()
+
+    assert tasks[0].state.status is TaskStatus.RUNNING
+
+
 def test_new_turn_activity_after_completion_is_running(tmp_path: Path) -> None:
     home = tmp_path / ".kimi-code"
     session_id = "session_again-0007"
