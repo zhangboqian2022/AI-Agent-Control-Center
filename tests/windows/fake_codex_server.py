@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +79,9 @@ def main() -> int:
                     "primary": {
                         "usedPercent": 17,
                         "windowDurationMins": 10080,
-                        "resetsAt": 1785747600,
+                        # resetsAt must stay in the future or the parser rejects
+                        # the window as expired; never hardcode an epoch here.
+                        "resetsAt": int(time.time()) + 7 * 24 * 3600,
                     },
                 }
             }
