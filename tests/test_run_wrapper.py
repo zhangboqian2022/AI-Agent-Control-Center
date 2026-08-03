@@ -56,9 +56,10 @@ def test_terminate_process_kills_and_reaps_after_timeout(
     signals = _noop_group_signal(monkeypatch)
     terminate_process(process, timeout=3.0)  # type: ignore[arg-type]
     assert process.waits == [3.0, None]
-    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert signals == [signal.SIGTERM, wrapper_module._SIGKILL]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups only")
 def test_signal_process_group_falls_back_to_direct_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
