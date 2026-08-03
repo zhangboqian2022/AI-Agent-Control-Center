@@ -104,7 +104,8 @@ def main() -> int:
         if snapshot.status is not CodexQuotaStatus.OK:
             raise RuntimeError(
                 "normal packaged broker probe failed: "
-                f"status={snapshot.status} message={snapshot.message!r}"
+                f"status={snapshot.status} plan_type={snapshot.plan_type} "
+                f"weekly={snapshot.weekly} observed_at={snapshot.observed_at}"
             )
         marker = json.loads(arguments.marker.read_text(encoding="utf-8"))
         _wait_identity_gone(marker)
