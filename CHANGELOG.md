@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.4-rc.6 — 2026-08-03
+
+[Bilingual release notes](docs/release-notes-1.4.4rc6.md)
+
+- [Fix] Stale-state expiry now covers app restarts: rc.5 scanned only the in-memory task table, so zombie run-states whose sessions are no longer discovered (and therefore never re-registered after a restart) still escaped expiry. The sweep now reads persisted states straight from the store and normalizes them through the state machine, notifying subscribers the same way.
+
 ## 1.4.4-rc.5 — 2026-08-03
 
 [Bilingual release notes](docs/release-notes-1.4.4rc5.md)
