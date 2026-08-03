@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -12,6 +13,12 @@ import psutil
 from aacc.codex_app_server import CodexAppServerReader
 from aacc.codex_quota import CodexQuotaStatus
 from aacc.windows_broker import build_broker_command
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(name)s %(levelname)s %(message)s",
+    stream=sys.stderr,
+)
 
 
 def _identity_alive(record: dict[str, object]) -> bool:
@@ -95,7 +102,10 @@ def main() -> int:
             10.0,
         ).read_latest()
         if snapshot.status is not CodexQuotaStatus.OK:
-            raise RuntimeError("normal packaged broker probe failed")
+            raise RuntimeError(
+                "normal packaged broker probe failed: "
+                f"status={snapshot.status} message={snapshot.message!r}"
+            )
         marker = json.loads(arguments.marker.read_text(encoding="utf-8"))
         _wait_identity_gone(marker)
         if _broker_identities(arguments.broker) != baseline:
