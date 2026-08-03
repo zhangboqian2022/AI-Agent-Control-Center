@@ -2,6 +2,13 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.4-rc.4 — 2026-08-03
+
+[Bilingual release notes](docs/release-notes-1.4.4rc4.md)
+
+- [Fix] Codex Desktop subagent threads (rollouts whose session metadata marks `source.subagent.thread_spawn`, forked inside a parent conversation) no longer surface as separate task cards in the panel or the task picker; only the parent conversation is discovered. User-visible forks with a plain string `source` are kept.
+- [Fix] Kimi CLI cards no longer turn green between turns of an ongoing conversation: a finished turn now reports idle (grey) while the Kimi process lives, and green "turn completed" is reserved for process exit. Kimi Desktop task monitoring keeps per-turn completion (green at turn end).
+
 ## 1.4.4-rc.3 — 2026-08-03
 
 [Bilingual release notes](docs/release-notes-1.4.4rc3.md)

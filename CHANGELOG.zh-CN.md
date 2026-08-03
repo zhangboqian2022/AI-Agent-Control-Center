@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.4.4-rc.4 — 2026-08-03
+
+[中英文发布说明](docs/release-notes-1.4.4rc4.md)
+
+- [修复] Codex Desktop 派生的 subagent 线程（会话元数据带 `source.subagent.thread_spawn`、从主会话内部分叉的 rollout）不再在面板和任务选择器中各自成卡，只发现主会话；`source` 为纯字符串的用户可见分叉会话保留。
+- [修复] Kimi CLI 卡片不再在持续会话的回合间隙变绿：回合完成且 Kimi 进程仍在时显示灰色"空闲"，绿色"回合已完成"只留给进程退出后的终态。Kimi Desktop 任务监控保持按回合完成（回合结束即绿）。
+
 ## 1.4.4-rc.3 — 2026-08-03
 
 [中英文发布说明](docs/release-notes-1.4.4rc3.md)
