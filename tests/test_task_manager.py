@@ -145,6 +145,39 @@ def test_expire_stale_discovered_run_states(tmp_path: Path) -> None:
     service.close()
 
 
+def test_expire_stale_discovered_survives_restart(tmp_path: Path) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "state.db")
+    store.initialize(config.tasks)
+    first = TaskManager(config, store)
+    old_at = datetime.now(UTC) - timedelta(hours=2)
+    task = TaskConfig(
+        id="codex:zombie",
+        slot=9,
+        name="残留的 Codex 会话",
+        agent=AgentConfig(type="codex_cli"),
+    )
+    first.register(task, _run_state("codex:zombie", "zombie-session", old_at, "codex_local"))
+    first.close()
+
+    # 应用重启后内存任务表只剩 YAML 配置，僵尸状态只存在于 SQLite
+    restarted_store = StateStore(tmp_path / "state.db")
+    restarted_store.initialize(config.tasks)
+    restarted = TaskManager(config, restarted_store)
+
+    expired = restarted.expire_stale_discovered(
+        source="codex_local",
+        seen_session_ids=set(),
+        now=datetime.now(UTC),
+    )
+
+    assert expired == 1
+    zombie = restarted_store.get("codex:zombie")
+    assert zombie.status is TaskStatus.UNKNOWN
+    assert zombie.message == "长时间未更新"
+    restarted.close()
+
+
 def test_repeated_runtime_registration_does_not_reinitialize_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
