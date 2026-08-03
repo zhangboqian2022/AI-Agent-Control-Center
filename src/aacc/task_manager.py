@@ -113,9 +113,13 @@ class TaskManager:
         would persist forever. Anything genuinely active heartbeats at least
         once a minute, so a run-state older than the TTL is a lie and is
         normalized to UNKNOWN through the regular state machine.
+
+        States are read from the store rather than the in-memory task table:
+        after an app restart the zombie's task config is gone from memory but
+        its persisted run-state is exactly what must expire.
         """
         expired = 0
-        for state in self.list():
+        for state in self.store.list():
             if state.source != source:
                 continue
             if state.session_id is None or state.session_id in seen_session_ids:
@@ -135,7 +139,13 @@ class TaskManager:
                     "pid": None,
                 }
             )
-            self.update(candidate)
+            transitioned = StateMachine.transition(state, candidate)
+            if transitioned is None:
+                continue
+            saved = self.store.update(transitioned)
+            with self._lock:
+                subscribers = tuple(self._subscribers)
+            _notify(subscribers, saved)
             expired += 1
         return expired
 
