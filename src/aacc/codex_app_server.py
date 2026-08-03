@@ -287,6 +287,7 @@ class CodexAppServerReader:
                 **popen_options,
             )
             if process.stdin is None or process.stdout is None:
+                _logger.debug("Codex app-server pipes unavailable")
                 return self._unknown()
             reader_thread = threading.Thread(
                 target=self._read_stdout,
@@ -308,6 +309,7 @@ class CodexAppServerReader:
             )
             initialized = self._wait_for_response(output, request_id=1, deadline=deadline)
             if initialized is None:
+                _logger.debug("Codex app-server initialize handshake failed")
                 return self._unknown()
             self._send(process, {"method": "initialized", "params": {}})
             self._send(
@@ -320,6 +322,7 @@ class CodexAppServerReader:
             )
             result = self._wait_for_response(output, request_id=2, deadline=deadline)
             if result is None:
+                _logger.debug("Codex app-server rate-limits response missing")
                 return self._unknown()
             return parse_app_server_rate_limits(result, now=self._now())
         except (OSError, ValueError, TypeError):
