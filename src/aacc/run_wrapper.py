@@ -15,10 +15,13 @@ import httpx
 from aacc.config import load_config
 from aacc.constants import DEFAULT_CONFIG_PATH, local_api_url
 
+# Windows has no SIGKILL; the group-signal path is POSIX-only anyway.
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
 
 def _signal_process_group(process: subprocess.Popen[bytes], sig: int) -> None:
     """Signal the spawned process group on POSIX, falling back to the child."""
-    if os.name == "posix":
+    if sys.platform != "win32":
         try:
             os.killpg(os.getpgid(process.pid), sig)
             return
@@ -35,7 +38,7 @@ def terminate_process(process: subprocess.Popen[bytes], timeout: float = 3.0) ->
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        _signal_process_group(process, signal.SIGKILL)
+        _signal_process_group(process, _SIGKILL)
         process.wait()
 
 
