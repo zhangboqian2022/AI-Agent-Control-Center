@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from aacc.codex_discovery import CodexDiscoveryError, DiscoveredTask
@@ -106,6 +107,35 @@ def test_poll_registers_discovered_codex_task(tmp_path: Path) -> None:
     assert count == 1
     assert discovery.selected_ids == {"task-1234"}
     assert manager.get(task.id).status.value == "RUNNING"
+    manager.close()
+
+
+def test_poll_once_expires_unseen_stale_run_states(tmp_path: Path) -> None:
+    # 发现窗口之外的会话永远等不到新候选，陈旧的 RUNNING 必须由轮询过期。
+    config = default_config()
+    store = StateStore(tmp_path / "states.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    stale_task = TaskConfig(
+        id="codex:stale-session",
+        slot=2,
+        name="陈旧任务",
+        agent=AgentConfig(type="codex_cli", display_name="Codex"),
+    )
+    old_at = datetime.now(UTC) - timedelta(hours=2)
+    manager.register(
+        stale_task,
+        TaskState.new(stale_task.id, "running", source="codex_local", confidence=0.9).model_copy(
+            update={"updated_at": old_at, "session_id": "stale-session"}
+        ),
+    )
+    service = CodexDiscoveryService(manager, discovery=StubDiscovery([]))  # type: ignore[arg-type]
+
+    service.poll_once()
+
+    state = manager.get(stale_task.id)
+    assert state.status.value == "UNKNOWN"
+    assert state.message == "长时间未更新"
     manager.close()
 
 
