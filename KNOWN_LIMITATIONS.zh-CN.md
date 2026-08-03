@@ -17,5 +17,5 @@
 - F13–F20 热键在多数 Windows 键盘需要 Fn 层映射。
 
 - OpenCode 额度（Go 套餐）从 opencode.ai /go 工作区页面的渲染结果提取；若 opencode.ai 改版该页面布局，提取可能需要跟进。macOS 会话保存在原生网页视图的每应用存储中；Windows 使用 AACC 专用 Edge 配置目录和 CDP 边界，两套配置刻意不互通。
-- OpenCode 任务状态依据本机部件快照推断（官方 idle/busy 为运行时事件不落库），采用 90 秒活动窗口；状态为近似。Windows 优先发现 `%LOCALAPPDATA%\opencode\opencode.db`，并支持用户目录下的 XDG 回退位置；其他 OpenCode 发布通道数据库名只按固定允许列表搜索。
+- OpenCode 任务状态依据本机部件快照推断（官方 idle/busy 为运行时事件不落库），采用 90 秒活动窗口；状态为近似。权限请求同样不落库，AACC 无法区分"等待批准的工具调用"和"仍在生成中的工具调用"，因此 OpenCode 卡片永不显示"等待同意"。Windows 优先发现 `%LOCALAPPDATA%\opencode\opencode.db`，并支持用户目录下的 XDG 回退位置；其他 OpenCode 发布通道数据库名只按固定允许列表搜索。
 - 已配置的非原生 Adapter 只提供进程级运行/停止证据；除非另有结构化 API、CLI 或包装器上报，否则不会解析 Agent 专属的完成、审批或输出语义。
