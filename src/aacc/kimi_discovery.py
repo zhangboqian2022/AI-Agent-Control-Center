@@ -136,13 +136,21 @@ def evaluate_kimi_session_status(
     process_alive: ProcessAlive,
     activity_window_seconds: float,
     active_turn_window_seconds: float,
+    completed_requires_process_exit: bool = False,
 ) -> KimiSessionStatus:
-    """Apply the Kimi Code status decision tree to one session directory."""
+    """Apply the Kimi Code status decision tree to one session directory.
+
+    With ``completed_requires_process_exit`` a finished turn only reports
+    COMPLETED once the process is gone; while the process lives the session
+    is an ongoing conversation sitting at the prompt, reported as IDLE.
+    """
     activity_at = kimi_session_activity_at(session_dir, file_modified_at)
     turn_status = kimi_session_turn_completed(session_dir)
     if turn_status == "cancelled":
         return KimiSessionStatus(TaskStatus.CANCELLED, "已取消", 0.96, activity_at)
     if turn_status == "completed":
+        if completed_requires_process_exit and process_alive():
+            return KimiSessionStatus(TaskStatus.IDLE, "空闲", 0.9, activity_at)
         return KimiSessionStatus(TaskStatus.COMPLETED, "回合已完成", 0.96, activity_at)
     if activity_at is not None and (now - activity_at).total_seconds() <= activity_window_seconds:
         return KimiSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, activity_at)
@@ -279,6 +287,7 @@ class KimiLocalDiscovery:
                 process_alive=is_agent_alive,
                 activity_window_seconds=self.activity_window_seconds,
                 active_turn_window_seconds=self.active_turn_window_seconds,
+                completed_requires_process_exit=True,
             )
             activity_at = evaluation.activity_at
             updated_at = activity_at if activity_at is not None else session["updated_at"]

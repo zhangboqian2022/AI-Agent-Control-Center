@@ -77,6 +77,53 @@ def test_discovers_active_and_recent_codex_tasks_without_reading_session_content
     }
 
 
+def test_discover_excludes_subagent_threads(tmp_path: Path) -> None:
+    # Codex Desktop 派生的 subagent 线程（source.subagent.thread_spawn）
+    # 是主会话的内部执行单元，不得各自成为独立卡片。
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    parent_id = "019fbd10-a5ee-7003-923a-8046535b3529"
+    child_id = "019fc784-8be5-7610-9949-2ae92c622250"
+    (sessions / f"rollout-2026-08-01T19-23-32-{parent_id}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": parent_id, "cwd": "/work/deep"}})
+        + "\n",
+        encoding="utf-8",
+    )
+    (sessions / f"rollout-2026-08-03T20-06-20-{child_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": child_id,
+                    "forked_from_id": parent_id,
+                    "parent_thread_id": parent_id,
+                    "source": {"subagent": {"thread_spawn": {"parent_thread_id": parent_id}}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        f'{{"id":"{parent_id}","thread_name":"主会话","updated_at":"2026-08-03T12:06:00Z"}}\n'
+        f'{{"id":"{child_id}","thread_name":"审查多代理流程终结状态",'
+        '"updated_at":"2026-08-03T12:06:32Z"}\n',
+        encoding="utf-8",
+    )
+    discovery = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: datetime(2026, 8, 3, 12, 6, 40, tzinfo=UTC),
+    )
+
+    tasks = discovery.discover()
+
+    assert [task.config.id for task in tasks] == [f"codex:{parent_id}"]
+    assert [item.conversation_id for item in discovery.catalog()] == [parent_id]
+
+
 def test_discover_carries_payload_cwd_without_other_payload_data(tmp_path: Path) -> None:
     sessions = tmp_path / "sessions"
     sessions.mkdir()

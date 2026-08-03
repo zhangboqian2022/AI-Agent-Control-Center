@@ -115,6 +115,7 @@ class CodexLocalDiscovery:
         sessions = self._sessions()
         if selected_ids is not None:
             sessions = [session for session in sessions if session["id"] in selected_ids]
+        sessions = self._without_subagent_threads(sessions)
         selected = {session["id"] for session in sessions}
         session_signals = self._session_signals(selected)
         session_work_dirs = self._session_work_dirs(selected)
@@ -217,9 +218,62 @@ class CodexLocalDiscovery:
                 updated_at=session["updated_at"],
             )
             for session in sorted(
-                self._sessions(), key=lambda item: item["updated_at"], reverse=True
+                self._without_subagent_threads(self._sessions()),
+                key=lambda item: item["updated_at"],
+                reverse=True,
             )
         ]
+
+    def _without_subagent_threads(self, sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Drop Codex Desktop subagent threads forked inside a parent session.
+
+        A subagent rollout's first ``session_meta`` carries
+        ``source.subagent.thread_spawn``; such threads are internal execution
+        units of the parent conversation, not independent tasks. User-visible
+        forks (plain string ``source``) are kept. Read failures fail open so a
+        real session is never hidden.
+        """
+        if not sessions:
+            return sessions
+        paths_by_id = self._session_paths({session["id"] for session in sessions})
+        subagent_ids: set[str] = set()
+        for conversation_id, files in paths_by_id.items():
+            if not files:
+                continue
+            try:
+                latest_path = max(files, key=self.session_modified_at)
+            except OSError:
+                continue
+            if self._read_session_meta_is_subagent(latest_path):
+                subagent_ids.add(conversation_id)
+        if not subagent_ids:
+            return sessions
+        return [session for session in sessions if session["id"] not in subagent_ids]
+
+    @staticmethod
+    def _read_session_meta_is_subagent(path: Path) -> bool:
+        try:
+            with path.open("rb") as handle:
+                for _ in range(64):
+                    raw_line = handle.readline(MAX_SESSION_METADATA_LINE_BYTES + 1)
+                    if not raw_line:
+                        break
+                    if len(raw_line) > MAX_SESSION_METADATA_LINE_BYTES:
+                        continue
+                    try:
+                        item = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(item, dict) or item.get("type") != "session_meta":
+                        continue
+                    payload = item.get("payload")
+                    if not isinstance(payload, dict):
+                        return False
+                    source = payload.get("source")
+                    return isinstance(source, dict) and "subagent" in source
+        except (OSError, UnicodeDecodeError):
+            return False
+        return False
 
     def active_session_ids(self, *, limit: int = 4) -> set[str]:
         """Return a small set of recently verified active sessions for auto-monitoring."""
