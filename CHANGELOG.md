@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.4-rc.5 — 2026-08-03
+
+[Bilingual release notes](docs/release-notes-1.4.4rc5.md)
+
+- [Fix] Stale discovered run-states now expire: sessions outside the discovery window (unselected or beyond the result limit) never received fresh candidates, so an outdated RUNNING/WAITING state could persist in storage indefinitely. Each poll round now normalizes any discovered run-state unseen for over an hour to UNKNOWN ("长时间未更新") through the regular state machine; genuinely active tasks heartbeat every minute and are unaffected.
+
 ## 1.4.4-rc.4 — 2026-08-03
 
 [Bilingual release notes](docs/release-notes-1.4.4rc4.md)
