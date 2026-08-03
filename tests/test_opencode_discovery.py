@@ -40,15 +40,19 @@ def _evaluate(snapshot, *, alive: bool, window: float = 90.0) -> OpenCodeSession
     )
 
 
-def test_pending_tool_is_waiting_approval_immediately() -> None:
+def test_fresh_pending_tool_is_running() -> None:
+    # A pending tool part only means the call was created but not started
+    # (arguments may still be streaming); the turn is still in flight.
     result = _evaluate(_snapshot("tool", "pending", 5), alive=True)
-    assert result.status is TaskStatus.WAITING_APPROVAL
+    assert result.status is TaskStatus.RUNNING
 
 
-def test_stale_pending_tool_is_waiting_approval() -> None:
+def test_stale_pending_tool_is_never_waiting_approval() -> None:
+    # opencode does not persist permission requests, so a stale pending part
+    # must not be reported as waiting for approval; it resolves to the same
+    # stalled-session observation as any other stale part.
     result = _evaluate(_snapshot("tool", "pending", 300), alive=True)
-    assert result.status is TaskStatus.WAITING_APPROVAL
-    assert result.confidence == 0.97
+    assert result.status is TaskStatus.WAITING_INPUT
 
 
 def test_running_tool_is_running() -> None:
@@ -61,9 +65,36 @@ def test_fresh_streaming_part_without_process_is_stopped() -> None:
     assert result.status is TaskStatus.STOPPED
 
 
-def test_pending_tool_is_actionable_even_if_process_is_gone() -> None:
+def test_pending_tool_without_process_is_stopped() -> None:
     result = _evaluate(_snapshot("tool", "pending", 5), alive=False)
-    assert result.status is TaskStatus.WAITING_APPROVAL
+    assert result.status is TaskStatus.STOPPED
+
+
+def test_stale_pending_tool_does_not_block_return_to_running() -> None:
+    # Regression: a stale pending tool used to latch WAITING_APPROVAL at
+    # confidence 0.97, which suppressed lower-confidence RUNNING candidates in
+    # the state machine for up to 300 seconds after work resumed.
+    stale = _evaluate(_snapshot("tool", "pending", 300), alive=True)
+    resumed = _evaluate(_snapshot("text", None, 5), alive=True)
+    assert resumed.status is TaskStatus.RUNNING
+    assert stale.activity_at is not None and resumed.activity_at is not None
+    current = TaskState(
+        task_id="opencode:ses_1",
+        status=stale.status,
+        message=stale.message,
+        source="opencode_local",
+        confidence=stale.confidence,
+        updated_at=stale.activity_at,
+    )
+    candidate = TaskState(
+        task_id="opencode:ses_1",
+        status=resumed.status,
+        message=resumed.message,
+        source="opencode_local",
+        confidence=resumed.confidence,
+        updated_at=resumed.activity_at,
+    )
+    assert StateMachine.transition(current, candidate) is not None
 
 
 def test_running_tool_without_process_is_stopped() -> None:
@@ -334,7 +365,7 @@ def _add_part(
     )
 
 
-def test_discover_reports_waiting_approval(tmp_path: Path, monkeypatch) -> None:
+def test_discover_stale_pending_tool_is_waiting_input(tmp_path: Path, monkeypatch) -> None:
     path, connection = _make_db(tmp_path)
     _add_session(connection, "ses_1", title="任务一", directory="/work/a")
     _add_part(
@@ -350,7 +381,7 @@ def test_discover_reports_waiting_approval(tmp_path: Path, monkeypatch) -> None:
     tasks = discovery.discover()
     assert len(tasks) == 1
     assert tasks[0].config.id == "opencode:ses_1"
-    assert tasks[0].state.status is TaskStatus.WAITING_APPROVAL
+    assert tasks[0].state.status is TaskStatus.WAITING_INPUT
     assert tasks[0].config.agent.type == "opencode_cli"
     assert tasks[0].config.agent.display_name == "OpenCode"
     assert tasks[0].state.session_id == "ses_1"

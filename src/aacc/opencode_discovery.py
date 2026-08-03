@@ -3,10 +3,12 @@
 opencode persists session metadata and message-part snapshots in
 ``~/.local/share/opencode/opencode.db``. Official session status (idle/busy)
 is a runtime SSE event and is not stored, so status is inferred from the
-latest ``part`` snapshot: a ``tool`` part with ``state.status == "pending"``
-means the session is waiting for the user to approve a permission request.
-Only ``type`` / ``state.status`` / ``time_updated`` are read from part data;
-prompts, replies, tool commands and reasoning content are never touched.
+latest ``part`` snapshot. A ``tool`` part with ``state.status == "pending"``
+only means the call was created but has not started yet (arguments may still
+be streaming); permission requests are not persisted, so pending parts are
+never reported as waiting for approval. Only ``type`` / ``state.status`` /
+``time_updated`` are read from part data; prompts, replies, tool commands
+and reasoning content are never touched.
 """
 
 from __future__ import annotations
@@ -198,9 +200,16 @@ def evaluate_opencode_session_status(
         snapshot.state_status.casefold() if isinstance(snapshot.state_status, str) else None
     )
     if snapshot.part_type == "tool" and state_status == "pending":
-        return OpenCodeSessionStatus(
-            TaskStatus.WAITING_APPROVAL, "等待同意", 0.97, snapshot.time_updated
-        )
+        # "pending" only means the tool call was created but has not started
+        # (arguments may still be streaming). opencode does not persist
+        # permission requests, so pending never means waiting for approval.
+        if not process_alive():
+            return OpenCodeSessionStatus(TaskStatus.STOPPED, "已停止", 0.8, snapshot.time_updated)
+        fresh = (now - snapshot.time_updated).total_seconds() <= activity_window_seconds
+        if fresh:
+            return OpenCodeSessionStatus(TaskStatus.RUNNING, "正在运行", 0.9, snapshot.time_updated)
+        # A stale pending part is a stalled session: fall through to the
+        # generic step/completion and waiting-input handling below.
     if snapshot.part_type == "tool" and state_status in _ERROR_TOOL_STATES:
         return OpenCodeSessionStatus(TaskStatus.ERROR, "执行失败", 0.96, snapshot.time_updated)
     if snapshot.part_type == "tool" and state_status in _CANCELLED_TOOL_STATES:
