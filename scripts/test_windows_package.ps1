@@ -751,13 +751,25 @@ function Invoke-ExternalDeadline {
     )
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = New-ProcessStartInfo -FilePath $FilePath -Arguments $Arguments
+    # CreateNoWindow detaches the child from any console, so without explicit
+    # redirection its stdout/stderr vanish and probe failures are undiagnosable.
+    $Process.StartInfo.RedirectStandardOutput = $true
+    $Process.StartInfo.RedirectStandardError = $true
     $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         Assert-True $Process.Start() "$Category did not start"
         $Identity = Get-ProcessIdentity -Process $Process
         Register-OwnedIdentity -Identity $Identity
+        $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+        $StderrTask = $Process.StandardError.ReadToEndAsync()
         $ExitCode = Wait-ProcessDeadline -Process $Process -TimeoutSeconds $TimeoutSeconds `
             -Category $Category
+        $Stdout = ""
+        $Stderr = ""
+        # Descendants may hold the pipe open briefly after the direct child
+        # exits; never block the harness on a full read.
+        if ($StdoutTask.Wait(10000)) { try { $Stdout = $StdoutTask.Result } catch {} }
+        if ($StderrTask.Wait(10000)) { try { $Stderr = $StderrTask.Result } catch {} }
         Write-SmokeEvidence -Category "processes" `
             -Name (
                 ($Category -replace '[^A-Za-z0-9.-]', '-') +
@@ -769,6 +781,8 @@ function Invoke-ExternalDeadline {
                 creationTimeUtc = $Identity.CreationTimeUtc
                 exitCode = $ExitCode
                 elapsedMilliseconds = $Stopwatch.ElapsedMilliseconds
+                stdout = $Stdout
+                stderr = $Stderr
             })
         return $ExitCode
     }
