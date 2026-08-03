@@ -45,8 +45,9 @@ QuotaReaderFactory = Callable[[Path], CodexQuotaReaderLike]
 
 _logger = logging.getLogger("aacc.codex_quota")
 
-# Windows has no SIGKILL; the group-signal path is POSIX-only anyway.
-_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+# Windows has no SIGKILL; any sentinel distinct from SIGTERM keeps the
+# terminate-then-kill escalation in _signal_process_group's fallback branch.
+_SIGKILL = getattr(signal, "SIGKILL", -1)
 
 
 def _signal_process_group(process: subprocess.Popen[str], sig: int) -> None:
