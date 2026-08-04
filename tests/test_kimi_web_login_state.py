@@ -65,6 +65,19 @@ def test_opencode_state_file_is_isolated_from_kimi_state(tmp_path):
     assert not (tmp_path / "kimi-web-session-state.json").exists()
 
 
+def test_qwen_state_file_is_isolated_from_kimi_state(tmp_path):
+    store = KimiWebLoginStateStore(
+        tmp_path,
+        state_file_name="qwen-web-session-state.json",
+    )
+
+    store.set_may_reuse(True)
+
+    assert store.may_reuse() is True
+    assert (tmp_path / "qwen-web-session-state.json").is_file()
+    assert not (tmp_path / "kimi-web-session-state.json").exists()
+
+
 def test_unknown_state_file_name_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="unsupported"):
         KimiWebLoginStateStore(tmp_path, state_file_name="other.json")

@@ -2,10 +2,36 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from aacc.gui import QwenQuotaBar
+from aacc.gui import QwenQuotaBar, format_quota_percentage
 from aacc.i18n import EN_US, ZH_CN, LanguageManager
 from aacc.kimi_quota import QuotaDetail, QuotaStatus
 from aacc.qwen_web_quota import QwenQuota
+
+
+def test_format_quota_percentage() -> None:
+    assert format_quota_percentage(None) is None
+    assert format_quota_percentage(0) == "0%"
+    assert format_quota_percentage(30) == "30%"
+    assert format_quota_percentage(30.0) == "30%"
+    assert format_quota_percentage(0.04) == "0.04%"
+    assert format_quota_percentage(12.5) == "12.5%"
+    assert format_quota_percentage(99.99) == "99.99%"
+
+
+def test_bar_renders_fractional_percentages(qapp: object) -> None:
+    now = datetime.now(UTC)
+    bar = QwenQuotaBar()
+    bar.show_quota(
+        QwenQuota(
+            five_hour=QuotaDetail(0, 100, 100, now + timedelta(seconds=3600), 0.04),
+            weekly=QuotaDetail(12, 100, 88, None, 12.5),
+            status=QuotaStatus.OK,
+            fetched_at=now,
+        )
+    )
+    assert bar.percent_labels() == ["0.04%", "12.5%"]
+    assert "5 小时: 0.04%" in bar.toolTip()
+    assert "7 天: 12.5%" in bar.toolTip()
 
 
 def _quota() -> QwenQuota:

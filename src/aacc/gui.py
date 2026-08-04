@@ -228,6 +228,14 @@ def format_quota_reset(
     )
 
 
+def format_quota_percentage(percentage: float | None) -> str | None:
+    if percentage is None:
+        return None
+    if abs(percentage - round(percentage)) < 0.005:
+        return f"{int(round(percentage))}%"
+    return f"{percentage:.2f}".rstrip("0").rstrip(".") + "%"
+
+
 def load_stylesheet() -> str:
     stylesheet = resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
     return stylesheet.replace(
@@ -343,15 +351,17 @@ def _add_quota_metric_row(
 
 def _set_quota_metric(
     row: _QuotaMetricRow,
-    percentage: int | None,
+    percentage: float | None,
     reset_at: datetime | None,
     language: LanguageManager,
 ) -> None:
-    unknown = percentage is None
-    row.percent_label.setText("--" if unknown else f"{percentage}%")
-    row.progress_bar.setValue(0 if percentage is None else percentage)
-    row.progress_bar.setProperty("unknown", unknown)
-    row.reset_label.setText(format_quota_reset(reset_at, language) if not unknown else "--")
+    formatted = format_quota_percentage(percentage)
+    row.percent_label.setText("--" if formatted is None else formatted)
+    row.progress_bar.setValue(0 if percentage is None else min(100, int(round(percentage))))
+    row.progress_bar.setProperty("unknown", formatted is None)
+    row.reset_label.setText(
+        format_quota_reset(reset_at, language) if formatted is not None else "--"
+    )
 
 
 class QuotaBar(QFrame):
@@ -598,7 +608,8 @@ class QuotaBar(QFrame):
             if self.language_manager.language == ZH_CN
             else format_quota_reset(detail.reset_at, self.language_manager)
         )
-        return f"{name}: {detail.percentage}% ({reset})"
+        percentage = format_quota_percentage(detail.percentage) or "--"
+        return f"{name}: {percentage} ({reset})"
 
     def retranslate_ui(self) -> None:
         if self._display_state == "pending":
@@ -791,7 +802,7 @@ class OpenCodeQuotaBar(QFrame):
             if self.language_manager.language == ZH_CN
             else format_quota_reset(usage.reset_at, self.language_manager)
         )
-        percentage = "--" if usage.percentage is None else f"{usage.percentage}%"
+        percentage = format_quota_percentage(usage.percentage) or "--"
         return f"{name}: {percentage} ({reset})"
 
     def _render_error(self) -> None:
@@ -993,7 +1004,7 @@ class QwenQuotaBar(QFrame):
             if self.language_manager.language == ZH_CN
             else format_quota_reset(detail.reset_at, self.language_manager)
         )
-        percentage = "--" if detail.percentage is None else f"{detail.percentage}%"
+        percentage = format_quota_percentage(detail.percentage) or "--"
         return f"{name}: {percentage} ({reset})"
 
     def _render_error(self) -> None:

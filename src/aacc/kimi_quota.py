@@ -47,7 +47,7 @@ class QuotaDetail:
     limit: int
     remaining: int
     reset_at: datetime | None
-    percentage: int
+    percentage: float | None
 
 
 @dataclass(frozen=True)

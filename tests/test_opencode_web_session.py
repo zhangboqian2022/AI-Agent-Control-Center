@@ -31,6 +31,7 @@ class FakeWebView(QObject):
         self.script_result: object = None
         self.cookies_deleted = False
         self.deleted = False
+        self.reloads = 0
         self.settings = lambda: _FakeSettings()
 
     def url(self) -> QUrl:
@@ -39,6 +40,9 @@ class FakeWebView(QObject):
     def setUrl(self, url: QUrl) -> None:
         self._url = url
         self.scripts = []
+
+    def reload(self) -> None:
+        self.reloads += 1
 
     def runJavaScript(self, script: str, callback=None) -> None:
         self.scripts.append(script)
@@ -162,14 +166,17 @@ def test_session_without_workspace_url_is_inert(qapp, tmp_path: Path) -> None:
     assert session.view.url().isEmpty()
 
 
-def test_refresh_runs_fetch_script_without_reload_when_origin_matches(qapp, tmp_path: Path) -> None:
+def test_refresh_reloads_in_place_when_origin_matches(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)
     session.view._url = QUrl(WORKSPACE_URL)
     session.refresh()
+    assert session.view.reloads == 1
+    assert session.view.scripts == []
+    assert session.view.url().toString() == WORKSPACE_URL
+    session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
-    assert session.view.url().toString() == WORKSPACE_URL
 
 
 def test_open_login_without_workspace_url_shows_message_box(
@@ -478,6 +485,9 @@ def test_manual_login_dialog_dismissal_resets_state(monkeypatch, qapp, tmp_path:
 
     session.view.scripts = []
     session.refresh()
+    assert session.view.reloads == 1
+    assert session.view.scripts == []
+    session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
     assert session.view.url().toString() == WORKSPACE_URL
@@ -536,10 +546,9 @@ def test_refresh_re_entry_is_inert_while_in_flight(qapp, tmp_path: Path) -> None
     session.view._url = QUrl(WORKSPACE_URL)
     session.refresh()
     assert session._refreshing is True
-    assert session.view.scripts
-    session.view.scripts = []
+    assert session.view.reloads == 1
     session.refresh()
-    assert session.view.scripts == []
+    assert session.view.reloads == 1
     assert session.view.url().toString() == WORKSPACE_URL
 
 
@@ -554,8 +563,9 @@ def test_refresh_during_login_progress_does_not_navigate(monkeypatch, qapp, tmp_
     assert session._refreshing is True
     assert session.view.url().toString() == WORKSPACE_URL
     session._close_login_dialog()
-    session.view.scripts = []
+    session.view.reloads = 0
     session.refresh()
+    assert session.view.reloads == 0
     assert session.view.scripts == []
     assert session.view.url().toString() == WORKSPACE_URL
     session.close()

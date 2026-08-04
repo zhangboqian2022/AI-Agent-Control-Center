@@ -5,10 +5,16 @@ The personal token-plan page is a qiankun micro-frontend
 Unlike opencode.ai (a SolidStart same-origin RPC) and kimi.com (a public
 Connect gateway), the Bailian console exposes no stable same-origin quota
 endpoint: data is loaded by the micro-frontend into React state and rendered
-as DOM. This module therefore reads the rendered text the way
-``opencode_web_session`` does — a page-injected script parses
-``document.body.innerText`` for the two labeled windows and bridges the
-captured values back through ``document.title``.
+as DOM. This module therefore reads the rendered text — a page-injected
+script captures the text snippets around the two window labels and bridges
+them back through ``document.title``; the Python parser derives the numbers.
+
+Snippets without any rendered percentage are reported as ``unauthorized``:
+the anonymous/login view repeats the window labels in marketing copy, which
+must not be mistaken for quota data. On macOS the Aliyun login flow is too
+complex for this native view (new-window requests are dropped); the Chrome
+CDP session (``qwen_chrome_session``) owns login there and this module is
+the fallback path (also the Windows native path).
 """
 
 from __future__ import annotations
@@ -60,14 +66,14 @@ def _is_token_plan_url(url: str) -> bool:
 
 
 def qwen_dom_extract_script(url: str, generation: int) -> str:
-    """Return a script that extracts rendered token-plan usage from the DOM.
+    """Return a script that captures rendered token-plan usage text from the DOM.
 
-    Reads the rendered ``document.body.innerText`` and locates the two labeled
-    windows ("5 小时"/"5h" and "7 天"/"7d"). It is intentionally loose — the
-    skeleton accepts either Chinese or English labels and emits the matched
-    text segment so the Python parser can derive ``percentage`` and
-    ``resetSeconds``. The regex is tuned iteratively against the live page
-    (opencode-dom strategy).
+    Locates the two window labels ("5 小时"/"5h" and "7 天"/"7d") in
+    ``document.body.innerText`` and emits the text snippet of each window
+    (sliced up to the next window label) through the title bridge. Snippets
+    without any percentage mean the anonymous/login view is showing, which is
+    reported as ``unauthorized`` instead of fake quota data. The Python
+    parser derives ``percentage`` and ``resetSeconds`` from the text.
     """
 
     if not _is_token_plan_url(url):
@@ -81,55 +87,37 @@ def qwen_dom_extract_script(url: str, generation: int) -> str:
    const emit = (payload) => {
      document.title = prefix + JSON.stringify(payload);
    };
-   const parseResetSeconds = (text) => {
-     let s = 0;
-     const d = text.match(/(\d+)\s*(天|days?|day)/);
-     const h = text.match(/(\d+)\s*(小时|hours?|hour)/);
-     const m = text.match(/(\d+)\s*(分钟|minutes?|minute|min)/);
-     if (d) s += parseInt(d[1]) * 86400;
-     if (h) s += parseInt(h[1]) * 3600;
-     if (m) s += parseInt(m[1]) * 60;
-     return s > 0 ? s : null;
+   const retry = () => {
+     if (++attempts < 50) setTimeout(extract, 1000);
+     else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
    };
-   const extract5h = () => {
-     const text = document.body ? document.body.innerText : '';
-     if (!text) return null;
-     const lines = text.split('\n').map(l => l.trim());
-     const idx = lines.findIndex(l => /5\s*小时|5\s*h|5h/i.test(l));
-     if (idx < 0) return null;
-     const snippet = lines.slice(idx, idx + 6).join('\n');
-     const match = snippet.match(/(\d{1,3})\s*%/);
-     return {
-       percentage: match ? parseInt(match[1]) : null,
-       resetSeconds: parseResetSeconds(snippet),
-     };
-   };
-   const extract7d = () => {
-     const text = document.body ? document.body.innerText : '';
-     if (!text) return null;
-     const lines = text.split('\n').map(l => l.trim());
-     const idx = lines.findIndex(l => /7\s*天|7\s*d|7d/i.test(l));
-     if (idx < 0) return null;
-     const snippet = lines.slice(idx, idx + 6).join('\n');
-     const match = snippet.match(/(\d{1,3})\s*%/);
-     return {
-       percentage: match ? parseInt(match[1]) : null,
-       resetSeconds: parseResetSeconds(snippet),
-     };
+   const FIVE = /5\s*小时|5\s*h|5h/i;
+   const SEVEN = /7\s*天|7\s*d|7d/i;
+   const PCT = /(\d{1,3}(?:\.\d+)?)\s*%/;
+   const sliceWindow = (lines, idx, stop) => {
+     const out = [lines[idx]];
+     for (let i = idx + 1; i < lines.length && out.length < 12; i++) {
+       if (stop.test(lines[i])) break;
+       out.push(lines[i]);
+     }
+     return out.join('\n');
    };
    const extract = () => {
-     const fiveHour = extract5h();
-     const sevenDay = extract7d();
-     if (!fiveHour && !sevenDay) {
-       if (++attempts < 50) setTimeout(extract, 1000);
-       else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
+     const text = document.body ? document.body.innerText : '';
+     if (!text) { retry(); return; }
+     const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+     const fiveIdx = lines.findIndex(l => FIVE.test(l));
+     const sevenIdx = lines.findIndex(l => SEVEN.test(l));
+     if (fiveIdx < 0 && sevenIdx < 0) { retry(); return; }
+     const fiveText = fiveIdx >= 0 ? sliceWindow(lines, fiveIdx, SEVEN) : null;
+     const weeklyText = sevenIdx >= 0 ? sliceWindow(lines, sevenIdx, FIVE) : null;
+     if (!PCT.test(fiveText || '') && !PCT.test(weeklyText || '')) {
+       emit({kind: 'unauthorized', generation, message: 'NO_USAGE_DATA'});
        return;
      }
      emit({
-       kind: 'quota', generation, raw: {
-         fiveHour: fiveHour || null,
-         sevenDay: sevenDay || null
-       }
+       kind: 'quota', generation,
+       raw: {fiveHourText: fiveText, weeklyText: weeklyText}
      });
    };
    setTimeout(extract, 2500);
@@ -206,16 +194,7 @@ class QwenWebSession(QObject):
         self._refreshing = True
         self._start_refresh_generation()
         self._start_refresh_watchdog()
-        if self._login_dialog_open or self.view.url().isEmpty() or not self._is_bailian_origin():
-            url = self.view.url()
-            _logger.info(
-                "Qwen quota refresh navigating to bailian origin=%s://%s",
-                url.scheme(),
-                url.host(),
-            )
-            self._load_workspace_url()
-            return
-        self._run_fetch_script()
+        self._reload_workspace_url()
 
     def open_login(self, parent: QWidget | None = None) -> None:
         if not self.workspace_url:
@@ -248,7 +227,7 @@ class QwenWebSession(QObject):
         self._login_dialog.activateWindow()
         self._start_refresh_generation()
         self._start_refresh_watchdog()
-        self._load_workspace_url()
+        self._reload_workspace_url()
 
     def logout(self) -> bool:
         if not self.workspace_url:
@@ -281,10 +260,16 @@ class QwenWebSession(QObject):
                 self.language_manager.text(self._login_status_key)
             )
 
-    def _load_workspace_url(self) -> None:
+    def _reload_workspace_url(self) -> None:
         if not self.workspace_url:
             return
-        self.view.setUrl(QUrl(self.workspace_url))
+        target = QUrl(self.workspace_url)
+        current = self.view.url()
+        _logger.info("Qwen quota refresh origin=%s://%s", current.scheme(), current.host())
+        if current == target:
+            self.view.reload()
+        else:
+            self.view.setUrl(target)
 
     def _run_fetch_script(self) -> None:
         script = qwen_dom_extract_script(self.workspace_url, self._refresh_generation)
@@ -378,7 +363,7 @@ class QwenWebSession(QObject):
             self._active_refresh_generation = None
             self._may_reuse = True
             raw = payload.get("raw")
-            _logger.info("Qwen quota raw=%s", str(raw)[:300])
+            _logger.info("Qwen quota raw=%s", str(raw)[:500])
             self.quota_received.emit(raw)
             if self._login_dialog_open:
                 self._close_login_dialog()

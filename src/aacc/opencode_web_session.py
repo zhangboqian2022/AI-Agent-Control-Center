@@ -175,16 +175,7 @@ class OpenCodeWebSession(QObject):
         self._refreshing = True
         self._start_refresh_generation()
         self._start_refresh_watchdog()
-        if self._login_dialog_open or self.view.url().isEmpty() or not self._is_opencode_origin():
-            url = self.view.url()
-            _logger.info(
-                "OpenCode quota refresh navigating to workspace origin=%s://%s",
-                url.scheme(),
-                url.host(),
-            )
-            self._load_workspace_url()
-            return
-        self._run_fetch_script()
+        self._reload_workspace_url()
 
     def open_login(self, parent: QWidget | None = None) -> None:
         if not self.workspace_url:
@@ -255,6 +246,21 @@ class OpenCodeWebSession(QObject):
         if not self.workspace_url:
             return
         self.view.setUrl(QUrl(self.workspace_url))
+
+    def _reload_workspace_url(self) -> None:
+        if not self.workspace_url:
+            return
+        target = QUrl(self.workspace_url)
+        current = self.view.url()
+        _logger.info(
+            "OpenCode quota refresh navigating to workspace origin=%s://%s",
+            current.scheme(),
+            current.host(),
+        )
+        if current == target:
+            self.view.reload()
+        else:
+            self.view.setUrl(target)
 
     def _run_fetch_script(self) -> None:
         script = opencode_dom_extract_script(self.workspace_url, self._refresh_generation)

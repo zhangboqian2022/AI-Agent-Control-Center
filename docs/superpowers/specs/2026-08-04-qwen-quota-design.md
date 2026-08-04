@@ -128,3 +128,32 @@ Python 侧 `parse_qwen_quota` 再对 `fiveHourText` / `weeklyText` 二次解析�
 - 不宣称消费级 Windows 10/11 真机验证。
 - 本次不做 Windows Edge CDP 专属会话（service 在 win32 按 native 回退，
   与 opencode 初版策略一致；Edge CDP 作为后续迭代）。
+
+## 修正记录（2026-08-04，1.4.5-rc.2 落地）
+
+初版（1.4.5-rc.1）上线后实测暴露四处问题，修正如下（详见
+`docs/superpowers/plans/2026-08-04-qwen-login-quota-fix.md`）：
+
+1. **授权浏览器：macOS 登录改走真实 Chrome（CDP）。** 阿里云登录
+   （密码/扫码/RAM）跨多域名且会发起新窗口请求；QtWebView 6.11 无
+   `createWindow` 钩子，弹窗被静默丢弃，RAM 入口链接无法跳转。沿用
+   Windows Edge CDP 范式：新增 `qwen_chrome_cdp.py` + `qwen_chrome_session.py`，
+   darwin 且装有 Chrome 时由 service 选择 Chrome 会话——可见窗口完成
+   登录、headless 做 5 分钟刷新，cookie 落在 AACC 专属
+   `qwen-chrome-profile/`；未装 Chrome 回退原生 QtWebView 会话
+   （`qwen_web_session.py`，同时是 Windows native 路径）。不打包任何
+   浏览器内核，体积不变；`websocket-client` 依赖改为跨平台。
+2. **未登录误判修复。** 匿名/登录页的介绍文案同样含「5 小时 / 7 天」
+   字样；提取脚本改为上抛原始文本片段（`fiveHourText` / `weeklyText`），
+   片段中没有任何百分比即发 `kind=unauthorized`，不再冒充额度关闭登录框。
+3. **小数百分比与防串窗。** 百分比按 `\d{1,3}(?:\.\d+)?\s*%` 捕获并以
+   float 贯穿 `QuotaDetail.percentage`（int → float | None），GUI 以
+   `format_quota_percentage` 渲染（0.04% / 12.5% / 30%）；重置倒计时只取
+   本窗切片（切到下一窗口标题为止），且跳过首行标签、优先含「重置/后」
+   标记的行。
+4. **刷新整页重载。** qwen/opencode 会话 `refresh()` 改为
+   `_reload_workspace_url()`（当前 URL 即工作区 → `reload()`，否则
+   `setUrl`），脚本在 load 完成后执行——初版只重跑脚本读旧 DOM，
+   5 分钟轮询数值恒定。kimi 为实时 API fetch，不受影响。
+5. **service win32 回退。** 初版 `_ensure_session` 在 win32 导入不存在
+   的 `aacc.qwen_edge_session`；改回设计原意的 native 回退。
