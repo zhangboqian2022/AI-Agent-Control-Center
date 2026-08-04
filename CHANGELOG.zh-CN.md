@@ -1,5 +1,11 @@
 # 更新日志
 
+## 1.4.5-rc.1 — 2026-08-04
+
+[中英文发布说明](docs/release-notes-1.4.5rc1.md)
+
+- [新功能] Qwen Code（百炼 token-plan）额度现已与 Kimi、OpenCode 并列展示。AACC 内嵌一个阿里云百炼「个人 token 套餐」页面的 WebView；登录一次后，cookie 缓存到 AACC 私有目录，5 小时 / 7 天窗口每 5 分钟刷新一次（读取渲染后的页面文字，不打 API）。AACC 全程不接触账号密码。`config.yaml` 新增 `qwen_quota_enabled`（默认开启）与 `qwen_workspace_url`（默认百炼个人 token 套餐页）。
+
 ## 1.4.4-rc.6 — 2026-08-03
 
 [中英文发布说明](docs/release-notes-1.4.4rc6.md)

@@ -49,6 +49,7 @@ def _runtime_for_application_test(events: list[str]) -> SimpleNamespace:
         kimi_web_quota_service=None,
         codex_quota_service=None,
         opencode_web_quota_service=None,
+        qwen_web_quota_service=None,
         config=SimpleNamespace(
             tasks=[],
             hotkeys={},

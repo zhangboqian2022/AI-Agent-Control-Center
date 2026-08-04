@@ -50,6 +50,7 @@ from aacc.models import AppConfig
 from aacc.opencode_web_quota_service import OpenCodeWebQuotaService
 from aacc.persistence import StateStore
 from aacc.quota_service import QuotaService
+from aacc.qwen_web_quota_service import QwenWebQuotaService
 from aacc.shutdown_windows import WindowsShutdownListener, request_shutdown_for_update
 from aacc.task_manager import TaskManager
 from aacc.windows_broker import build_broker_command, packaged_broker_path
@@ -73,6 +74,7 @@ class Runtime:
     quota_service: QuotaService | None = None
     kimi_web_quota_service: KimiWebQuotaService | None = None
     opencode_web_quota_service: OpenCodeWebQuotaService | None = None
+    qwen_web_quota_service: QwenWebQuotaService | None = None
 
     def close(self) -> None:
         operations: tuple[tuple[str, Callable[[], None]], ...] = (
@@ -101,6 +103,12 @@ class Runtime:
                 "opencode-web-quota",
                 self.opencode_web_quota_service.stop
                 if self.opencode_web_quota_service is not None
+                else lambda: None,
+            ),
+            (
+                "qwen-web-quota",
+                self.qwen_web_quota_service.stop
+                if self.qwen_web_quota_service is not None
                 else lambda: None,
             ),
             ("kimi-desktop-discovery", self.kimi_desktop_discovery.stop),
@@ -148,6 +156,21 @@ def _default_opencode_web_quota_service_factory(
         language_manager=language_manager,
     )
     service.set_workspace_url(config.opencode_workspace_url)
+    return service
+
+
+def _default_qwen_web_quota_service_factory(
+    config_dir: Path,
+    config: AppConfig,
+    language_manager: LanguageManager | None = None,
+) -> QwenWebQuotaService | None:
+    if not config.app.qwen_quota_enabled:
+        return None
+    service = QwenWebQuotaService(
+        config_dir,
+        language_manager=language_manager,
+    )
+    service.set_workspace_url(config.qwen_workspace_url)
     return service
 
 
@@ -244,6 +267,7 @@ def build_runtime(
     opencode_web_quota_service_factory: (
         Callable[[Path], OpenCodeWebQuotaService | None] | None
     ) = None,
+    qwen_web_quota_service_factory: (Callable[[Path], QwenWebQuotaService | None] | None) = None,
     language_manager: LanguageManager | None = None,
 ) -> Runtime:
     config = load_config(config_path)
@@ -271,9 +295,17 @@ def build_runtime(
             language_manager,
         )
     )
+    qwen_web_quota_factory = qwen_web_quota_service_factory or (
+        lambda config_dir: _default_qwen_web_quota_service_factory(
+            config_dir,
+            config,
+            language_manager,
+        )
+    )
     quota_service = factory(config_path.parent)
     kimi_web_quota_service = kimi_web_quota_factory(config_path.parent)
     opencode_web_quota_service = opencode_web_quota_factory(config_path.parent)
+    qwen_web_quota_service = qwen_web_quota_factory(config_path.parent)
     if quota_service is not None and kimi_web_quota_service is not None:
         quota_service.set_externally_scheduled(True)
         kimi_web_quota_service.set_fallback_refresh(quota_service.refresh_now)
@@ -292,6 +324,7 @@ def build_runtime(
         quota_service=quota_service,
         kimi_web_quota_service=kimi_web_quota_service,
         opencode_web_quota_service=opencode_web_quota_service,
+        qwen_web_quota_service=qwen_web_quota_service,
     )
 
 
@@ -460,6 +493,7 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         kimi_web_quota_service=runtime.kimi_web_quota_service,
         codex_quota_service=runtime.codex_quota_service,
         opencode_web_quota_service=runtime.opencode_web_quota_service,
+        qwen_web_quota_service=runtime.qwen_web_quota_service,
         discovery_health=runtime.discovery.health,
         subscribe_discovery_health=runtime.discovery.subscribe_health,
         kimi_discovery_health=runtime.kimi_discovery.health,
@@ -583,6 +617,37 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
                 return
             _logger.info("Application startup completed stage=opencode-web-quota")
 
+    def start_qwen_web_quota() -> None:
+        if cleaned or runtime.qwen_web_quota_service is None:
+            return
+        qwen_web_quota_service = runtime.qwen_web_quota_service
+        if not qwen_web_quota_service.workspace_url:
+            return
+
+        def stop_after_shutdown() -> None:
+            try:
+                qwen_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - shutdown must keep unwinding
+                _logger.error("Application post-shutdown cleanup failed stage=qwen-web-quota")
+
+        _logger.info("Application startup beginning stage=qwen-web-quota")
+        try:
+            qwen_web_quota_service.start()
+        except Exception:  # noqa: BLE001 - optional web quota must not block the app
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.error("Application startup failed stage=qwen-web-quota", exc_info=True)
+            try:
+                qwen_web_quota_service.stop()
+            except Exception:  # noqa: BLE001 - app startup must still continue
+                _logger.error("Application startup rollback failed stage=qwen-web-quota")
+        else:
+            if cleaned:
+                stop_after_shutdown()
+                return
+            _logger.info("Application startup completed stage=qwen-web-quota")
+
     def show_accessibility_guidance() -> None:
         if not cleaned:
             window.show_accessibility_guidance()
@@ -664,6 +729,8 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
             QTimer.singleShot(0, start_kimi_web_quota)
         if runtime.opencode_web_quota_service is not None:
             QTimer.singleShot(0, start_opencode_web_quota)
+        if runtime.qwen_web_quota_service is not None:
+            QTimer.singleShot(0, start_qwen_web_quota)
         if not trusted:
             QTimer.singleShot(0, show_accessibility_guidance)
 
