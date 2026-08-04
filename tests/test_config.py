@@ -482,3 +482,46 @@ def test_opencode_workspace_url_round_trips_through_config_file(tmp_path) -> Non
     save_config(path, config)
     loaded = load_config(path)
     assert loaded.opencode_workspace_url == config.opencode_workspace_url
+
+
+def test_qwen_workspace_url_defaults_to_bailian_personal_page() -> None:
+    assert AppConfig().qwen_workspace_url == (
+        "https://bailian.console.aliyun.com/cn-beijing?tab=plan"
+        "#/efm/subscription/token-plan/personal"
+    )
+
+
+def test_qwen_workspace_url_accepts_bailian_host() -> None:
+    config = AppConfig(
+        qwen_workspace_url=(
+            "https://bailian.console.aliyun.com/cn-shanghai#/efm/subscription/token-plan/personal"
+        )
+    )
+    assert "cn-shanghai" in config.qwen_workspace_url
+
+
+def test_qwen_workspace_url_rejects_foreign_host() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(qwen_workspace_url="https://example.com/cn-beijing")
+
+
+def test_qwen_workspace_url_rejects_http_scheme() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(qwen_workspace_url="http://bailian.console.aliyun.com/cn-beijing#/efm")
+
+
+def test_qwen_workspace_url_allows_empty() -> None:
+    assert AppConfig(qwen_workspace_url="").qwen_workspace_url == ""
+
+
+def test_qwen_quota_enabled_defaults_true() -> None:
+    assert AppConfig().app.qwen_quota_enabled is True
+
+
+def test_qwen_quota_enabled_round_trip(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    config = default_config()
+    config.app.qwen_quota_enabled = False
+    save_config(path, config)
+    loaded = load_config(path)
+    assert loaded.app.qwen_quota_enabled is False

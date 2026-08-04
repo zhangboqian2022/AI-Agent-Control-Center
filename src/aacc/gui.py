@@ -100,6 +100,13 @@ from aacc.opencode_web_error import (
 from aacc.opencode_web_quota import OpenCodeQuota, OpenCodeUsage
 from aacc.opencode_web_quota_service import OpenCodeWebQuotaService
 from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
+from aacc.qwen_web_error import (
+    QwenQuotaErrorCategory,
+    normalize_qwen_quota_error_category,
+    qwen_quota_error_text,
+)
+from aacc.qwen_web_quota import QwenQuota
+from aacc.qwen_web_quota_service import QwenWebQuotaService
 from aacc.task_manager import TaskManager
 
 _logger = logging.getLogger("aacc.gui")
@@ -803,6 +810,208 @@ class OpenCodeQuotaBar(QFrame):
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
         error_text = opencode_quota_error_text(self._last_error, self.language_manager)
+        self.setToolTip(f"{previous}{error_text}\n{retry}")
+
+    def retranslate_ui(self) -> None:
+        self._set_period_labels()
+        if self._display_state == "pending":
+            self.show_pending()
+        elif self._display_state == "quota" and self._last_quota is not None:
+            self._render_quota(self._last_quota)
+        elif self._display_state == "error":
+            self._render_error()
+        else:
+            self.show_unauthorized()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class QwenQuotaBar(QFrame):
+    """Qwen Code token-plan quota strip (5 小时 / 7 天) from web session data."""
+
+    clicked = Signal()
+
+    def __init__(self, language_manager: LanguageManager | None = None) -> None:
+        super().__init__()
+        self.language_manager = language_manager or LanguageManager(ZH_CN)
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self._last_quota: QwenQuota | None = None
+        self._display_state = "unauthorized"
+        self._last_error: QwenQuotaErrorCategory | None = None
+        self.setObjectName("quotaBar")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QGridLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setHorizontalSpacing(4)
+        layout.setVerticalSpacing(4)
+        self.dot = QLabel("●")
+        self.dot.setObjectName("quotaDot")
+        layout.addWidget(self.dot, 0, 0, Qt.AlignmentFlag.AlignTop)
+        self.summary_label = QLabel()
+        self.summary_label.setObjectName("quotaSummary")
+        self.summary_label.setFixedWidth(98)
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label, 0, 1, Qt.AlignmentFlag.AlignTop)
+        metric_layout = QGridLayout()
+        metric_layout.setContentsMargins(0, 0, 0, 0)
+        metric_layout.setHorizontalSpacing(4)
+        metric_layout.setVerticalSpacing(4)
+        metric_layout.setColumnMinimumWidth(0, 40)
+        metric_layout.setColumnMinimumWidth(1, 36)
+        metric_layout.setColumnMinimumWidth(2, 16)
+        metric_layout.setColumnMinimumWidth(3, 152)
+        metric_layout.setColumnStretch(2, 1)
+        layout.addLayout(metric_layout, 0, 2, 1, 1)
+        layout.setColumnStretch(2, 1)
+        self._five_hour_row = _add_quota_metric_row(metric_layout, 0, "")
+        self._weekly_row = _add_quota_metric_row(metric_layout, 1, "")
+        self._metric_rows = [self._five_hour_row, self._weekly_row]
+        self.five_hour_label = self._five_hour_row.percent_label
+        self.five_hour_bar = self._five_hour_row.progress_bar
+        self.weekly_label = self._weekly_row.percent_label
+        self.weekly_bar = self._weekly_row.progress_bar
+        self._set_period_labels()
+        self.show_unauthorized()
+
+    def _set_period_labels(self) -> None:
+        self._five_hour_row.period_label.setText(self.language_manager.text("qwen.five_hour"))
+        self._weekly_row.period_label.setText(self.language_manager.text("qwen.weekly"))
+
+    def period_labels(self) -> list[str]:
+        return [row.period_label.text() for row in self._metric_rows]
+
+    def percent_labels(self) -> list[str]:
+        return [row.percent_label.text() for row in self._metric_rows]
+
+    def reset_labels(self) -> list[str]:
+        return [row.reset_label.text() for row in self._metric_rows]
+
+    def metric_row_count(self) -> int:
+        return len(self._metric_rows)
+
+    def show_unauthorized(self) -> None:
+        self._display_state = "unauthorized"
+        self._last_quota = None
+        self._last_error = None
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self.dot.setStyleSheet("color: #e06c75;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('qwen.quota')}\n"
+            + ("点击授权" if self.language_manager.language == ZH_CN else "Authorize")
+        )
+        for row in self._metric_rows:
+            _set_quota_metric(row, None, None, self.language_manager)
+        self.setToolTip(
+            "点击登录百炼控制台，同步 Qwen Code 额度"
+            if self.language_manager.language == ZH_CN
+            else "Sign in to the Bailian console to sync Qwen Code quota"
+        )
+
+    def show_pending(self) -> None:
+        self._display_state = "pending"
+        self._last_error = None
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('qwen.quota')}\n"
+            f"{self.language_manager.text('quota.authorizing')}"
+        )
+        self.setToolTip(self.language_manager.text("quota.authorizing"))
+
+    def show_quota(self, quota: QwenQuota, *, preserve_errors: bool = False) -> None:
+        self._last_quota = quota
+        if not preserve_errors:
+            self._last_error = None
+        if self._last_error is not None:
+            self._display_state = "error"
+            self._render_error()
+            return
+        self._display_state = "quota"
+        self._render_quota(quota)
+
+    def show_error(self, category: object) -> None:
+        self._display_state = "error"
+        self._last_error = normalize_qwen_quota_error_category(category)
+        self._render_error()
+
+    def _render_quota(self, quota: QwenQuota) -> None:
+        self._has_known_quota = quota.status is not QuotaStatus.UNKNOWN
+        if quota.status is QuotaStatus.UNKNOWN:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('qwen.quota')}\n"
+                f"{self.language_manager.text('quota.unavailable')}"
+            )
+        elif quota.status is QuotaStatus.PARTIAL:
+            self.dot.setStyleSheet("color: #e5c07b;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('qwen.quota')}\n"
+                f"{self.language_manager.text('quota.partial')}"
+            )
+        elif quota.status is QuotaStatus.STALE:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('qwen.quota')}\n"
+                f"{self.language_manager.text('quota.stale')}"
+            )
+        else:
+            self.dot.setStyleSheet("color: #98c379;")
+            self.summary_label.setText(self.language_manager.text("qwen.quota"))
+        self._show_detail(self._five_hour_row, quota.five_hour)
+        self._show_detail(self._weekly_row, quota.weekly)
+        tooltip_lines = [
+            self._detail_tooltip(self.language_manager.text("qwen.five_hour"), quota.five_hour),
+            self._detail_tooltip(self.language_manager.text("qwen.weekly"), quota.weekly),
+        ]
+        if quota.fetched_at is not None:
+            tooltip_lines.append(
+                self.language_manager.text(
+                    "quota.last_update",
+                    updated=quota.fetched_at.astimezone().strftime("%H:%M:%S"),
+                )
+            )
+        tooltip_lines.append(self.language_manager.text("quota.refresh"))
+        self._last_quota_tooltip = "\n".join(tooltip_lines)
+        self.setToolTip(self._last_quota_tooltip)
+
+    def _show_detail(self, row: _QuotaMetricRow, detail: QuotaDetail | None) -> None:
+        if detail is None:
+            _set_quota_metric(row, None, None, self.language_manager)
+            return
+        _set_quota_metric(row, detail.percentage, detail.reset_at, self.language_manager)
+
+    def _detail_tooltip(self, name: str, detail: QuotaDetail | None) -> str:
+        if detail is None:
+            unknown = "未知" if self.language_manager.language == ZH_CN else "Unknown"
+            return f"{name}: {unknown}"
+        reset = (
+            format_reset_countdown(detail.reset_at)
+            if self.language_manager.language == ZH_CN
+            else format_quota_reset(detail.reset_at, self.language_manager)
+        )
+        percentage = "--" if detail.percentage is None else f"{detail.percentage}%"
+        return f"{name}: {percentage} ({reset})"
+
+    def _render_error(self) -> None:
+        if self._last_quota is not None:
+            self._render_quota(self._last_quota)
+        self.dot.setStyleSheet("color: #8997aa;")
+        if self._has_known_quota:
+            state_text = (
+                "数据过期"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.stale")
+            )
+        else:
+            state_text = self.language_manager.text("quota.unavailable")
+        self.summary_label.setText(f"{self.language_manager.text('qwen.quota')}\n{state_text}")
+        previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
+        retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
+        error_text = qwen_quota_error_text(self._last_error, self.language_manager)
         self.setToolTip(f"{previous}{error_text}\n{retry}")
 
     def retranslate_ui(self) -> None:
@@ -1701,6 +1910,7 @@ class MainWindow(QWidget):
         kimi_web_quota_service: KimiWebQuotaService | None = None,
         codex_quota_service: CodexQuotaService | None = None,
         opencode_web_quota_service: OpenCodeWebQuotaService | None = None,
+        qwen_web_quota_service: QwenWebQuotaService | None = None,
         open_url: Callable[[str], None] | None = None,
         language_manager: LanguageManager | None = None,
     ) -> None:
@@ -1765,8 +1975,11 @@ class MainWindow(QWidget):
         self.kimi_web_quota_service = kimi_web_quota_service
         self.codex_quota_service = codex_quota_service
         self.opencode_web_quota_service = opencode_web_quota_service
+        self.qwen_web_quota_service = qwen_web_quota_service
         self._latest_opencode_quota: OpenCodeQuota | None = None
+        self._latest_qwen_quota: QwenQuota | None = None
         self._opencode_authorized = False
+        self._qwen_authorized = False
         self._latest_kimi_code_quota: KimiQuota | None = None
         self._latest_kimi_web_quota: KimiQuota | None = None
         self._kimi_web_authorized = False
@@ -1777,6 +1990,7 @@ class MainWindow(QWidget):
         self.quota_bar: QuotaBar | None = None
         self.codex_quota_bar: CodexQuotaBar | None = None
         self.opencode_quota_bar: OpenCodeQuotaBar | None = None
+        self.qwen_quota_bar: QwenQuotaBar | None = None
         self._unsubscribe_discovery_health = (
             subscribe_discovery_health(self.discovery_health_received.emit)
             if subscribe_discovery_health is not None
@@ -2007,6 +2221,13 @@ class MainWindow(QWidget):
                 self._on_opencode_login_state
             )
             self.opencode_web_quota_service.error_occurred.connect(self._on_opencode_quota_error)
+        if self.qwen_web_quota_service is not None:
+            self.qwen_quota_bar = QwenQuotaBar(self.language_manager)
+            self.qwen_quota_bar.clicked.connect(self._on_qwen_quota_bar_clicked)
+            layout.addWidget(self.qwen_quota_bar)
+            self.qwen_web_quota_service.quota_updated.connect(self._on_qwen_quota_updated)
+            self.qwen_web_quota_service.login_state_changed.connect(self._on_qwen_login_state)
+            self.qwen_web_quota_service.error_occurred.connect(self._on_qwen_quota_error)
 
         self.discovery_warning = QFrame()
         self.discovery_warning.setObjectName("discoveryWarning")
@@ -2154,6 +2375,8 @@ class MainWindow(QWidget):
             self.codex_quota_bar.retranslate_ui()
         if self.opencode_quota_bar is not None:
             self.opencode_quota_bar.retranslate_ui()
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.retranslate_ui()
         if self.tray_show_action is not None:
             self.tray_show_action.setText(self.language_manager.text("tray.show_hide"))
         if self.tray_compact_action is not None:
@@ -2585,6 +2808,47 @@ class MainWindow(QWidget):
         self._opencode_authorized = False
         if self.opencode_quota_bar is not None:
             self.opencode_quota_bar.show_unauthorized()
+
+    def _on_qwen_quota_bar_clicked(self) -> None:
+        if self.qwen_web_quota_service is None:
+            return
+        if not self._qwen_authorized:
+            self.qwen_web_quota_service.open_login(self)
+            return
+        self.qwen_web_quota_service.refresh_now()
+
+    def _on_qwen_quota_updated(self, quota: object) -> None:
+        if not isinstance(quota, QwenQuota):
+            return
+        self._latest_qwen_quota = quota
+        self._qwen_authorized = quota.status is not QuotaStatus.UNKNOWN
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_quota(quota)
+
+    def _on_qwen_login_state(self, authorized: bool) -> None:
+        self._qwen_authorized = authorized
+        if authorized:
+            return
+        self._latest_qwen_quota = None
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_unauthorized()
+
+    def _on_qwen_quota_error(self, category: str) -> None:
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_error(category)
+
+    def open_qwen_web_login(self) -> None:
+        if self.qwen_web_quota_service is not None:
+            self.qwen_web_quota_service.open_login(self)
+
+    def qwen_logout(self) -> None:
+        if self.qwen_web_quota_service is None:
+            return
+        self.qwen_web_quota_service.logout()
+        self._latest_qwen_quota = None
+        self._qwen_authorized = False
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_unauthorized()
 
     def _on_oauth_code_ready(self, user_code: str, url: str) -> None:
         if self._oauth_dialog is None:
@@ -3248,7 +3512,11 @@ class MainWindow(QWidget):
         super().changeEvent(event)
 
     def _request_quota_refresh_on_restore(self) -> None:
-        if self.kimi_web_quota_service is None and self.opencode_web_quota_service is None:
+        if (
+            self.kimi_web_quota_service is None
+            and self.opencode_web_quota_service is None
+            and self.qwen_web_quota_service is None
+        ):
             return
         now = time.monotonic()
         if now - self._last_restore_quota_refresh < RESTORE_QUOTA_REFRESH_INTERVAL_SECONDS:
@@ -3258,6 +3526,8 @@ class MainWindow(QWidget):
             self.kimi_web_quota_service.refresh_now()
         if self.opencode_web_quota_service is not None:
             self.opencode_web_quota_service.refresh_now()
+        if self.qwen_web_quota_service is not None:
+            self.qwen_web_quota_service.refresh_now()
 
     def handle_app_state_change(self, state: Qt.ApplicationState) -> None:
         if sys.platform != "darwin":

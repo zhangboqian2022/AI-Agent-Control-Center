@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.5-rc.1 — 2026-08-04
+
+[Bilingual release notes](docs/release-notes-1.4.5rc1.md)
+
+- [Feat] Qwen Code (Bailian token-plan) quota is now shown alongside Kimi and OpenCode. AACC keeps an embedded web-view of the Aliyun Bailian personal token-plan page; once you sign in once, the cookie is cached in AACC's private directory and the 5-hour / 7-day windows refresh every 5 minutes by reading the rendered page text. AACC never sees or stores the account password. Add `qwen_quota_enabled` (default on) and `qwen_workspace_url` (default bailian personal page) to `config.yaml`.
+
 ## 1.4.4-rc.6 — 2026-08-03
 
 [Bilingual release notes](docs/release-notes-1.4.4rc6.md)
