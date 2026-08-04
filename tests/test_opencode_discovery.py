@@ -47,12 +47,13 @@ def test_fresh_pending_tool_is_running() -> None:
     assert result.status is TaskStatus.RUNNING
 
 
-def test_stale_pending_tool_is_never_waiting_approval() -> None:
-    # opencode does not persist permission requests, so a stale pending part
-    # must not be reported as waiting for approval; it resolves to the same
-    # stalled-session observation as any other stale part.
+def test_stale_pending_tool_with_process_is_running() -> None:
+    # opencode persists "pending" only while tool-call arguments stream;
+    # permission requests are never persisted. A stale pending part with a
+    # live process is a slow or stuck stream, i.e. still an in-flight turn,
+    # so it must keep reporting running instead of a false waiting state.
     result = _evaluate(_snapshot("tool", "pending", 300), alive=True)
-    assert result.status is TaskStatus.WAITING_INPUT
+    assert result.status is TaskStatus.RUNNING
 
 
 def test_running_tool_is_running() -> None:
@@ -108,9 +109,11 @@ def test_streaming_parts_within_window_are_running() -> None:
         assert result.status is TaskStatus.RUNNING, part_type
 
 
-def test_stale_streaming_part_with_process_is_waiting_input() -> None:
+def test_stale_streaming_part_with_process_is_running() -> None:
+    # A stale streaming part with a live process is a long generation or a
+    # stuck stream; the turn is still in flight, never waiting for input.
     result = _evaluate(_snapshot("text", None, 300), alive=True)
-    assert result.status is TaskStatus.WAITING_INPUT
+    assert result.status is TaskStatus.RUNNING
 
 
 def test_stale_streaming_part_without_process_is_stopped() -> None:
@@ -365,7 +368,7 @@ def _add_part(
     )
 
 
-def test_discover_stale_pending_tool_is_waiting_input(tmp_path: Path, monkeypatch) -> None:
+def test_discover_stale_pending_tool_is_running(tmp_path: Path, monkeypatch) -> None:
     path, connection = _make_db(tmp_path)
     _add_session(connection, "ses_1", title="任务一", directory="/work/a")
     _add_part(
@@ -381,7 +384,7 @@ def test_discover_stale_pending_tool_is_waiting_input(tmp_path: Path, monkeypatc
     tasks = discovery.discover()
     assert len(tasks) == 1
     assert tasks[0].config.id == "opencode:ses_1"
-    assert tasks[0].state.status is TaskStatus.WAITING_INPUT
+    assert tasks[0].state.status is TaskStatus.RUNNING
     assert tasks[0].config.agent.type == "opencode_cli"
     assert tasks[0].config.agent.display_name == "OpenCode"
     assert tasks[0].state.session_id == "ses_1"
