@@ -24,7 +24,7 @@ _AACC 1.4.4-rc.1 界面示意图，使用合成演示数据，不含真实账户
 - **及时且克制的概括：** 每 5 秒检查 Codex 元数据，用“正在修改代码”“正在运行测试”等固定短语反馈活动，不展示原始载荷。
 - **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示；OpenCode 显示 Go 套餐滚动/每周/每月额度。每个可用重置时间都直接写在行内；真实 `0%` 明确显示为 `0%`，只有未知数据才显示 `--`。
 - **OpenCode Go 套餐额度条：** macOS 使用自持网页视图，Windows 使用独立的 AACC 专用 Microsoft Edge 配置目录和 CDP；两边都登录 opencode.ai（GitHub/Google），从 /go 工作区页面提取已渲染的滚动/每周/每月额度（百分比 + 重置倒计时），三行展示在 Kimi 额度条下方。绝不读取 prompt、回复、工具命令或 reasoning 内容。在 `config.yaml` 配置 `opencode_workspace_url`。
-- **OpenCode CLI 任务发现：** 每 5 秒只读轮询 opencode 本地 SQLite 数据库，从消息部件快照推断任务状态：权限挂起 → 黄灯“等待同意”；进行中 → 蓝灯“进行中”；停滞 + 进程在 → 黄灯“等待输入”；有明确完成证据 → 绿灯“已完成”；进程消失但没有完成证据 → 停止态，不伪造完成。Windows 优先读取 `%LOCALAPPDATA%\opencode\opencode.db`，并按会话工作目录定位终端。只读取部件类型/状态/时间戳——绝不读取文本内容。
+- **OpenCode CLI 任务发现：** 每 5 秒只读轮询 opencode 本地 SQLite 数据库，从消息部件快照推断任务状态：进程在且回合未结束（含缓慢或卡住的流式生成）→ 蓝灯“进行中”；有明确完成证据 → 绿灯“已完成”；进程消失但没有完成证据 → 停止态，不伪造完成。opencode 不会把权限请求写入数据库，因此无法推断授权等待，也永不误报黄色“等待”状态。Windows 优先读取 `%LOCALAPPDATA%\opencode\opencode.db`，并按会话工作目录定位终端。只读取部件类型/状态/时间戳——绝不读取文本内容。
 - **Kimi 会员额度缓存：** Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置；Kimi Code OAuth 凭据由 AACC 凭据保护另行保存。网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；查询不消耗生成 Token。
 - **本机优先：** 只读取判断状态所需的本机任务元数据，不上传对话内容。
 - **可靠的完成判断：** 优先依据 Codex `task_started` 与 `task_complete` 会话事件，避免任务完成后仍错误显示“执行中”。
