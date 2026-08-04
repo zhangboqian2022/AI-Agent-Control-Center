@@ -12,7 +12,9 @@ from typing import Any
 from aacc.file_security import protect_directory, protect_file
 
 _STATE_FILE_NAME = "kimi-web-session-state.json"
-_ALLOWED_STATE_FILE_NAMES = frozenset({_STATE_FILE_NAME, "opencode-web-session-state.json"})
+_ALLOWED_STATE_FILE_NAMES = frozenset(
+    {_STATE_FILE_NAME, "opencode-web-session-state.json", "qwen-web-session-state.json"}
+)
 _STATE_VERSION = 1
 
 

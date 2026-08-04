@@ -32,6 +32,7 @@ class FakeWebView(QObject):
         self.script_result: object = None
         self.cookies_deleted = False
         self.deleted = False
+        self.reloads = 0
         self.settings = lambda: _FakeSettings()
 
     def url(self) -> QUrl:
@@ -40,6 +41,9 @@ class FakeWebView(QObject):
     def setUrl(self, url: QUrl) -> None:
         self._url = url
         self.scripts = []
+
+    def reload(self) -> None:
+        self.reloads += 1
 
     def runJavaScript(self, script: str, callback=None) -> None:
         self.scripts.append(script)
@@ -82,12 +86,13 @@ def make_session(tmp_path: Path) -> QwenWebSession:
     return session
 
 
-def test_dom_extract_script_contains_text_extraction() -> None:
+def test_dom_extract_script_emits_raw_text_snippets() -> None:
     script = qwen_dom_extract_script(WORKSPACE_URL, 7)
     assert "document.body.innerText" in script
-    assert "extract5h" in script
-    assert "extract7d" in script
+    assert "fiveHourText" in script
+    assert "weeklyText" in script
     assert "AACC_QWEN_QUOTA:" in script
+    assert "unauthorized" in script
     assert qwen_dom_extract_script("https://bailian.console.aliyun.com/other", 1) == ""
 
 
@@ -106,11 +111,24 @@ def test_user_data_path_windows_raises_without_localappdata(monkeypatch, tmp_pat
         qwen_webview_user_data_path(tmp_path)
 
 
-def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
+def test_session_refresh_navigates_then_runs_script_after_load(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)
     session.refresh()
     assert session.view.url().toString() == WORKSPACE_URL
+    assert session.view.scripts == []
+    session._on_loading_changed(FakeLoadingInfo())
+    assert session.view.scripts
+    assert "document.body.innerText" in session.view.scripts[-1]
+
+
+def test_refresh_reloads_in_place_when_origin_matches(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.view._url = QUrl(WORKSPACE_URL)
+    session.refresh()
+    assert session.view.reloads == 1
+    assert session.view.scripts == []
     session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
@@ -136,7 +154,7 @@ def test_session_without_workspace_url_is_inert(qapp, tmp_path: Path) -> None:
     assert session._is_bailian_origin() is False
     session.refresh()
     assert session.logout() is True
-    session._load_workspace_url()
+    session._reload_workspace_url()
     assert session.view.scripts == []
     assert session.view.url().isEmpty()
 
@@ -149,6 +167,7 @@ def test_refresh_without_prior_auth_does_not_navigate(qapp, tmp_path: Path) -> N
     session.refresh()
     assert session._refreshing is False
     assert session.view.url().isEmpty()
+    assert session.view.reloads == 0
 
 
 def test_refresh_navigates_when_login_dialog_open(qapp, tmp_path: Path) -> None:
@@ -162,15 +181,9 @@ def test_refresh_navigates_when_login_dialog_open(qapp, tmp_path: Path) -> None:
     assert session.view.url().toString() == WORKSPACE_URL
 
 
-def test_quota_success_sets_may_reuse_for_future_refresh(monkeypatch, qapp, tmp_path: Path) -> None:
+def test_quota_success_sets_may_reuse_for_future_refresh(qapp, tmp_path: Path) -> None:
     del qapp
-    import aacc.qwen_web_session as module
-
-    container = QWidget()
-    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
-    session = QwenWebSession(tmp_path)
-    session.view = FakeWebView()  # type: ignore[assignment]
-    session.set_workspace_url(WORKSPACE_URL)
+    session = make_session(tmp_path)
     session._login_dialog_open = True
     session.refresh()
     generation = session._active_refresh_generation
@@ -178,7 +191,7 @@ def test_quota_success_sets_may_reuse_for_future_refresh(monkeypatch, qapp, tmp_
     payload = {
         "kind": "quota",
         "generation": generation,
-        "raw": {"fiveHour": {"percentage": 1}, "sevenDay": {"percentage": 2}},
+        "raw": {"fiveHourText": "5 小时\n30%", "weeklyText": "7 天\n65%"},
     }
     session._on_title_changed(_bridge_title(payload))
     assert session._may_reuse is True
@@ -189,22 +202,11 @@ def test_quota_success_sets_may_reuse_for_future_refresh(monkeypatch, qapp, tmp_
 
 def test_logout_clears_may_reuse(qapp, tmp_path: Path) -> None:
     del qapp
-    session = QwenWebSession(tmp_path)
-    session.view = FakeWebView()  # type: ignore[assignment]
+    session = make_session(tmp_path)
     session.set_workspace_url(WORKSPACE_URL)
     session._may_reuse = True
     session.logout()
     assert session._may_reuse is False
-
-
-def test_refresh_runs_fetch_script_without_reload_when_origin_matches(qapp, tmp_path: Path) -> None:
-    del qapp
-    session = make_session(tmp_path)
-    session.view._url = QUrl(WORKSPACE_URL)
-    session.refresh()
-    assert session.view.scripts
-    assert "document.body.innerText" in session.view.scripts[-1]
-    assert session.view.url().toString() == WORKSPACE_URL
 
 
 def test_open_login_without_workspace_url_shows_message_box(
@@ -251,16 +253,32 @@ def test_open_login_builds_reusable_dialog_and_closes_after_quota(
     payload = {
         "kind": "quota",
         "generation": generation,
-        "raw": {
-            "fiveHour": {"percentage": 5, "resetSeconds": 3600},
-            "sevenDay": {"percentage": 5, "resetSeconds": 3600},
-        },
+        "raw": {"fiveHourText": "5 小时\n5%\n1 小时后重置", "weeklyText": "7 天\n5%\n6 天后重置"},
     }
     session._on_title_changed(_bridge_title(payload))
     assert login_states == [True]
     assert session._login_dialog_open is False
     session.close()
     assert session._login_dialog is None
+
+
+def test_labels_without_usage_do_not_fake_login(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    login_states: list[bool] = []
+    errors: list[str] = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+    session._login_dialog_open = True
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    payload = {"kind": "unauthorized", "generation": generation, "message": "NO_USAGE_DATA"}
+    session._on_title_changed(_bridge_title(payload))
+    assert session._may_reuse is False
+    assert session._login_dialog_open is True
+    assert login_states == [False]
+    assert errors == ["unauthorized"]
 
 
 def test_logout_cleanup_watchdog_timeout_resets_flag(qapp, tmp_path: Path) -> None:
@@ -329,30 +347,11 @@ def test_session_bridge_delivers_quota_payload(qapp, tmp_path: Path) -> None:
     payload = {
         "kind": "quota",
         "generation": generation,
-        "raw": {
-            "fiveHour": {"percentage": 30, "resetSeconds": 18000},
-            "sevenDay": {"percentage": 65, "resetSeconds": 604800},
-        },
+        "raw": {"fiveHourText": "5 小时\n30%\n5 小时后重置", "weeklyText": "7 天\n65%"},
     }
     session._on_title_changed(_bridge_title(payload))
     assert len(quotas) == 1
-    assert quotas[0]["fiveHour"]["percentage"] == 30
-
-
-def test_session_bridge_unauthorized_emits_login_state(qapp, tmp_path: Path) -> None:
-    del qapp
-    session = make_session(tmp_path)
-    login_states: list[bool] = []
-    errors: list[str] = []
-    session.login_state_changed.connect(login_states.append)
-    session.error_occurred.connect(errors.append)
-    session.refresh()
-    generation = session._active_refresh_generation
-    assert generation is not None
-    payload = {"kind": "unauthorized", "generation": generation, "message": "UNAUTHORIZED:401"}
-    session._on_title_changed(_bridge_title(payload))
-    assert login_states == [False]
-    assert errors == ["unauthorized"]
+    assert quotas[0]["fiveHourText"] == "5 小时\n30%\n5 小时后重置"
 
 
 def test_session_bridge_stale_generation_ignored(qapp, tmp_path: Path) -> None:
@@ -433,7 +432,7 @@ def test_bridge_completion_clears_active_generation(qapp, tmp_path: Path) -> Non
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    payload = {"kind": "quota", "generation": generation, "raw": {}}
+    payload = {"kind": "quota", "generation": generation, "raw": {"fiveHourText": "5h\n1%"}}
     session._on_title_changed(_bridge_title(payload))
     assert len(quotas) == 1
     assert session._active_refresh_generation is None
@@ -472,9 +471,10 @@ def test_manual_login_dialog_dismissal_resets_state(monkeypatch, qapp, tmp_path:
     assert errors == []
     session.view.scripts = []
     session.refresh()
+    assert session.view.url().toString() == WORKSPACE_URL
+    session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
-    assert session.view.url().toString() == WORKSPACE_URL
     session.close()
 
 
@@ -495,10 +495,7 @@ def test_quota_success_close_does_not_double_handle(monkeypatch, qapp, tmp_path:
     payload = {
         "kind": "quota",
         "generation": generation,
-        "raw": {
-            "fiveHour": {"percentage": 5, "resetSeconds": 3600},
-            "sevenDay": {"percentage": 5, "resetSeconds": 3600},
-        },
+        "raw": {"fiveHourText": "5 小时\n5%", "weeklyText": "7 天\n5%"},
     }
     session._on_title_changed(_bridge_title(payload))
     assert login_states == [True]
@@ -526,11 +523,9 @@ def test_refresh_re_entry_is_inert_while_in_flight(qapp, tmp_path: Path) -> None
     session.view._url = QUrl(WORKSPACE_URL)
     session.refresh()
     assert session._refreshing is True
-    assert session.view.scripts
-    session.view.scripts = []
+    assert session.view.reloads == 1
     session.refresh()
-    assert session.view.scripts == []
-    assert session.view.url().toString() == WORKSPACE_URL
+    assert session.view.reloads == 1
 
 
 def test_refresh_during_login_progress_does_not_navigate(monkeypatch, qapp, tmp_path: Path) -> None:
@@ -544,9 +539,9 @@ def test_refresh_during_login_progress_does_not_navigate(monkeypatch, qapp, tmp_
     assert session._refreshing is True
     assert session.view.url().toString() == WORKSPACE_URL
     session._close_login_dialog()
-    session.view.scripts = []
+    session.view.reloads = 0
     session.refresh()
-    assert session.view.scripts == []
+    assert session.view.reloads == 0
     assert session.view.url().toString() == WORKSPACE_URL
     session.close()
 

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QWidget
 
 from aacc.i18n import ZH_CN, LanguageManager
 from aacc.kimi_quota import QuotaStatus
+from aacc.qwen_chrome_cdp import QwenChromeMissingError, find_qwen_chrome_executable
 from aacc.qwen_web_error import (
     QwenQuotaErrorCategory,
     normalize_qwen_quota_error_category,
@@ -47,6 +48,42 @@ def _create_native_web_session(
         _WebSessionLike,
         session_type(config_dir, parent, language_manager=language_manager),
     )
+
+
+def _create_chrome_web_session(
+    config_dir: Path,
+    parent: QObject,
+    *,
+    language_manager: LanguageManager,
+) -> _WebSessionLike:
+    session_type: Any = import_module("aacc.qwen_chrome_session").QwenChromeSession
+    return cast(
+        _WebSessionLike,
+        session_type(config_dir, parent, language_manager=language_manager),
+    )
+
+
+def _create_platform_web_session(
+    config_dir: Path,
+    parent: QObject,
+    *,
+    language_manager: LanguageManager,
+) -> _WebSessionLike:
+    """Prefer the Chrome-CDP session on macOS when Chrome is installed.
+
+    The Aliyun login flow (RAM entry and friends) needs a full browser
+    engine; the lightweight native web view is the fallback when Chrome is
+    missing and the Windows path until a dedicated Edge-CDP session exists.
+    """
+
+    if sys.platform == "darwin":
+        try:
+            find_qwen_chrome_executable()
+        except QwenChromeMissingError:
+            pass
+        else:
+            return _create_chrome_web_session(config_dir, parent, language_manager=language_manager)
+    return _create_native_web_session(config_dir, parent, language_manager=language_manager)
 
 
 class QwenWebQuotaService(QObject):
@@ -130,16 +167,9 @@ class QwenWebQuotaService(QObject):
 
     def _ensure_session(self) -> _WebSessionLike:
         if self._session is None:
-            if sys.platform == "win32":
-                session_type: Any = import_module("aacc.qwen_edge_session").QwenEdgeSession
-                self._session = cast(
-                    _WebSessionLike,
-                    session_type(self._config_dir, self, language_manager=self.language_manager),
-                )
-            else:
-                self._session = _create_native_web_session(
-                    self._config_dir, self, language_manager=self.language_manager
-                )
+            self._session = _create_platform_web_session(
+                self._config_dir, self, language_manager=self.language_manager
+            )
             self._connect_session(self._session)
         return self._session
 

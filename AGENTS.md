@@ -92,21 +92,30 @@ ruff/mypy/pytest（`QT_QPA_PLATFORM=offscreen`）；mac 腿另跑 diff-cover
 
 ## 当前进度（2026-08-04）
 
-- **1.4.5-rc.1**（feat 分支 `feat/qwen-quota`，未发布，未合并 main）已实现。
-  新增 Qwen Code（阿里云百炼 token-plan）额度条，与 Kimi/OpenCode 并列：
-  内嵌 QtWebView 加载 `https://bailian.console.aliyun.com/cn-beijing?tab=plan
-  #/efm/subscription/token-plan/personal`，登录一次 cookie 缓存到 AACC 私有
-  目录，5 分钟定时读 `document.body.innerText` 提「5 小时」「7 天」窗口，
-  title 桥接回 Python。`config.app.qwen_quota_enabled`（默认 True）+
-  `qwen_workspace_url`（默认百炼 personal 页，host 白名单校验）。
-- **当前未完成项（下一步机器人接手）**：
-  1. **DOM 提取正则需实测收紧**。`qwen_web_session.py::qwen_dom_extract_script`
-     现用宽松骨架正则（`/5\s*小时|5\s*h|5h/i` 与 `/7\s*天|7\s*d|7d/i`），
-     实机登录后额度条可能仍「额度不可用」（log 出现 `DOM_TIMEOUT`）。
-     需要用户登录后看 `Qwen quota raw=...` 日志或抓页面 innerText 拿到真实
-     渲染文字，调正则。**用户已知此流程（设计文档写明「先骨架后调正则」）**。
-  2. Windows Edge CDP 专属会话未实现（service 在 win32 按 native QtWebView
-     回退；`qwen_edge_session.py` 尚未创建，import_module 占位）。
-- 三提交已落 `feat/qwen-quota`（design spec / feat / fix）。本机 1336 passed、
-  7 skipped、ruff、format、mypy 全绿。
+- **1.4.5-rc.2**（feat 分支 `feat/qwen-quota`，未发布，未合并 main）。
+  rc.1 实测暴露的四处问题已修复：
+  1. **Qwen 授权浏览器改走真实 Chrome（CDP）**：阿里云 RAM 登录需
+     新窗口/跨域导航，QtWebView 无 `createWindow` 弹窗被丢弃。沿用
+     Windows Edge CDP 范式新增 `qwen_chrome_cdp.py` / `qwen_chrome_session.py`：
+     darwin 且装有 Chrome 时 service 选 Chrome 会话（可见窗口登录、
+     headless 定时刷新，cookie 在 `qwen-chrome-profile/`，登录态持久化
+     `qwen-web-session-state.json`）；未装 Chrome 回退原生 QtWebView 会话
+     （`qwen_web_session.py`，同为 Windows native 路径）。不打包浏览器内核。
+  2. **未登录误判修复**：匿名页「5 小时/7 天」介绍文案曾被当成额度数据，
+     自动关登录框显示假 0%；现在提取上抛原始文本片段，无百分比即
+     `unauthorized`，Python 解析器（`qwen_web_quota.py`）要求百分比存在。
+  3. **小数百分比**：0.04% 不再被抹成 0%（`QuotaDetail.percentage`
+     int → float | None，GUI `format_quota_percentage`）；重置倒计时按窗口
+     切片防串窗。
+  4. **qwen/opencode refresh 整页重载**：此前只重读旧 DOM，5 分钟轮询数值
+     恒定；现在 `_reload_workspace_url()` 后 load 完成再提脚本。kimi 不变。
+  另修复 service 在 win32 导入不存在的 `aacc.qwen_edge_session`（回退 native）；
+  `websocket-client` 依赖改为跨平台（macOS CDP 传输）。
+- `config.app.qwen_quota_enabled`（默认 True）+ `qwen_workspace_url`
+  （默认百炼 personal 页，host 白名单校验）不变。
+- **待用户实测**：Chrome（CDP）窗口内完成阿里云 RAM 登录、0.04% 显示、
+  5 分钟刷新见新值；若提取正则与真实渲染文字不符，看 `Qwen quota raw=...`
+  日志（现为原始文本片段）继续收紧。
+- Windows Edge CDP 专属会话仍未实现（native 回退）。
+- 本机全量测试绿、ruff、format、mypy 全绿。
 - 不宣称：消费级 Windows 10/11 真机验证。
