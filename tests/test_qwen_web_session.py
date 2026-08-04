@@ -78,6 +78,7 @@ def make_session(tmp_path: Path) -> QwenWebSession:
     session = QwenWebSession(tmp_path)
     session.view = FakeWebView()  # type: ignore[assignment]
     session.set_workspace_url(WORKSPACE_URL)
+    session._may_reuse = True
     return session
 
 
@@ -138,6 +139,62 @@ def test_session_without_workspace_url_is_inert(qapp, tmp_path: Path) -> None:
     session._load_workspace_url()
     assert session.view.scripts == []
     assert session.view.url().isEmpty()
+
+
+def test_refresh_without_prior_auth_does_not_navigate(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url(WORKSPACE_URL)
+    session.refresh()
+    assert session._refreshing is False
+    assert session.view.url().isEmpty()
+
+
+def test_refresh_navigates_when_login_dialog_open(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url(WORKSPACE_URL)
+    session._login_dialog_open = True
+    session.refresh()
+    assert session._refreshing is True
+    assert session.view.url().toString() == WORKSPACE_URL
+
+
+def test_quota_success_sets_may_reuse_for_future_refresh(monkeypatch, qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.qwen_web_session as module
+
+    container = QWidget()
+    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url(WORKSPACE_URL)
+    session._login_dialog_open = True
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    payload = {
+        "kind": "quota",
+        "generation": generation,
+        "raw": {"fiveHour": {"percentage": 1}, "sevenDay": {"percentage": 2}},
+    }
+    session._on_title_changed(_bridge_title(payload))
+    assert session._may_reuse is True
+    session.view.scripts = []
+    session.refresh()
+    assert session._refreshing is True
+
+
+def test_logout_clears_may_reuse(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url(WORKSPACE_URL)
+    session._may_reuse = True
+    session.logout()
+    assert session._may_reuse is False
 
 
 def test_refresh_runs_fetch_script_without_reload_when_origin_matches(qapp, tmp_path: Path) -> None:

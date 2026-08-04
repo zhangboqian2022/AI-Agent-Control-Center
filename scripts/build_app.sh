@@ -39,6 +39,7 @@ uv run pyinstaller \
   --hidden-import PySide6.QtWebView \
   --hidden-import aacc.kimi_web_session \
   --hidden-import aacc.opencode_web_session \
+  --hidden-import aacc.qwen_web_session \
   --add-data "$project_root/src/aacc/styles.qss:aacc" \
   --exclude-module mypy \
   --exclude-module pytest \

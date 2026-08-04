@@ -180,6 +180,7 @@ class QwenWebSession(QObject):
         self._login_container: QWidget | None = None
         self._login_explanation_label: QLabel | None = None
         self._login_dialog_open = False
+        self._may_reuse = False
         self._login_status_key = "qwen.web_starting"
         self._unsubscribe_language = self.language_manager.subscribe(
             self.retranslate_ui,
@@ -199,6 +200,8 @@ class QwenWebSession(QObject):
         if not self.workspace_url:
             return
         if self._refreshing:
+            return
+        if not self._login_dialog_open and not self._may_reuse:
             return
         self._refreshing = True
         self._start_refresh_generation()
@@ -251,6 +254,7 @@ class QwenWebSession(QObject):
         if not self.workspace_url:
             return True
         self._invalidate_refresh()
+        self._may_reuse = False
         self._logout_after_load = True
         self._logout_cleanup_watchdog.start(LOGOUT_CLEANUP_TIMEOUT_MS)
         self.view.setUrl(QUrl(self.workspace_url))
@@ -372,6 +376,7 @@ class QwenWebSession(QObject):
             self._refreshing = False
             self._refresh_watchdog.stop()
             self._active_refresh_generation = None
+            self._may_reuse = True
             raw = payload.get("raw")
             _logger.info("Qwen quota raw=%s", str(raw)[:300])
             self.quota_received.emit(raw)
@@ -383,6 +388,7 @@ class QwenWebSession(QObject):
             self._refreshing = False
             self._refresh_watchdog.stop()
             self._active_refresh_generation = None
+            self._may_reuse = False
             self.login_state_changed.emit(False)
             self.error_occurred.emit("unauthorized")
             return
