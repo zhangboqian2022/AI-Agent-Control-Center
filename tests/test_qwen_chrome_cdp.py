@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from threading import Event
 
@@ -87,6 +88,31 @@ def test_dom_expression_extracts_only_allowed_quota_shape() -> None:
     assert "token-plan/enterprise" in expression
     assert "kind: 'unauthorized'" in expression
     assert "document.cookie" not in expression
+
+
+def test_dom_expression_flags_logged_out_console_as_unauthorized() -> None:
+    # The logged-out Bailian console stays on the workspace origin and renders
+    # an inline login banner instead of redirecting, so target selection cannot
+    # see it. The wait loop must classify the banner as unauthorized; otherwise
+    # every refresh burns the full startup budget on DOM_TIMEOUT retries while
+    # the GUI keeps showing the stale last-known quota ("数据过期") with no way
+    # back into the login flow.
+    expression = qwen_dom_extract_expression()
+
+    marker = re.search(r"LOGGED_OUT = /(.+)/;", expression)
+    assert marker is not None
+    logged_out = re.compile(marker.group(1))
+
+    observed_logged_out_text = (
+        "登录\n概览\n我的订阅\n登录以使用\n您当前处于未登录状态，登录后可使用完整服务\n立即登录\n"
+    )
+    assert logged_out.search(observed_logged_out_text) is not None
+
+    observed_logged_in_text = (
+        "5小时限额\n0.04%已用\n将于 2026-08-05 18:23:45 重置刷新\n"
+        "0%\n50%\n90%\n100%\n7天限额\n65%已用\n"
+    )
+    assert logged_out.search(observed_logged_in_text) is None
 
 
 def test_page_socket_uses_extended_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
