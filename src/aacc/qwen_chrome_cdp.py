@@ -235,6 +235,11 @@ def qwen_dom_extract_expression() -> str:
     (``%已用``) doubles as the logged-in readiness gate: the skeleton view
     shows the labels with ``-`` placeholders, and the anonymous marketing
     copy never renders it.
+
+    An expired Aliyun session does not redirect away from the workspace
+    origin; the console stays on the same URL and renders an inline login
+    banner. That banner is classified as ``unauthorized`` so the session
+    prompts for a visible re-login instead of looping on DOM timeouts.
     """
 
     return r"""
@@ -243,6 +248,7 @@ def qwen_dom_extract_expression() -> str:
   const FIVE = /^5\s*小时/;
   const SEVEN = /^7\s*天/;
   const USED = /\d{1,3}(?:\.\d+)?\s*%\s*(?:已用|used)/i;
+  const LOGGED_OUT = /您当前处于未登录状态|登录以使用/;
   const TEAM_READY = /重置时间\s*\d{4}-/;
   const grab = () => (document.body ? document.body.innerText : '');
   const split = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -259,6 +265,7 @@ def qwen_dom_extract_expression() -> str:
   for (let attempt = 0; attempt <= 44; attempt += 1) {
     text = grab();
     if (USED.test(text)) break;
+    if (LOGGED_OUT.test(text)) return {kind: 'unauthorized'};
     await wait(1000);
   }
   const personalLines = split(text);
