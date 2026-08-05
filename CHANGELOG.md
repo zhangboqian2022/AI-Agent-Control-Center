@@ -6,10 +6,11 @@
 
 [Bilingual release notes](docs/release-notes-1.4.5rc2.md)
 
-- [Fix] Bailian (Qwen Code) sign-in now completes on macOS: the session drives a real Google Chrome through CDP (the same paradigm Windows already uses with Edge) — one visible Chrome window opens for the Aliyun login (RAM entry included), then background refreshes run headless. Cookies stay in AACC's own Chrome profile directory; AACC never sees the account password. When Chrome is not installed the previous native web view remains as fallback.
+- [Fix] Bailian (Qwen Code) sign-in now completes on macOS: the session drives a real Google Chrome through CDP (the same paradigm Windows already uses with Edge) — one visible Chrome window opens for the Aliyun login (RAM entry included). Background quota refreshes then run every 15 minutes inside a headed-but-hidden Chrome: Aliyun's risk control voids session tickets presented by headless browsers, so AACC launches Chrome through `open -g -n` (no focus steal, no Dock bounce), pushes the window off-screen via CDP, and masks `navigator.webdriver` plus the off-screen coordinates before the page loads. Cookies stay in AACC's own Chrome profile directory; AACC never sees the account password. When Chrome is not installed the previous native web view remains as fallback.
+- [Fix] An expired Bailian session no longer loops on stale data: the logged-out console stays on the workspace origin and renders an inline login banner, which the extractor now classifies as unauthorized — the bar flips back to "click to authorize" and a fresh visible login can start.
 - [Fix] The token-plan bar no longer flips to "authorized" with a fake 0% reading: usage snippets without any rendered percentage (the anonymous/login page repeats the window labels in marketing copy) are treated as signed-out instead of quota data.
 - [Fix] Fractional usage is preserved end-to-end: values such as 0.04% now render as "0.04%" instead of 0%, and the 5-hour window reset no longer absorbs the "7 天" wording from the neighbouring window.
-- [Fix] OpenCode and Qwen quota refreshes now reload the workspace page on every 5-minute tick (previously the extraction script re-read the stale DOM, so values never changed); Kimi refresh is unchanged.
+- [Fix] OpenCode and Qwen quota refreshes now reload the workspace page on every tick (previously the extraction script re-read the stale DOM, so values never changed); Qwen ticks every 15 minutes, OpenCode every 5; Kimi refresh is unchanged.
 - [Fix] The Windows quota service no longer imports the not-yet-existing `aacc.qwen_edge_session` module; Windows follows the native web-view path until a dedicated Edge-CDP session lands.
 - [Note] `websocket-client` is now a cross-platform dependency (CDP transport on macOS).
 

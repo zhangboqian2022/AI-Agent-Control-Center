@@ -90,32 +90,65 @@ ruff/mypy/pytest（`QT_QPA_PLATFORM=offscreen`）；mac 腿另跑 diff-cover
 - 证据边界：托管 Windows Server CI ≠ 消费级 Windows 10/11 真机验证，**不得宣称
   真机验证**（KNOWN_LIMITATIONS 双语有此声明，`test_packaging.py` 校验条目数对齐）。
 
-## 当前进度（2026-08-04）
+## 当前进度（2026-08-05）
 
+- **Qwen 额度 hidden 有头刷新落地并真机验证通过（macOS）**：headless UA 被
+  阿里云 baxia 风控按指纹作废同一票据 → 定时刷新改为「有头但完全隐藏」的
+  Chrome：`open -g -n -b com.google.Chrome` 不抢焦点启动（fire-and-forget；
+  `_DetachedQwenChromeHandle` 掩盖 open 的 0 退出码，判死改走 DevTools
+  endpoint + 按 profile 进程探测）、按 `--user-data-dir=` 精确 argv 找/杀
+  进程（名字过滤排除 `open` 启动器）+ 启动前僵尸清理、CDP stealth 注入
+  （Page.enable → addScript 掩盖 `navigator.webdriver`/屏外负坐标 →
+  Emulation.setDeviceMetricsOverride → Page.reload → setWindowBounds 推出
+  屏外；注入失败不致命，继续走原提取路径）。**实测坑**：500×375 小窗触发
+  百炼「移动端体验」拦截页（额度 DOM 完全不出现 → DOM_TIMEOUT），改
+  `--window-size=1100,700` + 视口覆盖双保险后 T+2s 渲染出额度。刷新间隔
+  5→15 分钟（`QWEN_WEB_QUOTA_INTERVAL_MS=900_000`）；hidden 模式非 darwin
+  fail-closed（不回退 headless）；`--disable-extensions` 防 profile 副本按
+  Preferences 回装 ~241MB 日常扩展。新构建两轮连续周期（启动即刷 + 15 分钟
+  定时）真机取数成功、无告警、进程干净收尾、不抢焦点。会话副本 ~5.5h 过期
+  与风控升级风险仍在（服务端行为；兜底=未登录检测，栏如实显示「点击授权」）。
 - **1.4.5-rc.2**（feat 分支 `feat/qwen-quota`，未发布，未合并 main）。
-  rc.1 实测暴露的四处问题已修复：
-  1. **Qwen 授权浏览器改走真实 Chrome（CDP）**：阿里云 RAM 登录需
-     新窗口/跨域导航，QtWebView 无 `createWindow` 弹窗被丢弃。沿用
-     Windows Edge CDP 范式新增 `qwen_chrome_cdp.py` / `qwen_chrome_session.py`：
-     darwin 且装有 Chrome 时 service 选 Chrome 会话（可见窗口登录、
-     headless 定时刷新，cookie 在 `qwen-chrome-profile/`，登录态持久化
-     `qwen-web-session-state.json`）；未装 Chrome 回退原生 QtWebView 会话
-     （`qwen_web_session.py`，同为 Windows native 路径）。不打包浏览器内核。
-  2. **未登录误判修复**：匿名页「5 小时/7 天」介绍文案曾被当成额度数据，
-     自动关登录框显示假 0%；现在提取上抛原始文本片段，无百分比即
-     `unauthorized`，Python 解析器（`qwen_web_quota.py`）要求百分比存在。
-  3. **小数百分比**：0.04% 不再被抹成 0%（`QuotaDetail.percentage`
-     int → float | None，GUI `format_quota_percentage`）；重置倒计时按窗口
-     切片防串窗。
-  4. **qwen/opencode refresh 整页重载**：此前只重读旧 DOM，5 分钟轮询数值
-     恒定；现在 `_reload_workspace_url()` 后 load 完成再提脚本。kimi 不变。
-  另修复 service 在 win32 导入不存在的 `aacc.qwen_edge_session`（回退 native）；
-  `websocket-client` 依赖改为跨平台（macOS CDP 传输）。
-- `config.app.qwen_quota_enabled`（默认 True）+ `qwen_workspace_url`
-  （默认百炼 personal 页，host 白名单校验）不变。
-- **待用户实测**：Chrome（CDP）窗口内完成阿里云 RAM 登录、0.04% 显示、
-  5 分钟刷新见新值；若提取正则与真实渲染文字不符，看 `Qwen quota raw=...`
-  日志（现为原始文本片段）继续收紧。
+  本轮在本机实测驱动下完成三块：
+  1. **Qwen 额度对齐真实控制台**：百炼 token-plan 页实为个人版（5小时限额/
+     7天限额，`X%已用` + `将于 <绝对时间> 重置刷新`）+ 团队版（路由 hash
+     `token-plan/enterprise`，仅一个总额度，`重置时间 <绝对时间>`）；每个表盘
+     后跟 0%/50%/90%/100% 刻度噪声。提取 JS 改两阶段（先等个人版 `%已用`，
+     再跳 enterprise 抓总额度，团队版可 null）；payload 键改
+     personalFiveHourText/personalWeeklyText/teamTotalText；解析器支持
+     绝对重置时间（本地时区，此前只认相对倒计时正是"重置不显示"根因）、
+     按"刻度序列之前"位置剔除噪声；QwenQuotaBar 三行（5 小时/7 天/团队）。
+  2. **登录风控绕过（本机方案，未产品化）**：专属空白 profile 反复被阿里云
+     baxia 拦截；已按用户批准把日常 Chrome 会话最小集复制进托管
+     `qwen-chrome-profile/`（Cookies 用 `sqlite3 .backup` 在线备份、Local
+     State、Preferences、Local/Session Storage；不复制 Login Data 密码库；
+     目录 700；旧空白 profile 隔离为 `.qwen-chrome-profile.pre-dailycopy-*`）。
+     副本继承受信会话后 headless 刷新免验证直取数。**待产品化**：把复制流
+     程纳入 qwen_chrome_session 登录流（需用户同意 UI）；无团队版订阅账户
+     的降级未实测。
+  3. **传输层关键修复**：共享 WebSocket `recv` 5s 超时把两阶段 evaluate
+     拦腰截断、被截的页内异步脚本并发重跑互相干扰 → headless refresh 永不
+     收敛（此前 17~18s 必败的另一根因是复用 Edge 的 15s 启动预算）。现在
+     Qwen 页面 socket 90s（`QWEN_PAGE_SOCKET_TIMEOUT_SECONDS`，Kimi Edge
+     路径不变）、`QWEN_STARTUP_TIMEOUT_SECONDS=90`；冷启动实测 ~29s 端到端
+     成功。教训：长 JS 等待必须给足 socket 预算，别让 transport 截断重试。
+- **Qwen Code 任务发现（运行监控）**：新增 `qwen_discovery.py`——会话在
+  `~/.qwen/projects/<路径编码>/chats/<uuid>.jsonl`；`<uuid>.runtime.json`
+  给 pid/work_dir（退出后残留，必须 pid 存活判定 + 回读 cmdline 含
+  `qwen-code` 防 PID 复用——进程名是 node 不是 qwen）；无 runtime 时按
+  jsonl mtime 90s 窗。→ `QwenDiscoveryService`（state_source=qwen_local）→
+  app.py 装配 → gui.py `qwen_manual/retained/muted_tasks`、`qwen:` 前缀过滤、
+  任务选择对话框、`agent_visibility_migrated_v4`、agent type `qwen_cli`。
+- **input/output/cache 用量行推广到全部 provider**：TaskCard 不再限
+  kimi_code；Codex 读 rollout `event_msg.token_count` 的累计
+  `total_token_usage`（input 已含 cached，拆出 cache_read/write）；OpenCode
+  SUM `message.data.tokens`（assistant）；Qwen 按 sessionId 聚合
+  `~/.qwen/usage_record.jsonl` 的 models 计数（每回合落一条，回合未结束无行
+  属正常）。work_dir 显示同步取消 agent 类型限制。
+- **额度展板开关**：设置内 Codex/Kimi/OpenCode/Qwen 四开关，QSettings
+  `visible_quota_panels`。
+- 全量 1491 测试 + ruff + format + mypy 全绿，diff-cover 改动行覆盖率 92%
+  （CI 门槛 ≥90%）；已构建安装本机实测（Qwen 任务 RUNNING/STOPPED 正常显示、
+  Qwen 额度 hidden 刷新两轮周期成功）。
 - Windows Edge CDP 专属会话仍未实现（native 回退）。
-- 本机全量测试绿、ruff、format、mypy 全绿。
 - 不宣称：消费级 Windows 10/11 真机验证。

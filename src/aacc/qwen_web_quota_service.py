@@ -21,7 +21,7 @@ from aacc.qwen_web_error import (
 )
 from aacc.qwen_web_quota import QwenQuota, parse_qwen_quota
 
-QWEN_WEB_QUOTA_INTERVAL_MS = 300_000
+QWEN_WEB_QUOTA_INTERVAL_MS = 900_000
 
 
 class _WebSessionLike(Protocol):

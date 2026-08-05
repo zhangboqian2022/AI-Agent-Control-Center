@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from aacc.models import TaskStatus
 from aacc.qwen_discovery import (
@@ -315,3 +318,177 @@ def test_discover_without_usage_records_has_no_usage_key(tmp_path: Path) -> None
     _write_chat(tmp_path, runtime={"pid": 1311, "work_dir": WORK_DIR})
     tasks = _discovery(tmp_path, process_alive={1311: True}).discover()
     assert "usage" not in tasks[0].state.metadata
+
+
+def test_default_terminal_config_uses_windows_terminal_on_win32(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aacc.qwen_discovery import _default_terminal_config
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    config = _default_terminal_config(WORK_DIR)
+    assert config.type == "windows_terminal"
+    assert config.window_title == "codelight"
+
+    empty = _default_terminal_config(None)
+    assert empty.type == "windows_terminal"
+    assert empty.window_title is None
+
+
+def test_default_session_process_alive_requires_qwen_cmdline() -> None:
+    import os
+
+    from aacc.qwen_discovery import _default_session_process_alive
+
+    # The current test process never carries qwen-code in its command line.
+    assert _default_session_process_alive(os.getpid()) is False
+    # A pid that cannot exist fails closed instead of guessing.
+    assert _default_session_process_alive(2**22 + 12345) is False
+
+
+def test_usage_tracker_resets_offset_after_truncation(tmp_path: Path) -> None:
+    tracker = QwenUsageTracker()
+    record = tmp_path / "usage_record.jsonl"
+    first = json.dumps({"sessionId": "s1", "models": {"m": {"outputTokens": 222}}})
+    record.write_text(first + "\n", encoding="utf-8")
+    tracker.refresh(record)
+
+    shorter = json.dumps({"sessionId": "s1", "models": {"m": {"outputTokens": 1}}})
+    record.write_text(shorter + "\n", encoding="utf-8")
+    tracker.refresh(record)
+
+    usage = tracker.usage_for("s1")
+    assert usage is not None
+    assert usage.output_tokens == 223
+
+
+def test_usage_tracker_no_change_is_a_noop(tmp_path: Path) -> None:
+    tracker = QwenUsageTracker()
+    record = tmp_path / "usage_record.jsonl"
+    record.write_text(
+        json.dumps({"sessionId": "s1", "models": {"m": {"outputTokens": 1}}}) + "\n",
+        encoding="utf-8",
+    )
+    tracker.refresh(record)
+    tracker.refresh(record)
+
+    usage = tracker.usage_for("s1")
+    assert usage is not None
+    assert usage.output_tokens == 1
+
+
+def test_usage_tracker_buffers_partial_trailing_line(tmp_path: Path) -> None:
+    tracker = QwenUsageTracker()
+    record = tmp_path / "usage_record.jsonl"
+    complete = json.dumps({"sessionId": "s1", "models": {"m": {"outputTokens": 2}}})
+    record.write_text(complete + '\n{"sessionId": "s1", "mod', encoding="utf-8")
+    tracker.refresh(record)
+    usage = tracker.usage_for("s1")
+    assert usage is not None
+    assert usage.output_tokens == 2
+
+    finished = json.dumps({"sessionId": "s1", "models": {"m": {"outputTokens": 3}}})
+    record.write_text(complete + "\n" + finished + "\n", encoding="utf-8")
+    tracker.refresh(record)
+    usage = tracker.usage_for("s1")
+    assert usage is not None
+    assert usage.output_tokens == 5
+
+
+def test_usage_tracker_rejects_non_object_and_invalid_session_lines(tmp_path: Path) -> None:
+    tracker = QwenUsageTracker()
+    record = tmp_path / "usage_record.jsonl"
+    lines = [
+        '{"sessionId": broken json',
+        '["sessionId"]',
+        '{"sessionId": "", "models": {}}',
+        '{"sessionId": "s1", "models": {"m": 5}}',
+        '{"sessionId": "s1", "models": {"m": {"outputTokens": 4}}, "durationMs": 1200}',
+    ]
+    record.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tracker.refresh(record)
+
+    usage = tracker.usage_for("s1")
+    assert usage is not None
+    assert usage.output_tokens == 4
+    assert usage.last_duration_ms == 1200.0
+
+
+def test_active_session_ids_respects_limit(tmp_path: Path) -> None:
+    for index in range(3):
+        _write_chat(tmp_path, session_id=f"session-{index}")
+    discovery = _discovery(tmp_path)
+    active = discovery.active_session_ids(limit=2)
+    assert len(active) == 2
+
+
+def test_sessions_skips_project_dir_without_chats(tmp_path: Path) -> None:
+    _write_chat(tmp_path)
+    (tmp_path / "projects" / "stray-project").mkdir(parents=True)
+    (tmp_path / "projects" / "empty-project" / "chats").mkdir(parents=True)
+    tasks = _discovery(tmp_path).discover()
+    assert len(tasks) == 1
+
+
+def test_sessions_skips_unreadable_chats_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_chat(tmp_path)
+    broken = tmp_path / "projects" / "broken-project" / "chats"
+    broken.mkdir(parents=True)
+
+    real_glob = Path.glob
+
+    def guarded_glob(self: Path, pattern: str, **kwargs: object):
+        if "broken-project" in str(self):
+            raise OSError("unreadable")
+        return real_glob(self, pattern, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", guarded_glob)
+    tasks = _discovery(tmp_path).discover()
+    assert len(tasks) == 1
+
+
+def test_read_session_swallows_stat_failure(tmp_path: Path) -> None:
+    _write_chat(tmp_path)
+
+    def broken_modified_at(_path: Path) -> datetime:
+        raise OSError("stat failed")
+
+    discovery = QwenLocalDiscovery(
+        qwen_home=tmp_path,
+        now=lambda: NOW,
+        file_modified_at=broken_modified_at,
+        session_process_alive=lambda _pid: False,
+    )
+    assert discovery.discover() == []
+
+
+def test_first_line_cwd_swallows_open_failure(tmp_path: Path) -> None:
+    chats = _chat_dir(tmp_path)
+    # A directory matching *.jsonl makes open() raise IsADirectoryError.
+    (chats / f"{SESSION_ID}.jsonl").mkdir()
+    tasks = _discovery(tmp_path).discover()
+    assert len(tasks) == 1
+    assert tasks[0].config.name.startswith("Qwen 任务")
+    assert "work_dir" not in tasks[0].state.metadata
+
+
+def test_first_line_cwd_rejects_unparsable_first_line(tmp_path: Path) -> None:
+    chats = _chat_dir(tmp_path)
+    chat = chats / f"{SESSION_ID}.jsonl"
+    chat.write_text("{not json\n", encoding="utf-8")
+    tasks = _discovery(tmp_path).discover()
+    assert "work_dir" not in tasks[0].state.metadata
+
+    chat.write_text("[1, 2]\n", encoding="utf-8")
+    tasks = _discovery(tmp_path).discover()
+    assert "work_dir" not in tasks[0].state.metadata
+
+
+def test_default_file_modified_at_reads_mtime(tmp_path: Path) -> None:
+    _write_chat(tmp_path, runtime={"pid": 1311, "work_dir": WORK_DIR})
+    discovery = QwenLocalDiscovery(qwen_home=tmp_path, now=lambda: NOW)
+    tasks = discovery.discover()
+    assert len(tasks) == 1
+    assert tasks[0].state.updated_at is not None

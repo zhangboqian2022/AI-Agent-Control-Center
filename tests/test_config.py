@@ -510,6 +510,11 @@ def test_qwen_workspace_url_rejects_http_scheme() -> None:
         AppConfig(qwen_workspace_url="http://bailian.console.aliyun.com/cn-beijing#/efm")
 
 
+def test_qwen_workspace_url_rejects_unparsable_url() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig(qwen_workspace_url="https://[::1")
+
+
 def test_qwen_workspace_url_allows_empty() -> None:
     assert AppConfig(qwen_workspace_url="").qwen_workspace_url == ""
 
