@@ -248,10 +248,37 @@ def test_create_chrome_web_session_builds_real_chrome_session(qapp, tmp_path: Pa
     session.close()
 
 
-def test_create_native_web_session_builds_real_web_session(qapp, tmp_path: Path) -> None:
+def test_create_native_web_session_builds_real_web_session(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     del qapp
+    # Constructing a real QWebView crashes on Windows CI (WebView2 under the
+    # offscreen platform raises an access violation). Patch it before the
+    # factory builds the session, matching the web-session test convention.
+    from PySide6.QtCore import QObject, Signal
+
     import aacc.qwen_web_quota_service as module
     from aacc.qwen_web_session import QwenWebSession
+
+    class FakeWebView(QObject):
+        loadingChanged = Signal(object)
+        titleChanged = Signal(str)
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.settings = lambda: _FakeWebViewSettings()
+
+    class _FakeWebViewSettings:
+        class WebAttribute:
+            JavaScriptEnabled = 0
+            LocalStorageEnabled = 1
+
+        def setAttribute(self, attribute: int, enabled: bool) -> None:
+            del attribute, enabled
+
+    import aacc.qwen_web_session as web_session_module
+
+    monkeypatch.setattr(web_session_module, "QWebView", FakeWebView)
 
     session = module._create_native_web_session(
         tmp_path, None, language_manager=module.LanguageManager(module.ZH_CN)
