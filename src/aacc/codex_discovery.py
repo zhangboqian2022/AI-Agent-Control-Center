@@ -13,6 +13,7 @@ from typing import Any, BinaryIO
 
 import psutil
 
+from aacc.kimi_wire_usage import SessionUsage
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 
 PidExists = Callable[[int], bool]
@@ -81,6 +82,87 @@ def _default_terminal_config(work_dir: str | None = None) -> TerminalConfig:
     return TerminalConfig(type="mac_app", app_bundle_id="com.openai.codex")
 
 
+class CodexUsageTracker:
+    """Per-session token usage from the latest cumulative ``token_count``.
+
+    Codex emits ``event_msg`` / ``token_count`` events whose
+    ``info.total_token_usage`` already carries session-cumulative counters,
+    so the newest event wins — no delta math. Only the numeric usage block is
+    read; prompts, diffs and other payload content are never touched.
+    """
+
+    def __init__(self) -> None:
+        self._cache: dict[Path, tuple[int, SessionUsage | None]] = {}
+
+    def poll(self, rollout_path: Path) -> SessionUsage | None:
+        try:
+            size = rollout_path.stat().st_size
+        except OSError:
+            return None
+        cached = self._cache.get(rollout_path)
+        if cached is not None and cached[0] == size:
+            return cached[1]
+        usage = self._scan(rollout_path, size)
+        self._cache[rollout_path] = (size, usage)
+        return usage
+
+    def _scan(self, rollout_path: Path, size: int) -> SessionUsage | None:
+        scan_floor = max(0, size - _USAGE_SCAN_BUDGET_BYTES)
+        try:
+            with rollout_path.open("rb") as handle:
+                for offset, line in CodexLocalDiscovery._reverse_lines(handle, size):
+                    if offset < scan_floor:
+                        break
+                    totals = _token_count_totals(line)
+                    if totals is not None:
+                        return _usage_from_totals(totals)
+        except OSError:
+            return None
+        return None
+
+
+_USAGE_SCAN_BUDGET_BYTES = 1_048_576
+
+
+def _token_count_totals(line: bytes) -> dict[str, Any] | None:
+    if len(line) > MAX_SESSION_METADATA_LINE_BYTES or b'"token_count"' not in line:
+        return None
+    try:
+        item = json.loads(line.decode("utf-8", errors="ignore"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(item, dict) or item.get("type") != "event_msg":
+        return None
+    payload = item.get("payload")
+    if not isinstance(payload, dict) or payload.get("type") != "token_count":
+        return None
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None
+    totals = info.get("total_token_usage") or info.get("last_token_usage")
+    return totals if isinstance(totals, dict) else None
+
+
+def _usage_from_totals(totals: dict[str, Any]) -> SessionUsage:
+    input_tokens = _non_negative_count(totals.get("input_tokens"))
+    cache_read = _non_negative_count(totals.get("cached_input_tokens"))
+    cache_write = _non_negative_count(totals.get("cache_write_input_tokens"))
+    return SessionUsage(
+        input_tokens=max(0, input_tokens - cache_read - cache_write),
+        output_tokens=_non_negative_count(totals.get("output_tokens")),
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_write,
+    )
+
+
+def _non_negative_count(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    return 0
+
+
 class CodexLocalDiscovery:
     """Reads only safe Codex task metadata from local index files."""
 
@@ -96,6 +178,7 @@ class CodexLocalDiscovery:
         process_started_at: ProcessStartedAt | None = None,
         activity_window_seconds: float = 90.0,
         max_tasks: int = 20,
+        usage_tracker: CodexUsageTracker | None = None,
     ) -> None:
         codex_home = Path.home() / ".codex"
         self.session_index_path = session_index_path or codex_home / "session_index.jsonl"
@@ -109,6 +192,7 @@ class CodexLocalDiscovery:
         self.process_started_at = process_started_at or self._process_started_at
         self.activity_window_seconds = max(10.0, activity_window_seconds)
         self.max_tasks = max(1, min(max_tasks, 20))
+        self.usage_tracker = usage_tracker or CodexUsageTracker()
         self._session_start_cache: dict[Path, SessionStartCache] = {}
 
     def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
@@ -117,8 +201,10 @@ class CodexLocalDiscovery:
             sessions = [session for session in sessions if session["id"] in selected_ids]
         sessions = self._without_subagent_threads(sessions)
         selected = {session["id"] for session in sessions}
-        session_signals = self._session_signals(selected)
-        session_work_dirs = self._session_work_dirs(selected)
+        files_by_id = self._session_paths(selected)
+        session_signals = self._session_signals(selected, files_by_id)
+        session_work_dirs = self._session_work_dirs(selected, files_by_id)
+        session_usage = self._session_usage(files_by_id)
         active_pids = self._active_pids(selected)
         discovered: list[DiscoveredTask] = []
         for session in sessions:
@@ -184,6 +270,11 @@ class CodexLocalDiscovery:
                             **(
                                 {"work_dir": session_work_dirs[conversation_id]}
                                 if conversation_id in session_work_dirs
+                                else {}
+                            ),
+                            **(
+                                {"usage": session_usage[conversation_id].to_metadata()}
+                                if conversation_id in session_usage
                                 else {}
                             ),
                         },
@@ -327,12 +418,17 @@ class CodexLocalDiscovery:
                 sessions_by_id[conversation_id] = session
         return list(sessions_by_id.values())
 
-    def _session_signals(self, selected_ids: set[str]) -> dict[str, SessionSignal]:
+    def _session_signals(
+        self,
+        selected_ids: set[str],
+        files_by_id: dict[str, list[Path]] | None = None,
+    ) -> dict[str, SessionSignal]:
         signals: dict[str, SessionSignal] = {}
         if not selected_ids:
             return signals
         now = self.now()
-        files_by_id = self._session_paths(selected_ids)
+        if files_by_id is None:
+            files_by_id = self._session_paths(selected_ids)
         for conversation_id, files in files_by_id.items():
             if not files:
                 continue
@@ -385,9 +481,15 @@ class CodexLocalDiscovery:
             return {conversation_id: [] for conversation_id in selected_ids}
         return paths_by_id
 
-    def _session_work_dirs(self, selected_ids: set[str]) -> dict[str, str]:
+    def _session_work_dirs(
+        self,
+        selected_ids: set[str],
+        files_by_id: dict[str, list[Path]] | None = None,
+    ) -> dict[str, str]:
         work_dirs: dict[str, str] = {}
-        for conversation_id, paths in self._session_paths(selected_ids).items():
+        if files_by_id is None:
+            files_by_id = self._session_paths(selected_ids)
+        for conversation_id, paths in files_by_id.items():
             if not paths:
                 continue
             try:
@@ -398,6 +500,20 @@ class CodexLocalDiscovery:
             if work_dir is not None:
                 work_dirs[conversation_id] = work_dir
         return work_dirs
+
+    def _session_usage(self, files_by_id: dict[str, list[Path]]) -> dict[str, SessionUsage]:
+        usage_by_id: dict[str, SessionUsage] = {}
+        for conversation_id, paths in files_by_id.items():
+            if not paths:
+                continue
+            try:
+                latest_path = max(paths, key=self.session_modified_at)
+            except OSError:
+                continue
+            usage = self.usage_tracker.poll(latest_path)
+            if usage is not None and (usage.total_input_tokens or usage.output_tokens):
+                usage_by_id[conversation_id] = usage
+        return usage_by_id
 
     @staticmethod
     def _read_session_work_dir(path: Path) -> str | None:

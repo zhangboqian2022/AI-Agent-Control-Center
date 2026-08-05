@@ -1,9 +1,20 @@
-"""AACC-owned opencode.ai session using the operating system's native web view.
+"""AACC-owned Bailian (Qwen Code token-plan) session using the native web view.
 
-The workspace page renders Go-plan usage through the same-origin ``/_server``
-RPC ``subscription.get``. Refreshes run a fetch script inside the page so the
-session cookie authenticates the request; results arrive through the
-title-bridge used by the Kimi session.
+The personal token-plan page is a qiankun micro-frontend
+(``bailian-tokenplan``) that renders a 5-hour and a 7-day window quotas.
+Unlike opencode.ai (a SolidStart same-origin RPC) and kimi.com (a public
+Connect gateway), the Bailian console exposes no stable same-origin quota
+endpoint: data is loaded by the micro-frontend into React state and rendered
+as DOM. This module therefore reads the rendered text — a page-injected
+script captures the text snippets around the two window labels and bridges
+them back through ``document.title``; the Python parser derives the numbers.
+
+Snippets without any rendered percentage are reported as ``unauthorized``:
+the anonymous/login view repeats the window labels in marketing copy, which
+must not be mistaken for quota data. On macOS the Aliyun login flow is too
+complex for this native view (new-window requests are dropped); the Chrome
+CDP session (``qwen_chrome_session``) owns login there and this module is
+the fallback path (also the Windows native path).
 """
 
 from __future__ import annotations
@@ -22,98 +33,103 @@ from PySide6.QtWidgets import QDialog, QLabel, QMessageBox, QVBoxLayout, QWidget
 from aacc.file_security import FileProtectionError, protect_directory
 from aacc.i18n import ZH_CN, LanguageManager
 
-BRIDGE_PREFIX = "AACC_OPENCODE_QUOTA:"
-BRIDGE_PAYLOAD_KEY = "__AACC_OPENCODE_QUOTA_PAYLOAD__"
-SERVER_FN_HASH = "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4"
+BRIDGE_PREFIX = "AACC_QWEN_QUOTA:"
+BRIDGE_PAYLOAD_KEY = "__AACC_QWEN_QUOTA_PAYLOAD__"
 REFRESH_TIMEOUT_MS = 60_000
 LOGOUT_CLEANUP_TIMEOUT_MS = 10_000
-_workspace_id_pattern = re.compile(r"/workspace/([A-Za-z0-9_-]+)")
-_logger = logging.getLogger("aacc.opencode_web_session")
+_TK_PLAN_PATTERN = re.compile(r"/efm/subscription/token-plan/personal", re.IGNORECASE)
+_logger = logging.getLogger("aacc.qwen_web_session")
+
+_DEFAULT_URL = (
+    "https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/token-plan/personal"
+)
 
 
-def opencode_webview_user_data_path(config_dir: Path) -> Path:
-    """Return AACC's writable opencode session directory."""
+def qwen_webview_user_data_path(config_dir: Path) -> Path:
+    """Return AACC's writable Qwen session directory."""
 
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
         if not local_app_data:
             raise FileProtectionError("LOCALAPPDATA is unavailable")
-        return Path(local_app_data) / "AACC" / "opencode-web-session"
-    return config_dir / "opencode-web-session"
+        return Path(local_app_data) / "AACC" / "qwen-web-session"
+    return config_dir / "qwen-web-session"
 
 
-def workspace_id_from_url(url: str) -> str | None:
-    match = _workspace_id_pattern.search(url)
-    return match.group(1) if match else None
+def _is_token_plan_url(url: str) -> bool:
+    if not url:
+        return False
+    parsed = QUrl(url)
+    if parsed.host() != "bailian.console.aliyun.com":
+        return False
+    return bool(_TK_PLAN_PATTERN.search(parsed.toString()))
 
 
-def opencode_dom_extract_script(url: str, generation: int) -> str:
-    """Return a script that extracts rendered usage data from the workspace DOM.
+def qwen_dom_extract_script(url: str, generation: int) -> str:
+    """Return a script that captures rendered token-plan usage text from the DOM.
 
-    The workspace /go page renders the Go-plan usage bars (rolling / weekly /
-    monthly) with percentages and reset countdowns directly in the DOM. This
-    script reads the rendered text, extracts the three percentage values and
-    reset countdowns, and bridges them up via document.title.
+    Locates the two window labels ("5 小时"/"5h" and "7 天"/"7d") in
+    ``document.body.innerText`` and emits the text snippet of each window
+    (sliced up to the next window label) through the title bridge. Snippets
+    without any percentage mean the anonymous/login view is showing, which is
+    reported as ``unauthorized`` instead of fake quota data. The Python
+    parser derives ``percentage`` and ``resetSeconds`` from the text.
     """
 
-    if workspace_id_from_url(url) is None:
+    if not _is_token_plan_url(url):
         return ""
 
     template = r"""
-(() => {
-  const prefix = __PREFIX__;
-  const generation = __GEN__;
-  let attempts = 0;
-  const emit = (payload) => {
-    document.title = prefix + JSON.stringify(payload);
-  };
-  const parseResetSeconds = (text) => {
-    let s = 0;
-    const d = text.match(/(\d+)\s*(?:天|days?|day)/);
-    const h = text.match(/(\d+)\s*(?:小时|hours?|hour)/);
-    const m = text.match(/(\d+)\s*(?:分钟|minutes?|minute)/);
-    if (d) s += parseInt(d[1]) * 86400;
-    if (h) s += parseInt(h[1]) * 3600;
-    if (m) s += parseInt(m[1]) * 60;
-    return s > 0 ? s : null;
-  };
-  const extract = () => {
-    const text = document.body ? document.body.innerText : '';
-    if (!text) { setTimeout(extract, 1000); return; }
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-    const pcts = [];
-    const resets = [];
-    for (const line of lines) {
-      const pct = line.match(/^(\d{1,3})\s*%$/);
-      if (pct) pcts.push(parseInt(pct[1]));
-      if (/重置|reset|Resets/i.test(line)) resets.push(parseResetSeconds(line));
-    }
-    if (pcts.length < 3) {
-      if (++attempts < 50) setTimeout(extract, 1000);
-      else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
-      return;
-    }
-    const take = (arr, i) => i < arr.length ? arr[i] : null;
-    emit({
-      kind: 'quota', generation, raw: {
-        subscription: {
-          rollingUsage: {usagePercent: pcts[0], resetInSec: take(resets, 0) || 0},
-          weeklyUsage: {usagePercent: pcts[1], resetInSec: take(resets, 1) || 0},
-          monthlyUsage: {usagePercent: pcts[2], resetInSec: take(resets, 2) || 0}
-        }
-      }
-    });
-  };
-  setTimeout(extract, 2500);
-})();
+ (() => {
+   const prefix = __PREFIX__;
+   const generation = __GEN__;
+   let attempts = 0;
+   const emit = (payload) => {
+     document.title = prefix + JSON.stringify(payload);
+   };
+   const retry = () => {
+     if (++attempts < 50) setTimeout(extract, 1000);
+     else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
+   };
+   const FIVE = /5\s*小时|5\s*h|5h/i;
+   const SEVEN = /7\s*天|7\s*d|7d/i;
+   const PCT = /(\d{1,3}(?:\.\d+)?)\s*%/;
+   const sliceWindow = (lines, idx, stop) => {
+     const out = [lines[idx]];
+     for (let i = idx + 1; i < lines.length && out.length < 12; i++) {
+       if (stop.test(lines[i])) break;
+       out.push(lines[i]);
+     }
+     return out.join('\n');
+   };
+   const extract = () => {
+     const text = document.body ? document.body.innerText : '';
+     if (!text) { retry(); return; }
+     const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+     const fiveIdx = lines.findIndex(l => FIVE.test(l));
+     const sevenIdx = lines.findIndex(l => SEVEN.test(l));
+     if (fiveIdx < 0 && sevenIdx < 0) { retry(); return; }
+     const fiveText = fiveIdx >= 0 ? sliceWindow(lines, fiveIdx, SEVEN) : null;
+     const weeklyText = sevenIdx >= 0 ? sliceWindow(lines, sevenIdx, FIVE) : null;
+     if (!PCT.test(fiveText || '') && !PCT.test(weeklyText || '')) {
+       emit({kind: 'unauthorized', generation, message: 'NO_USAGE_DATA'});
+       return;
+     }
+     emit({
+       kind: 'quota', generation,
+       raw: {fiveHourText: fiveText, weeklyText: weeklyText}
+     });
+   };
+   setTimeout(extract, 2500);
+ })();
 """
     return template.replace("__PREFIX__", json.dumps(BRIDGE_PREFIX)).replace(
         "__GEN__", str(generation)
     )
 
 
-class OpenCodeWebSession(QObject):
-    """Keep opencode.ai cookies in the platform web view; never handle the password."""
+class QwenWebSession(QObject):
+    """Keep Bailian cookies in the platform web view; never handle the password."""
 
     login_state_changed = Signal(bool)
     quota_received = Signal(object)
@@ -127,10 +143,10 @@ class OpenCodeWebSession(QObject):
         language_manager: LanguageManager | None = None,
     ) -> None:
         super().__init__(parent)
-        self.storage_path = opencode_webview_user_data_path(config_dir)
+        self.storage_path = qwen_webview_user_data_path(config_dir)
         protect_directory(self.storage_path)
         self.language_manager = language_manager or LanguageManager(ZH_CN)
-        self.workspace_url = ""
+        self.workspace_url = _DEFAULT_URL
         self.view = QWebView()
         self.view.settings().setAttribute(self.view.settings().WebAttribute.JavaScriptEnabled, True)
         self.view.settings().setAttribute(
@@ -152,16 +168,17 @@ class OpenCodeWebSession(QObject):
         self._login_container: QWidget | None = None
         self._login_explanation_label: QLabel | None = None
         self._login_dialog_open = False
-        self._login_status_key = "opencode.web_starting"
+        self._may_reuse = False
+        self._login_status_key = "qwen.web_starting"
         self._unsubscribe_language = self.language_manager.subscribe(
             self.retranslate_ui,
-            component="opencode_web_session",
+            component="qwen_web_session",
         )
 
     def set_workspace_url(self, url: str) -> None:
         self.workspace_url = url.strip()
 
-    def _is_opencode_origin(self) -> bool:
+    def _is_bailian_origin(self) -> bool:
         if not self.workspace_url:
             return False
         expected = QUrl(self.workspace_url).host()
@@ -171,6 +188,8 @@ class OpenCodeWebSession(QObject):
         if not self.workspace_url:
             return
         if self._refreshing:
+            return
+        if not self._login_dialog_open and not self._may_reuse:
             return
         self._refreshing = True
         self._start_refresh_generation()
@@ -183,14 +202,14 @@ class OpenCodeWebSession(QObject):
                 QMessageBox.information(
                     parent,
                     "AACC",
-                    self.language_manager.text("opencode.web_need_config"),
+                    self.language_manager.text("qwen.web_need_config"),
                 )
             return
         if self._login_dialog is None:
             dialog = QDialog(parent)
             dialog.resize(960, 720)
             layout = QVBoxLayout(dialog)
-            explanation = QLabel(self.language_manager.text("opencode.web_starting"))
+            explanation = QLabel(self.language_manager.text("qwen.web_starting"))
             explanation.setWordWrap(True)
             layout.addWidget(explanation)
             container = QWidget.createWindowContainer(self.view, dialog)
@@ -200,9 +219,7 @@ class OpenCodeWebSession(QObject):
             self._login_container = container
             self._login_explanation_label = explanation
         if self._login_explanation_label is not None:
-            self._login_explanation_label.setText(
-                self.language_manager.text("opencode.web_starting")
-            )
+            self._login_explanation_label.setText(self.language_manager.text("qwen.web_starting"))
         self._login_dialog_open = True
         self._refreshing = True
         self._login_dialog.show()
@@ -210,12 +227,13 @@ class OpenCodeWebSession(QObject):
         self._login_dialog.activateWindow()
         self._start_refresh_generation()
         self._start_refresh_watchdog()
-        self._load_workspace_url()
+        self._reload_workspace_url()
 
     def logout(self) -> bool:
         if not self.workspace_url:
             return True
         self._invalidate_refresh()
+        self._may_reuse = False
         self._logout_after_load = True
         self._logout_cleanup_watchdog.start(LOGOUT_CLEANUP_TIMEOUT_MS)
         self.view.setUrl(QUrl(self.workspace_url))
@@ -242,36 +260,24 @@ class OpenCodeWebSession(QObject):
                 self.language_manager.text(self._login_status_key)
             )
 
-    def _load_workspace_url(self) -> None:
-        if not self.workspace_url:
-            return
-        self.view.setUrl(QUrl(self.workspace_url))
-
     def _reload_workspace_url(self) -> None:
         if not self.workspace_url:
             return
         target = QUrl(self.workspace_url)
         current = self.view.url()
-        _logger.info(
-            "OpenCode quota refresh navigating to workspace origin=%s://%s",
-            current.scheme(),
-            current.host(),
-        )
+        _logger.info("Qwen quota refresh origin=%s://%s", current.scheme(), current.host())
         if current == target:
             self.view.reload()
         else:
             self.view.setUrl(target)
 
     def _run_fetch_script(self) -> None:
-        script = opencode_dom_extract_script(self.workspace_url, self._refresh_generation)
+        script = qwen_dom_extract_script(self.workspace_url, self._refresh_generation)
         if not script:
-            _logger.warning("OpenCode DOM extract script empty; workspace id missing")
+            _logger.warning("Qwen DOM extract script empty; workspace url invalid")
             self._finish_refresh_with_error("refresh_failed")
             return
-        _logger.info(
-            "OpenCode DOM extract script running generation=%s",
-            self._refresh_generation,
-        )
+        _logger.info("Qwen DOM extract script running generation=%s", self._refresh_generation)
         self._start_refresh_watchdog()
         self.view.runJavaScript(script, lambda _result: None)
 
@@ -298,7 +304,7 @@ class OpenCodeWebSession(QObject):
     def _finish_refresh_with_error(self, category: str) -> None:
         self._refreshing = False
         self._refresh_watchdog.stop()
-        _logger.warning("OpenCode quota refresh error category=%s", category)
+        _logger.warning("Qwen quota refresh error category=%s", category)
         self.error_occurred.emit(category)
 
     def _on_loading_changed(self, info: QWebViewLoadingInfo) -> None:
@@ -309,7 +315,7 @@ class OpenCodeWebSession(QObject):
             self._logout_cleanup_watchdog.stop()
             self._run_logout_cleanup()
             return
-        if not self._is_opencode_origin():
+        if not self._is_bailian_origin():
             return
         self._run_fetch_script()
 
@@ -320,13 +326,13 @@ class OpenCodeWebSession(QObject):
         try:
             payload = json.loads(encoded)
         except ValueError:
-            _logger.warning("OpenCode bridge title is not json: %.120s", encoded)
+            _logger.warning("Qwen bridge title is not json: %.120s", encoded)
             return
         if not isinstance(payload, dict):
-            _logger.warning("OpenCode bridge title payload not a dict")
+            _logger.warning("Qwen bridge title payload not a dict")
             return
         _logger.info(
-            "OpenCode bridge title received kind=%s generation=%s active=%s",
+            "Qwen bridge title received kind=%s generation=%s active=%s",
             payload.get("kind"),
             payload.get("generation"),
             self._active_refresh_generation,
@@ -342,7 +348,7 @@ class OpenCodeWebSession(QObject):
             payload = None
         if not isinstance(payload, dict):
             _logger.warning(
-                "OpenCode bridge payload not a dict: %r (len=%s)",
+                "Qwen bridge payload not a dict: %r (len=%s)",
                 str(payload_text)[:200],
                 len(str(payload_text)) if payload_text is not None else -1,
             )
@@ -355,8 +361,9 @@ class OpenCodeWebSession(QObject):
             self._refreshing = False
             self._refresh_watchdog.stop()
             self._active_refresh_generation = None
+            self._may_reuse = True
             raw = payload.get("raw")
-            _logger.info("OpenCode quota raw=%s", str(raw)[:300])
+            _logger.info("Qwen quota raw=%s", str(raw)[:500])
             self.quota_received.emit(raw)
             if self._login_dialog_open:
                 self._close_login_dialog()
@@ -366,10 +373,11 @@ class OpenCodeWebSession(QObject):
             self._refreshing = False
             self._refresh_watchdog.stop()
             self._active_refresh_generation = None
+            self._may_reuse = False
             self.login_state_changed.emit(False)
             self.error_occurred.emit("unauthorized")
             return
-        _logger.warning("OpenCode bridge error message=%s", str(payload.get("message"))[:200])
+        _logger.warning("Qwen bridge error message=%s", str(payload.get("message"))[:200])
         self._finish_refresh_with_error("refresh_failed")
 
     def _close_login_dialog(self) -> None:

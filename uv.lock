@@ -8,7 +8,7 @@ resolution-markers = [
 
 [[package]]
 name = "aacc-control-center"
-version = "1.4.4rc6"
+version = "1.4.5rc2"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -21,7 +21,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "regex" },
     { name = "uvicorn" },
-    { name = "websocket-client", marker = "sys_platform == 'win32'" },
+    { name = "websocket-client" },
 ]
 
 [package.optional-dependencies]
@@ -62,7 +62,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0,<7" },
     { name = "types-regex", marker = "extra == 'dev'", specifier = ">=2025,<2027" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
-    { name = "websocket-client", marker = "sys_platform == 'win32'", specifier = ">=1.8,<2" },
+    { name = "websocket-client", specifier = ">=1.8,<2" },
 ]
 provides-extras = ["dev"]
 

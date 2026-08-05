@@ -45,10 +45,12 @@ def _runtime_for_application_test(events: list[str]) -> SimpleNamespace:
         kimi_discovery=Service(),
         kimi_desktop_discovery=Service(),
         opencode_discovery=Service(),
+        qwen_discovery=Service(),
         quota_service=None,
         kimi_web_quota_service=None,
         codex_quota_service=None,
         opencode_web_quota_service=None,
+        qwen_web_quota_service=None,
         config=SimpleNamespace(
             tasks=[],
             hotkeys={},
@@ -952,6 +954,7 @@ def test_runtime_close_reaches_manager_after_earlier_stop_failure(caplog) -> Non
         kimi_discovery=Component("kimi"),  # type: ignore[arg-type]
         kimi_desktop_discovery=Component("desktop"),  # type: ignore[arg-type]
         opencode_discovery=Component("opencode"),  # type: ignore[arg-type]
+        qwen_discovery=Component("qwen"),  # type: ignore[arg-type]
         codex_quota_service=Component("codex-quota", fail=True),  # type: ignore[arg-type]
         quota_service=Component("kimi-quota"),  # type: ignore[arg-type]
         kimi_web_quota_service=Component("web-quota"),  # type: ignore[arg-type]
@@ -964,6 +967,7 @@ def test_runtime_close_reaches_manager_after_earlier_stop_failure(caplog) -> Non
         "kimi-quota",
         "web-quota",
         "opencode",
+        "qwen",
         "desktop",
         "kimi",
         "codex",
