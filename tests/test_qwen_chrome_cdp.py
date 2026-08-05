@@ -1125,7 +1125,10 @@ def test_hidden_refresh_succeeds_after_fire_and_forget_open_exit(
     result = operation.run(visible=False, cancel=Event())
 
     assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
-    assert launched[0][0] == "/usr/bin/open"
+    # Compare against the same Path the code stringifies so the assertion is
+    # platform-neutral (str(Path) renders backslashes on Windows runners even
+    # though the hidden launcher is only ever exec'd on darwin).
+    assert launched[0][0] == str(module._QWEN_HIDDEN_OPEN_EXECUTABLE)
     assert "-g" in launched[0]
     assert "-n" in launched[0]
 
