@@ -81,10 +81,32 @@ def test_dom_expression_extracts_only_allowed_quota_shape() -> None:
     expression = qwen_dom_extract_expression()
 
     assert "document.body" in expression
-    assert "fiveHourText" in expression
-    assert "weeklyText" in expression
+    assert "personalFiveHourText" in expression
+    assert "personalWeeklyText" in expression
+    assert "teamTotalText" in expression
+    assert "token-plan/enterprise" in expression
     assert "kind: 'unauthorized'" in expression
     assert "document.cookie" not in expression
+
+
+def test_page_socket_uses_extended_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The extraction expression waits for the SPA to render (tens of seconds);
+    # the 5 s transport default truncates the evaluate call mid-flight.
+    import aacc.qwen_chrome_cdp as module
+
+    captured: dict[str, object] = {}
+
+    def fake_open_socket(url: str, *, timeout: float) -> object:
+        captured["url"] = url
+        captured["timeout"] = timeout
+        return object()
+
+    monkeypatch.setattr(module, "_open_socket", fake_open_socket)
+    module._open_qwen_page_socket("ws://127.0.0.1:9222/devtools/page/abc")
+
+    assert captured["url"] == "ws://127.0.0.1:9222/devtools/page/abc"
+    assert captured["timeout"] == module.QWEN_PAGE_SOCKET_TIMEOUT_SECONDS
+    assert captured["timeout"] >= 90.0
 
 
 def test_select_target_accepts_loopback_bailian_page() -> None:
@@ -171,20 +193,33 @@ def test_parse_payload_allowlists_text_snippets() -> None:
     result = parse_qwen_chrome_payload(
         {
             "kind": "quota",
-            "raw": {"fiveHourText": "5 小时\n30%", "weeklyText": "7 天\n65%"},
+            "raw": {
+                "personalFiveHourText": "5小时限额\n3.02%已用",
+                "personalWeeklyText": "7天限额\n1.38%已用",
+                "teamTotalText": "总额度\n92.82%",
+            },
         }
     )
 
-    assert result["fiveHourText"] == "5 小时\n30%"
-    assert result["weeklyText"] == "7 天\n65%"
+    assert result["personalFiveHourText"] == "5小时限额\n3.02%已用"
+    assert result["personalWeeklyText"] == "7天限额\n1.38%已用"
+    assert result["teamTotalText"] == "总额度\n92.82%"
 
 
 def test_parse_payload_accepts_partial_window() -> None:
     result = parse_qwen_chrome_payload(
-        {"kind": "quota", "raw": {"fiveHourText": "5 小时\n0.04%", "weeklyText": None}}
+        {
+            "kind": "quota",
+            "raw": {
+                "personalFiveHourText": "5小时限额\n0.04%已用",
+                "personalWeeklyText": None,
+                "teamTotalText": None,
+            },
+        }
     )
-    assert result["fiveHourText"] == "5 小时\n0.04%"
-    assert result["weeklyText"] is None
+    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
+    assert result["personalWeeklyText"] is None
+    assert result["teamTotalText"] is None
 
 
 @pytest.mark.parametrize(
@@ -193,10 +228,32 @@ def test_parse_payload_accepts_partial_window() -> None:
         None,
         {"kind": "error", "message": "DOM_TIMEOUT"},
         {"kind": "quota", "raw": None},
-        {"kind": "quota", "raw": {"fiveHourText": "x"}},
-        {"kind": "quota", "raw": {"fiveHourText": None, "weeklyText": None}},
-        {"kind": "quota", "raw": {"fiveHourText": 5, "weeklyText": None}},
-        {"kind": "quota", "raw": {"fiveHourText": "x", "weeklyText": None, "evil": 1}},
+        {"kind": "quota", "raw": {"personalFiveHourText": "x"}},
+        {
+            "kind": "quota",
+            "raw": {
+                "personalFiveHourText": None,
+                "personalWeeklyText": None,
+                "teamTotalText": None,
+            },
+        },
+        {
+            "kind": "quota",
+            "raw": {
+                "personalFiveHourText": 5,
+                "personalWeeklyText": None,
+                "teamTotalText": None,
+            },
+        },
+        {
+            "kind": "quota",
+            "raw": {
+                "personalFiveHourText": "x",
+                "personalWeeklyText": None,
+                "teamTotalText": None,
+                "evil": 1,
+            },
+        },
     ],
 )
 def test_parse_payload_rejects_untrusted_values(payload: object) -> None:
@@ -205,10 +262,17 @@ def test_parse_payload_rejects_untrusted_values(payload: object) -> None:
 
 
 def test_parse_payload_rejects_oversized_snippet() -> None:
-    huge = "5 小时\n" + ("x" * 30_000)
+    huge = "5小时限额\n" + ("x" * 30_000)
     with pytest.raises(QwenChromeQuotaError):
         parse_qwen_chrome_payload(
-            {"kind": "quota", "raw": {"fiveHourText": huge, "weeklyText": None}}
+            {
+                "kind": "quota",
+                "raw": {
+                    "personalFiveHourText": huge,
+                    "personalWeeklyText": None,
+                    "teamTotalText": None,
+                },
+            }
         )
 
 
@@ -265,7 +329,11 @@ def test_managed_operation_returns_sanitized_quota_and_closes_process(
     process = FakeProcess()
     payload = {
         "kind": "quota",
-        "raw": {"fiveHourText": "5 小时\n0.04%", "weeklyText": "7 天\n65%"},
+        "raw": {
+            "personalFiveHourText": "5小时限额\n0.04%已用",
+            "personalWeeklyText": "7天限额\n65%已用",
+            "teamTotalText": None,
+        },
     }
 
     class FakeCdp:
@@ -302,7 +370,11 @@ def test_managed_operation_returns_sanitized_quota_and_closes_process(
 
     result = operation.run(visible=False, cancel=Event())
 
-    assert result == {"fiveHourText": "5 小时\n0.04%", "weeklyText": "7 天\n65%"}
+    assert result == {
+        "personalFiveHourText": "5小时限额\n0.04%已用",
+        "personalWeeklyText": "7天限额\n65%已用",
+        "teamTotalText": None,
+    }
     assert process.waits == 1
 
 

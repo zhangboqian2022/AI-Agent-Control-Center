@@ -34,7 +34,6 @@ from aacc.kimi_edge_cdp import (
     EDGE_HEADLESS_AUTH_GRACE_SECONDS,
     EDGE_LOGIN_TIMEOUT_SECONDS,
     EDGE_SHUTDOWN_TIMEOUT_SECONDS,
-    EDGE_STARTUP_TIMEOUT_SECONDS,
     CdpConnection,
     DevToolsEndpoint,
     _is_reparse_point,
@@ -48,6 +47,16 @@ from aacc.kimi_edge_cdp import (
 from aacc.qwen_web_error import QwenQuotaErrorCategory
 
 QWEN_CHROME_PROFILE_NAME = "qwen-chrome-profile"
+# The extraction spans two SPA views (personal windows, then the team hash);
+# a cold headless render of the Bailian console needs more than the 15 s the
+# single-page Edge login path budgets, and the in-page wait itself can run to
+# ~70 s, so the budget must exceed the worst-case single evaluate call.
+QWEN_STARTUP_TIMEOUT_SECONDS = 90.0
+# The extraction expression waits inside the page until both views render
+# (tens of seconds on a cold load). The shared 5 s transport timeout would
+# truncate the evaluate call mid-flight and restart it repeatedly, racing
+# overlapping in-page waits; give the page socket room to finish in one call.
+QWEN_PAGE_SOCKET_TIMEOUT_SECONDS = 90.0
 _QUARANTINE_PREFIX = f".{QWEN_CHROME_PROFILE_NAME}.logout-"
 _PAGE_PATH = re.compile(r"^/devtools/page/[A-Za-z0-9_-]+$")
 _MAX_SNIPPET_CHARS = 20_000
@@ -216,43 +225,90 @@ def select_qwen_target(targets: object, *, expected_port: int) -> str:
 
 
 def qwen_dom_extract_expression() -> str:
-    """Promise-based DOM capture evaluated through ``Runtime.evaluate``."""
+    """Promise-based DOM capture evaluated through ``Runtime.evaluate``.
+
+    The token-plan console renders two plans. The personal plan (the launch
+    URL) exposes a 5-hour and a 7-day window as ``X%已用`` lines; the team
+    plan lives behind the ``enterprise`` hash and renders one total-quota
+    gauge. Gauge tick ladders (``0% 50% 90% 100%``) follow every value and
+    are excluded later by the Python parser. The personal value marker
+    (``%已用``) doubles as the logged-in readiness gate: the skeleton view
+    shows the labels with ``-`` placeholders, and the anonymous marketing
+    copy never renders it.
+    """
 
     return r"""
 (async () => {
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const FIVE = /5\s*小时|5\s*h|5h/i;
-  const SEVEN = /7\s*天|7\s*d|7d/i;
-  const PCT = /(\d{1,3}(?:\.\d+)?)\s*%/;
-  const sliceWindow = (lines, idx, stop) => {
-    const out = [lines[idx]];
-    for (let i = idx + 1; i < lines.length && out.length < 12; i += 1) {
-      if (stop.test(lines[i])) break;
-      out.push(lines[i]);
+  const FIVE = /^5\s*小时/;
+  const SEVEN = /^7\s*天/;
+  const USED = /\d{1,3}(?:\.\d+)?\s*%\s*(?:已用|used)/i;
+  const TEAM_READY = /重置时间\s*\d{4}-/;
+  const grab = () => (document.body ? document.body.innerText : '');
+  const split = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const sliceFrom = (arr, idx, stop) => {
+    const out = [arr[idx]];
+    for (let i = idx + 1; i < arr.length && out.length < 14; i += 1) {
+      if (stop.test(arr[i])) break;
+      out.push(arr[i]);
     }
     return out.join('\n');
   };
-  for (let attempt = 0; attempt <= 11; attempt += 1) {
-    const text = document.body ? document.body.innerText : '';
-    if (text) {
-      const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
-      const fiveIdx = lines.findIndex((line) => FIVE.test(line));
-      const sevenIdx = lines.findIndex((line) => SEVEN.test(line));
-      if (fiveIdx >= 0 || sevenIdx >= 0) {
-        const fiveText = fiveIdx >= 0 ? sliceWindow(lines, fiveIdx, SEVEN) : null;
-        const weeklyText = sevenIdx >= 0 ? sliceWindow(lines, sevenIdx, FIVE) : null;
-        if (PCT.test(fiveText || '') || PCT.test(weeklyText || '')) {
-          return {
-            kind: 'quota',
-            raw: {fiveHourText: fiveText, weeklyText: weeklyText},
-          };
-        }
-        return {kind: 'unauthorized'};
-      }
+
+  let text = '';
+  for (let attempt = 0; attempt <= 44; attempt += 1) {
+    text = grab();
+    if (USED.test(text)) break;
+    await wait(1000);
+  }
+  const personalLines = split(text);
+  const fiveIdx = personalLines.findIndex((line) => FIVE.test(line));
+  const sevenIdx = personalLines.findIndex((line) => SEVEN.test(line));
+  const personalFiveHourText = fiveIdx >= 0
+    ? sliceFrom(personalLines, fiveIdx, sevenIdx >= 0 ? SEVEN : /额度补充|额外用量包|套餐专属/)
+    : null;
+  const personalWeeklyText = sevenIdx >= 0
+    ? sliceFrom(personalLines, sevenIdx, /额度补充|额外用量包|套餐专属/)
+    : null;
+  const hasPersonalValue =
+    USED.test(personalFiveHourText || '') || USED.test(personalWeeklyText || '');
+  if (!hasPersonalValue) {
+    if (fiveIdx >= 0 || sevenIdx >= 0) return {kind: 'unauthorized'};
+    return {kind: 'error', message: 'DOM_TIMEOUT'};
+  }
+
+  let teamTotalText = null;
+  try { location.hash = '#/efm/subscription/token-plan/enterprise'; } catch (err) {}
+  let teamText = '';
+  let clicked = false;
+  for (let attempt = 0; attempt <= 24; attempt += 1) {
+    teamText = grab();
+    if (TEAM_READY.test(teamText)) break;
+    if (!clicked && attempt === 5) {
+      const els = [...document.querySelectorAll('*')].filter(
+        (el) => el.childElementCount === 0 && (el.textContent || '').trim() === '团队版'
+      );
+      if (els.length > 0) { try { els[0].click(); } catch (err) {} }
+      clicked = true;
     }
     await wait(1000);
   }
-  return {kind: 'error', message: 'DOM_TIMEOUT'};
+  const teamLines = split(teamText);
+  const totalIdx = teamLines.findIndex((line) => /^总额度/.test(line));
+  if (totalIdx >= 0) {
+    const candidate = sliceFrom(
+      teamLines, totalIdx, /团队座席|座席加购|共享用量包|订阅明细|套餐专属/
+    );
+    if (/\d{1,3}(?:\.\d+)?\s*%/.test(candidate)) teamTotalText = candidate;
+  }
+  return {
+    kind: 'quota',
+    raw: {
+      personalFiveHourText: personalFiveHourText,
+      personalWeeklyText: personalWeeklyText,
+      teamTotalText: teamTotalText,
+    },
+  };
 })()
 """
 
@@ -265,8 +321,11 @@ def _safe_snippet(value: object) -> str | None:
     return value
 
 
+_QWEN_PAYLOAD_KEYS = {"personalFiveHourText", "personalWeeklyText", "teamTotalText"}
+
+
 def parse_qwen_chrome_payload(payload: object) -> dict[str, object]:
-    """Reduce the untrusted page result to the two rendered text snippets."""
+    """Reduce the untrusted page result to the rendered plan text snippets."""
 
     if not isinstance(payload, dict):
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
@@ -275,17 +334,26 @@ def parse_qwen_chrome_payload(payload: object) -> dict[str, object]:
     if payload.get("kind") != "quota":
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
     raw = payload.get("raw")
-    if not isinstance(raw, dict) or set(raw) != {"fiveHourText", "weeklyText"}:
+    if not isinstance(raw, dict) or set(raw) != _QWEN_PAYLOAD_KEYS:
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
-    five_hour_text = _safe_snippet(raw.get("fiveHourText"))
-    weekly_text = _safe_snippet(raw.get("weeklyText"))
-    if five_hour_text is None and weekly_text is None:
+    five_hour_text = _safe_snippet(raw.get("personalFiveHourText"))
+    weekly_text = _safe_snippet(raw.get("personalWeeklyText"))
+    team_text = _safe_snippet(raw.get("teamTotalText"))
+    if five_hour_text is None and weekly_text is None and team_text is None:
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
-    return {"fiveHourText": five_hour_text, "weeklyText": weekly_text}
+    return {
+        "personalFiveHourText": five_hour_text,
+        "personalWeeklyText": weekly_text,
+        "teamTotalText": team_text,
+    }
 
 
 def _protect_profile(profile: Path) -> None:
     protect_directory(profile)
+
+
+def _open_qwen_page_socket(url: str) -> object:
+    return _open_socket(url, timeout=QWEN_PAGE_SOCKET_TIMEOUT_SECONDS)
 
 
 class ManagedQwenChromeOperation:
@@ -300,7 +368,7 @@ class ManagedQwenChromeOperation:
         protector: Callable[[Path], None] = _protect_profile,
         process_factory: Callable[[list[str]], _ProcessLike] = _start_process,
         target_loader: Callable[[str], object] = _load_targets,
-        socket_factory: Callable[[str], object] = _open_socket,
+        socket_factory: Callable[[str], object] = _open_qwen_page_socket,
         process_tree_terminator: Callable[[_ProcessLike], None] = _terminate_process_tree,
         expression_factory: Callable[[], str] | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -350,7 +418,7 @@ class ManagedQwenChromeOperation:
             port = urlparse(endpoint.http_origin).port
             if port is None:
                 raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
-            startup_deadline = self._monotonic() + EDGE_STARTUP_TIMEOUT_SECONDS
+            startup_deadline = self._monotonic() + QWEN_STARTUP_TIMEOUT_SECONDS
             login_deadline = self._monotonic() + EDGE_LOGIN_TIMEOUT_SECONDS
             headless_auth_deadline = self._monotonic() + EDGE_HEADLESS_AUTH_GRACE_SECONDS
             while True:
@@ -401,7 +469,7 @@ class ManagedQwenChromeOperation:
         process: _ProcessLike,
         cancel: Event,
     ) -> DevToolsEndpoint:
-        deadline = self._monotonic() + EDGE_STARTUP_TIMEOUT_SECONDS
+        deadline = self._monotonic() + QWEN_STARTUP_TIMEOUT_SECONDS
         while self._monotonic() < deadline:
             if cancel.is_set():
                 raise QwenChromeCancelledError

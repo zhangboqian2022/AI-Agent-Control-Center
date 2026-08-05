@@ -29,6 +29,7 @@ import psutil
 
 from aacc.codex_discovery import DiscoveredTask
 from aacc.kimi_discovery import Clock, ProcessAlive
+from aacc.kimi_wire_usage import SessionUsage
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 
 _NAME_MAX_LENGTH = 20
@@ -54,6 +55,15 @@ FROM part
 WHERE session_id = ?
 ORDER BY time_updated DESC, id DESC
 LIMIT ?
+"""
+_SESSION_USAGE_QUERY = """
+SELECT
+    SUM(COALESCE(json_extract(data, '$.tokens.input'), 0)),
+    SUM(COALESCE(json_extract(data, '$.tokens.output'), 0)),
+    SUM(COALESCE(json_extract(data, '$.tokens.cache.read'), 0)),
+    SUM(COALESCE(json_extract(data, '$.tokens.cache.write'), 0))
+FROM message
+WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant'
 """
 _PART_HISTORY_LIMIT = 64
 _STREAMING_PART_TYPES = {"text", "reasoning", "patch", "step-start"}
@@ -317,6 +327,7 @@ class OpenCodeLocalDiscovery:
 
         discovered: list[DiscoveredTask] = []
         snapshots = self._latest_part_snapshots([session.session_id for session in sessions])
+        usage_by_session = self._session_usage([session.session_id for session in sessions])
         for session in sessions:
 
             def session_process_alive(current: OpenCodeSession = session) -> bool:
@@ -337,6 +348,9 @@ class OpenCodeLocalDiscovery:
                 metadata["work_dir"] = session.work_dir
             if session.agent:
                 metadata["agent"] = session.agent
+            usage = usage_by_session.get(session.session_id)
+            if usage is not None:
+                metadata["usage"] = usage.to_metadata()
             discovered.append(
                 DiscoveredTask(
                     config=TaskConfig(
@@ -500,3 +514,39 @@ class OpenCodeLocalDiscovery:
         except sqlite3.Error as error:
             raise OpenCodeDiscoveryError("opencode database is unreadable") from error
         return snapshots
+
+    def _session_usage(self, session_ids: list[str]) -> dict[str, SessionUsage]:
+        """Aggregate assistant-message token counters per session.
+
+        Only the numeric ``tokens`` block of assistant messages is summed;
+        message text is never read. A failure degrades to no usage data —
+        discovery itself must not break on schema drift.
+        """
+
+        if not session_ids or not self.db_path.exists():
+            return {}
+        usage_by_session: dict[str, SessionUsage] = {}
+        try:
+            connection = self._connect(self.db_path)
+            try:
+                for session_id in session_ids:
+                    row = connection.execute(_SESSION_USAGE_QUERY, (session_id,)).fetchone()
+                    if row is None:
+                        continue
+                    input_tokens = int(row[0] or 0)
+                    output_tokens = int(row[1] or 0)
+                    cache_read = int(row[2] or 0)
+                    cache_write = int(row[3] or 0)
+                    if not (input_tokens or output_tokens or cache_read or cache_write):
+                        continue
+                    usage_by_session[session_id] = SessionUsage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cache_read_tokens=cache_read,
+                        cache_creation_tokens=cache_write,
+                    )
+            finally:
+                connection.close()
+        except sqlite3.Error:
+            return {}
+        return usage_by_session

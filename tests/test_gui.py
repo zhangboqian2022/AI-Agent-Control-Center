@@ -8,6 +8,7 @@ from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QInputDialog,
@@ -32,8 +33,11 @@ from aacc.gui import (
     KimiOAuthDialog,
     KimiTaskSelectionDialog,
     MainWindow,
+    OpenCodeQuotaBar,
     OpenCodeTaskSelectionDialog,
     QuotaBar,
+    QwenQuotaBar,
+    QwenTaskSelectionDialog,
     SettingsDialog,
     TaskCard,
     _elapsed,
@@ -47,6 +51,7 @@ from aacc.kimi_quota import KimiQuota, QuotaDetail
 from aacc.models import AgentConfig, TaskConfig, TaskState, TaskStatus, TerminalConfig
 from aacc.opencode_discovery import OpenCodeSession
 from aacc.persistence import StateStore
+from aacc.qwen_discovery import QwenSession
 from aacc.task_manager import TaskManager
 
 
@@ -1468,8 +1473,10 @@ def test_window_declares_persisted_setting_keys(tmp_path: Path, qtbot: object) -
         "always_on_top",
         "opacity",
         "visible_agents",
+        "visible_quota_panels",
         "agent_visibility_migrated_v2",
         "agent_visibility_migrated_v3",
+        "agent_visibility_migrated_v4",
     }
     assert QApplication.instance() is not None
     manager.close()
@@ -2678,6 +2685,70 @@ def test_settings_dialog_shows_opencode_selector(qtbot, tmp_path) -> None:
     manager.close()
 
 
+def _attach_quota_bars(window: MainWindow) -> None:
+    window.codex_quota_bar = CodexQuotaBar(window.language_manager)
+    window.quota_bar = QuotaBar(window.language_manager)
+    window.opencode_quota_bar = OpenCodeQuotaBar(window.language_manager)
+    window.qwen_quota_bar = QwenQuotaBar(window.language_manager)
+    window._apply_quota_panel_visibility()
+
+
+def test_quota_panels_default_visible_and_toggle_persists(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui-qp.ini"), QSettings.Format.IniFormat)
+    window, manager = build_window(tmp_path, qtbot, settings=settings)
+    _attach_quota_bars(window)
+
+    assert window.visible_quota_panels == {"codex", "kimi", "opencode", "qwen"}
+    assert window.qwen_quota_bar.isVisibleTo(window)
+
+    window.set_quota_panel_visible("qwen", False)
+    assert not window.qwen_quota_bar.isVisibleTo(window)
+    assert window.quota_bar.isVisibleTo(window)
+    assert settings.value("visible_quota_panels") == ["codex", "kimi", "opencode"]
+
+    window.set_quota_panel_visible("qwen", True)
+    assert window.qwen_quota_bar.isVisibleTo(window)
+    assert settings.value("visible_quota_panels") == ["codex", "kimi", "opencode", "qwen"]
+    manager.close()
+
+
+def test_quota_panels_restored_from_settings(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui-qp-restore.ini"), QSettings.Format.IniFormat)
+    settings.setValue("visible_quota_panels", ["kimi", "qwen"])
+    window, manager = build_window(tmp_path, qtbot, settings=settings)
+    assert window.visible_quota_panels == {"kimi", "qwen"}
+    _attach_quota_bars(window)
+    assert window.quota_bar.isVisibleTo(window)
+    assert window.qwen_quota_bar.isVisibleTo(window)
+    assert not window.codex_quota_bar.isVisibleTo(window)
+    assert not window.opencode_quota_bar.isVisibleTo(window)
+    manager.close()
+
+
+def test_quota_panel_single_saved_value_restored_as_set(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui-qp-single.ini"), QSettings.Format.IniFormat)
+    settings.setValue("visible_quota_panels", "qwen")
+    window, manager = build_window(tmp_path, qtbot, settings=settings)
+    assert window.visible_quota_panels == {"qwen"}
+    manager.close()
+
+
+def test_settings_dialog_quota_panel_checkboxes_toggle(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui-qp-dialog.ini"), QSettings.Format.IniFormat)
+    window, manager = build_window(tmp_path, qtbot, settings=settings)
+    _attach_quota_bars(window)
+    dialog = SettingsDialog(window)
+    boxes = {box.text(): box for box in dialog.findChildren(QCheckBox)}
+    assert {"Codex", "Kimi", "OpenCode", "Qwen Code"} <= set(boxes)
+    assert boxes["Qwen Code"].isChecked()
+
+    boxes["Qwen Code"].setChecked(False)
+
+    assert not window.qwen_quota_bar.isVisibleTo(window)
+    assert settings.value("visible_quota_panels") == ["codex", "kimi", "opencode"]
+    manager.close()
+
+
 def build_opencode_window(
     tmp_path: Path, qtbot: object
 ) -> tuple[MainWindow, TaskManager, list[tuple[set[str], set[str], set[str]]]]:
@@ -2819,6 +2890,143 @@ def test_opencode_refresh_syncs_retained_and_muted(tmp_path: Path, qtbot: object
     window.refresh()
     assert window.opencode_retained_ids == set()
     assert window.opencode_muted_ids == set()
+    manager.close()
+
+
+def build_qwen_window(
+    tmp_path: Path, qtbot: object
+) -> tuple[MainWindow, TaskManager, list[tuple[set[str], set[str], set[str]]]]:
+    config = default_config()
+    store = StateStore(tmp_path / "gui-qw.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    settings = QSettings(str(tmp_path / "gui-qw-settings.ini"), QSettings.Format.IniFormat)
+    applied: list[tuple[set[str], set[str], set[str]]] = []
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=settings,
+        qwen_sessions=lambda: [],
+        qwen_auto_active_ids=lambda: set(),
+        qwen_retained_ids=lambda: set(),
+        qwen_muted_ids=lambda: set(),
+        set_qwen_monitoring_preferences=lambda manual, retained, muted: applied.append(
+            (set(manual), set(retained), set(muted))
+        ),
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    return window, manager, applied
+
+
+def test_qwen_preferences_persist_and_apply(tmp_path: Path, qtbot: object) -> None:
+    window, manager, applied = build_qwen_window(tmp_path, qtbot)
+    window.set_qwen_selected_ids({"qw-1"})
+    assert applied[-1] == ({"qw-1"}, set(), set())
+    window.set_qwen_monitoring_preferences({"qw-1"}, {"qw-2"}, {"qw-3"})
+    assert applied[-1] == ({"qw-1"}, {"qw-2"}, {"qw-3"})
+    assert window.qwen_selected_ids == {"qw-1", "qw-2"}
+    assert window.qwen_manual_ids == {"qw-1"}
+    assert window.qwen_retained_ids == {"qw-2"}
+    assert window.qwen_muted_ids == {"qw-3"}
+    manager.close()
+
+
+def test_qwen_preferences_reload_from_settings(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui-qw-str.ini"), QSettings.Format.IniFormat)
+    settings.setValue("qwen_manual_tasks", "qw-1")
+    settings.setValue("qwen_retained_tasks", "qw-2")
+    settings.setValue("qwen_muted_tasks", "qw-3")
+    config = default_config()
+    store = StateStore(tmp_path / "gui-qw-str.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    window = MainWindow(
+        manager,
+        AutomationExecutor(MacAutomation(config)),
+        enable_tray=False,
+        language_manager=LanguageManager(ZH_CN),
+        settings=settings,
+    )
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    assert window.qwen_manual_ids == {"qw-1"}
+    assert window.qwen_retained_ids == {"qw-2"}
+    assert window.qwen_muted_ids == {"qw-3"}
+    manager.close()
+
+
+def test_qwen_refresh_syncs_retained_and_muted(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_qwen_window(tmp_path, qtbot)
+    window.qwen_retained_ids = {"r-1"}
+    window.qwen_muted_ids = {"m-1"}
+    window.refresh()
+    assert window.qwen_retained_ids == set()
+    assert window.qwen_muted_ids == set()
+    manager.close()
+
+
+def test_qwen_task_selection_dialog_lists_sessions(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_qwen_window(tmp_path, qtbot)
+    sessions = [
+        QwenSession(
+            session_id="ses-1",
+            title="codelight",
+            updated_at=datetime(2026, 8, 5, 10, 0, tzinfo=UTC),
+            work_dir="/tmp/codelight",
+        )
+    ]
+    dialog = QwenTaskSelectionDialog(sessions, set(), set(), window)
+    assert dialog.tasks.count() == 1
+    dialog.tasks.item(0).setCheckState(Qt.CheckState.Checked)
+    assert dialog.selected_ids() == {"ses-1"}
+    manager.close()
+
+
+def test_qwen_task_hidden_until_selected(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_qwen_window(tmp_path, qtbot)
+    manager.register(
+        TaskConfig(
+            id="qwen:qw-1",
+            slot=1,
+            name="codelight",
+            agent=AgentConfig(type="qwen_cli", display_name="Qwen Code"),
+        ),
+        TaskState.new("qwen:qw-1", "running", source="qwen_local"),
+    )
+    window.set_agent_visible("qwen_cli", True)
+    window.refresh()
+    assert "qwen:qw-1" not in window.cards
+    window.set_qwen_selected_ids({"qw-1"})
+    window.refresh()
+    assert "qwen:qw-1" in window.cards
+    assert window.cards["qwen:qw-1"].agent_label.text() == "QWEN CODE"
+    manager.close()
+
+
+def test_qwen_cli_visible_after_migration_v4(tmp_path: Path, qtbot: object) -> None:
+    settings = QSettings(str(tmp_path / "gui-qw-mig.ini"), QSettings.Format.IniFormat)
+    window, manager = build_window(tmp_path, qtbot, settings=settings)
+    assert "qwen_cli" in window.visible_agent_types
+    assert settings.value("agent_visibility_migrated_v4", False, type=bool) is True
+    manager.close()
+
+
+def test_settings_dialog_shows_qwen_selector(tmp_path: Path, qtbot: object) -> None:
+    window, manager, _ = build_qwen_window(tmp_path, qtbot)
+    dialog = SettingsDialog(window)
+    texts = [button.text() for button in dialog.findChildren(QPushButton)]
+    assert any("Qwen Code" in text for text in texts)
+    manager.close()
+
+
+def test_remove_qwen_task_request_mutes(tmp_path: Path, qtbot: object) -> None:
+    window, manager, applied = build_qwen_window(tmp_path, qtbot)
+    window.set_qwen_monitoring_preferences({"qw-1"}, set(), set())
+    window.remove_qwen_task("qwen:qw-1")
+    assert window.qwen_manual_ids == set()
+    assert window.qwen_muted_ids == {"qw-1"}
+    assert applied[-1] == (set(), set(), {"qw-1"})
     manager.close()
 
 

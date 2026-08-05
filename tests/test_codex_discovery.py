@@ -10,6 +10,7 @@ from aacc.codex_discovery import (
     CODEX_METADATA_COMPATIBILITY,
     CodexDiscoveryError,
     CodexLocalDiscovery,
+    CodexUsageTracker,
 )
 from aacc.models import TaskStatus
 
@@ -1205,3 +1206,121 @@ def test_terminal_config_darwin_unchanged(monkeypatch) -> None:
     assert terminal.type == "mac_app"
     assert terminal.app_bundle_id == "com.openai.codex"
     assert terminal.window_title is None
+
+
+def _token_count_line(input_tokens: int, cached: int, write: int, output: int) -> str:
+    total = input_tokens + output
+    return json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": input_tokens,
+                        "cached_input_tokens": cached,
+                        "cache_write_input_tokens": write,
+                        "output_tokens": output,
+                        "total_tokens": total,
+                    },
+                    "total_token_usage": {
+                        "input_tokens": input_tokens,
+                        "cached_input_tokens": cached,
+                        "cache_write_input_tokens": write,
+                        "output_tokens": output,
+                        "total_tokens": total,
+                    },
+                },
+            },
+        }
+    )
+
+
+def test_usage_tracker_reads_latest_total_usage(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout-2026-08-05T10-00-00-abc.jsonl"
+    rollout.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"cwd": "/work"}}),
+                _token_count_line(1000, 400, 100, 50),
+                _token_count_line(5000, 3000, 200, 800),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    usage = CodexUsageTracker().poll(rollout)
+    assert usage is not None
+    assert usage.input_tokens == 5000 - 3000 - 200
+    assert usage.cache_read_tokens == 3000
+    assert usage.cache_creation_tokens == 200
+    assert usage.output_tokens == 800
+    assert usage.total_input_tokens == 5000
+    assert usage.cache_read_pct == 60
+
+
+def test_usage_tracker_returns_none_without_token_count(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout-abc.jsonl"
+    rollout.write_text(
+        json.dumps({"type": "session_meta", "payload": {"cwd": "/work"}}) + "\n",
+        encoding="utf-8",
+    )
+    assert CodexUsageTracker().poll(rollout) is None
+
+
+def test_usage_tracker_missing_file_is_none(tmp_path: Path) -> None:
+    assert CodexUsageTracker().poll(tmp_path / "absent.jsonl") is None
+
+
+def test_discover_attaches_usage_metadata_from_rollout(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_id = "codex-usage-0001"
+    (sessions / f"rollout-{session_id}.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"cwd": "/work/usage"}}),
+                _token_count_line(2000, 500, 0, 120),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        f'{{"id":"{session_id}","thread_name":"用量任务","updated_at":"2026-08-05T10:00:00Z"}}\n',
+        encoding="utf-8",
+    )
+    tasks = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: datetime(2026, 8, 5, 10, 0, 30, tzinfo=UTC),
+    ).discover()
+
+    usage = tasks[0].state.metadata["usage"]
+    assert usage["total_input_tokens"] == 2000
+    assert usage["output_tokens"] == 120
+    assert usage["cache_read_pct"] == 25
+
+
+def test_discover_omits_usage_key_when_no_token_count(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_id = "codex-nousage-0001"
+    (sessions / f"rollout-{session_id}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"cwd": "/work/x"}}) + "\n",
+        encoding="utf-8",
+    )
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        f'{{"id":"{session_id}","thread_name":"无用量","updated_at":"2026-08-05T10:00:00Z"}}\n',
+        encoding="utf-8",
+    )
+    tasks = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: datetime(2026, 8, 5, 10, 0, 30, tzinfo=UTC),
+    ).discover()
+    assert "usage" not in tasks[0].state.metadata

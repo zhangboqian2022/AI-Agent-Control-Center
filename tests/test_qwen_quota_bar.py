@@ -29,7 +29,7 @@ def test_bar_renders_fractional_percentages(qapp: object) -> None:
             fetched_at=now,
         )
     )
-    assert bar.percent_labels() == ["0.04%", "12.5%"]
+    assert bar.percent_labels() == ["0.04%", "12.5%", "--"]
     assert "5 小时: 0.04%" in bar.toolTip()
     assert "7 天: 12.5%" in bar.toolTip()
 
@@ -44,19 +44,44 @@ def _quota() -> QwenQuota:
     )
 
 
-def test_bar_shows_two_metric_rows(qapp: object) -> None:
+def test_bar_shows_three_metric_rows(qapp: object) -> None:
     bar = QwenQuotaBar()
-    assert bar.metric_row_count() == 2
-    assert bar.period_labels() == ["5 小时", "7 天"]
+    assert bar.metric_row_count() == 3
+    assert bar.period_labels() == ["5 小时", "7 天", "团队"]
 
 
 def test_bar_renders_quota_percentages_and_resets(qapp: object) -> None:
     bar = QwenQuotaBar()
     bar.show_quota(_quota())
-    assert bar.percent_labels() == ["30%", "65%"]
+    assert bar.percent_labels() == ["30%", "65%", "--"]
     assert bar.five_hour_label.text() == "30%"
     assert bar.weekly_label.text() == "65%"
-    assert all(bar.reset_labels())
+    assert bar.reset_labels()[0]
+    assert bar.reset_labels()[1]
+
+
+def test_bar_renders_team_total_quota(qapp: object) -> None:
+    now = datetime.now(UTC)
+    quota = QwenQuota(
+        five_hour=QuotaDetail(3, 100, 97, now + timedelta(hours=2), 3.02),
+        weekly=QuotaDetail(1, 100, 99, now + timedelta(days=6), 1.38),
+        status=QuotaStatus.OK,
+        fetched_at=now,
+        team_total=QuotaDetail(92, 100, 8, now + timedelta(days=2), 92.82),
+    )
+    bar = QwenQuotaBar()
+    bar.show_quota(quota)
+    assert bar.percent_labels() == ["3.02%", "1.38%", "92.82%"]
+    assert bar.team_label.text() == "92.82%"
+    assert bar.reset_labels()[2] != "--"
+    assert "团队: 92.82%" in bar.toolTip()
+
+
+def test_bar_without_team_plan_renders_team_row_unknown(qapp: object) -> None:
+    bar = QwenQuotaBar()
+    bar.show_quota(_quota())
+    assert bar.team_label.text() == "--"
+    assert "团队: 未知" in bar.toolTip()
 
 
 def test_bar_uses_quota_wording_and_never_renders_none_percent(qapp: object) -> None:
@@ -76,21 +101,21 @@ def test_bar_uses_quota_wording_and_never_renders_none_percent(qapp: object) -> 
 
     english = QwenQuotaBar(LanguageManager(EN_US))
     assert english.language_manager.text("qwen.quota") == "Qwen Code quota"
-    assert english.period_labels() == ["5H", "7D"]
+    assert english.period_labels() == ["5H", "7D", "Team"]
 
 
 def test_bar_unauthorized_state(qapp: object) -> None:
     bar = QwenQuotaBar()
     bar.show_unauthorized()
     assert "点击授权" in bar.summary_label.text()
-    assert bar.percent_labels() == ["--", "--"]
+    assert bar.percent_labels() == ["--", "--", "--"]
 
 
 def test_bar_error_preserves_last_quota_as_stale(qtbot) -> None:
     bar = QwenQuotaBar()
     bar.show_quota(_quota())
     bar.show_error("refresh_timeout")
-    assert bar.percent_labels() == ["30%", "65%"]
+    assert bar.percent_labels() == ["30%", "65%", "--"]
     assert "点击重试" in bar.toolTip()
     assert "刷新超时" in bar.toolTip()
 
@@ -115,7 +140,7 @@ def test_bar_unknown_quota_shows_unavailable_and_unknown_resets(qtbot) -> None:
     bar.show_quota(QwenQuota(None, None, QuotaStatus.UNKNOWN, fetched_at=None))
     assert "额度不可用" in bar.summary_label.text()
     assert "未知" in bar.toolTip()
-    assert bar.percent_labels() == ["--", "--"]
+    assert bar.percent_labels() == ["--", "--", "--"]
 
 
 def test_bar_partial_quota_shows_partial(qtbot) -> None:

@@ -391,12 +391,12 @@ def _load_targets(origin: str) -> object:
         return response.json()
 
 
-def _open_socket(url: str) -> _WebSocketLike:
+def _open_socket(url: str, *, timeout: float = 5.0) -> _WebSocketLike:
     websocket = import_module("websocket")
     create_connection = websocket.create_connection
     return cast(
         _WebSocketLike,
-        create_connection(url, timeout=5.0, suppress_origin=True),
+        create_connection(url, timeout=timeout, suppress_origin=True),
     )
 
 

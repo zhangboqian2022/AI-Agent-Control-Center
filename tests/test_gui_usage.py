@@ -35,8 +35,16 @@ def test_card_hides_usage_row_without_metadata(qtbot):
     assert card.usage_label.isHidden()
 
 
-def test_non_kimi_card_hides_usage_row(qtbot):
-    card = make_card(qtbot, "codex_cli", {"usage": USAGE})
+@pytest.mark.parametrize("agent_type", ["codex_cli", "opencode_cli", "qwen_cli"])
+def test_every_native_card_shows_usage_row(qtbot, agent_type):
+    card = make_card(qtbot, agent_type, {"usage": USAGE})
+    assert not card.usage_label.isHidden()
+    assert card.usage_label.text() == "↑12.3k ↓1.2k 缓存 68% · 42 tok/s"
+
+
+def test_zero_usage_row_stays_hidden(qtbot):
+    zero = {"total_input_tokens": 0, "output_tokens": 0, "cache_read_pct": None}
+    card = make_card(qtbot, "codex_cli", {"usage": zero})
     assert card.usage_label.isHidden()
 
 

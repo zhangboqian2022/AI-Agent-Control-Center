@@ -9,6 +9,7 @@ from aacc.discovery_service import (
     KimiDesktopDiscoveryService,
     KimiDiscoveryService,
     OpenCodeDiscoveryService,
+    QwenDiscoveryService,
 )
 from aacc.kimi_desktop_discovery import KimiDesktopDiscoveryError
 from aacc.models import AgentConfig, TaskConfig, TaskState
@@ -64,6 +65,14 @@ class StubKimiDesktopDiscovery(StubDiscovery):
             for task in self.tasks
             if task.config.id.removeprefix("kimi_desktop:") in selected_ids
         ]
+
+
+class StubQwenDiscovery(StubDiscovery):
+    def discover(self, selected_ids: set[str] | None = None) -> list[DiscoveredTask]:
+        self.selected_ids = selected_ids
+        if selected_ids is None:
+            return self.tasks
+        return [task for task in self.tasks if task.config.id.removeprefix("qwen:") in selected_ids]
 
 
 def _manager_for(tmp_path: Path) -> TaskManager:
@@ -222,6 +231,40 @@ def test_kimi_service_poll_registers_auto_active_task_and_remove_task_mutes(
         [DiscoveredTask(task, TaskState.new(task.id, "running"))], active_ids={"session-1234"}
     )
     service = KimiDiscoveryService(manager, discovery=discovery)  # type: ignore[arg-type]
+
+    service.set_monitoring_preferences(set(), set(), set())
+    count = service.poll_once()
+
+    assert count == 1
+    assert discovery.selected_ids == {"session-1234"}
+    assert service.auto_active_ids() == {"session-1234"}
+    assert manager.get(task.id).status.value == "RUNNING"
+
+    discovery.active_ids = set()
+    service.remove_task("session-1234")
+    service.poll_once()
+
+    assert discovery.selected_ids == set()
+    manager.close()
+
+
+def test_qwen_service_poll_registers_auto_active_task_and_remove_task_mutes(
+    tmp_path: Path,
+) -> None:
+    config = default_config()
+    store = StateStore(tmp_path / "states.db")
+    store.initialize(config.tasks)
+    manager = TaskManager(config, store)
+    task = TaskConfig(
+        id="qwen:session-1234",
+        slot=1,
+        name="Qwen 任务",
+        agent=AgentConfig(type="qwen_cli", display_name="Qwen Code"),
+    )
+    discovery = StubQwenDiscovery(
+        [DiscoveredTask(task, TaskState.new(task.id, "running"))], active_ids={"session-1234"}
+    )
+    service = QwenDiscoveryService(manager, discovery=discovery)  # type: ignore[arg-type]
 
     service.set_monitoring_preferences(set(), set(), set())
     count = service.poll_once()
