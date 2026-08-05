@@ -12,15 +12,16 @@ from PySide6.QtWidgets import QWidget
 
 from aacc.file_security import FileProtectionError
 from aacc.i18n import EN_US, ZH_CN, LanguageManager
-from aacc.opencode_web_session import (
+from aacc.qwen_web_session import (
     BRIDGE_PREFIX,
-    OpenCodeWebSession,
-    opencode_dom_extract_script,
-    opencode_webview_user_data_path,
-    workspace_id_from_url,
+    QwenWebSession,
+    qwen_dom_extract_script,
+    qwen_webview_user_data_path,
 )
 
-WORKSPACE_URL = "https://opencode.ai/workspace/wrk_01KYVH7EJDHAAE4TZ51J3TX5CS/go"
+WORKSPACE_URL = (
+    "https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/token-plan/personal"
+)
 
 
 class FakeWebView(QObject):
@@ -77,23 +78,29 @@ def _bridge_title(payload: object) -> str:
     return BRIDGE_PREFIX + json.dumps(payload)
 
 
-def make_session(tmp_path: Path) -> OpenCodeWebSession:
-    session = OpenCodeWebSession(tmp_path)
+def make_session(tmp_path: Path) -> QwenWebSession:
+    session = QwenWebSession(tmp_path)
     session.view = FakeWebView()  # type: ignore[assignment]
     session.set_workspace_url(WORKSPACE_URL)
+    session._may_reuse = True
     return session
 
 
-def test_workspace_id_from_url() -> None:
-    assert workspace_id_from_url(WORKSPACE_URL) == "wrk_01KYVH7EJDHAAE4TZ51J3TX5CS"
-    assert workspace_id_from_url("https://opencode.ai/zen") is None
+def test_dom_extract_script_emits_raw_text_snippets() -> None:
+    script = qwen_dom_extract_script(WORKSPACE_URL, 7)
+    assert "document.body.innerText" in script
+    assert "fiveHourText" in script
+    assert "weeklyText" in script
+    assert "AACC_QWEN_QUOTA:" in script
+    assert "unauthorized" in script
+    assert qwen_dom_extract_script("https://bailian.console.aliyun.com/other", 1) == ""
 
 
 def test_user_data_path_windows_uses_localappdata(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
-    assert opencode_webview_user_data_path(tmp_path) == (
-        Path(tmp_path / "local") / "AACC" / "opencode-web-session"
+    assert qwen_webview_user_data_path(tmp_path) == (
+        Path(tmp_path / "local") / "AACC" / "qwen-web-session"
     )
 
 
@@ -101,69 +108,18 @@ def test_user_data_path_windows_raises_without_localappdata(monkeypatch, tmp_pat
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     with pytest.raises(FileProtectionError):
-        opencode_webview_user_data_path(tmp_path)
+        qwen_webview_user_data_path(tmp_path)
 
 
-def test_dom_extract_script_contains_text_extraction() -> None:
-    script = opencode_dom_extract_script(WORKSPACE_URL, 7)
-    assert "document.body.innerText" in script
-    assert "parseResetSeconds" in script
-    assert "rollingUsage" in script
-    assert "weeklyUsage" in script
-    assert "monthlyUsage" in script
-    assert "AACC_OPENCODE_QUOTA:" in script
-    assert opencode_dom_extract_script("https://opencode.ai/zen", 1) == ""
-
-
-def test_dom_extract_script_retry_uses_independent_attempt_counter() -> None:
-    script = opencode_dom_extract_script(WORKSPACE_URL, 51)
-    assert "attempts" in script
-    assert "++attempts" in script
-    assert "generation <=" not in script
-    assert "DOM_TIMEOUT" in script
-
-
-def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
+def test_session_refresh_navigates_then_runs_script_after_load(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)
-    login_states: list[bool] = []
-    quotas: list[object] = []
-    errors: list[str] = []
-    session.login_state_changed.connect(login_states.append)
-    session.quota_received.connect(quotas.append)
-    session.error_occurred.connect(errors.append)
-
     session.refresh()
     assert session.view.url().toString() == WORKSPACE_URL
+    assert session.view.scripts == []
     session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
-
-
-def test_refresh_logs_only_scheme_and_host_never_query_params(caplog, qapp, tmp_path: Path) -> None:
-    del qapp
-    session = make_session(tmp_path)
-    session.view._url = QUrl("https://github.com/login/oauth/authorize?code=SECRET&state=X")
-    with caplog.at_level(logging.INFO, logger="aacc.opencode_web_session"):
-        session.refresh()
-    assert "code=" not in caplog.text
-    assert "state=" not in caplog.text
-    assert "oauth" not in caplog.text
-    assert "github.com" in caplog.text
-    assert "https://github.com" in caplog.text
-    assert session.view.url().toString() == WORKSPACE_URL
-
-
-def test_session_without_workspace_url_is_inert(qapp, tmp_path: Path) -> None:
-    del qapp
-    session = OpenCodeWebSession(tmp_path)
-    session.view = FakeWebView()  # type: ignore[assignment]
-    assert session._is_opencode_origin() is False
-    session.refresh()
-    assert session.logout() is True
-    session._load_workspace_url()
-    assert session.view.scripts == []
-    assert session.view.url().isEmpty()
 
 
 def test_refresh_reloads_in_place_when_origin_matches(qapp, tmp_path: Path) -> None:
@@ -173,77 +129,156 @@ def test_refresh_reloads_in_place_when_origin_matches(qapp, tmp_path: Path) -> N
     session.refresh()
     assert session.view.reloads == 1
     assert session.view.scripts == []
-    assert session.view.url().toString() == WORKSPACE_URL
     session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
+
+
+def test_refresh_logs_only_scheme_and_host_never_query_params(caplog, qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.view._url = QUrl("https://signin.aliyun.com/login?token=SECRET&state=X")
+    with caplog.at_level(logging.INFO, logger="aacc.qwen_web_session"):
+        session.refresh()
+    assert "SECRET" not in caplog.text
+    assert "state=" not in caplog.text
+    assert "signin.aliyun.com" in caplog.text
+    assert session.view.url().toString() == WORKSPACE_URL
+
+
+def test_session_without_workspace_url_is_inert(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url("")
+    assert session._is_bailian_origin() is False
+    session.refresh()
+    assert session.logout() is True
+    session._reload_workspace_url()
+    assert session.view.scripts == []
+    assert session.view.url().isEmpty()
+
+
+def test_refresh_without_prior_auth_does_not_navigate(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url(WORKSPACE_URL)
+    session.refresh()
+    assert session._refreshing is False
+    assert session.view.url().isEmpty()
+    assert session.view.reloads == 0
+
+
+def test_refresh_navigates_when_login_dialog_open(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url(WORKSPACE_URL)
+    session._login_dialog_open = True
+    session.refresh()
+    assert session._refreshing is True
+    assert session.view.url().toString() == WORKSPACE_URL
+
+
+def test_quota_success_sets_may_reuse_for_future_refresh(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session._login_dialog_open = True
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    payload = {
+        "kind": "quota",
+        "generation": generation,
+        "raw": {"fiveHourText": "5 小时\n30%", "weeklyText": "7 天\n65%"},
+    }
+    session._on_title_changed(_bridge_title(payload))
+    assert session._may_reuse is True
+    session.view.scripts = []
+    session.refresh()
+    assert session._refreshing is True
+
+
+def test_logout_clears_may_reuse(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.set_workspace_url(WORKSPACE_URL)
+    session._may_reuse = True
+    session.logout()
+    assert session._may_reuse is False
 
 
 def test_open_login_without_workspace_url_shows_message_box(
     monkeypatch, qapp, tmp_path: Path
 ) -> None:
     del qapp
-    import aacc.opencode_web_session as module
+    import aacc.qwen_web_session as module
 
     messages: list[str] = []
     monkeypatch.setattr(
         module.QMessageBox, "information", lambda *args: messages.append(str(args[-1]))
     )
-    session = OpenCodeWebSession(tmp_path)
+    session = QwenWebSession(tmp_path)
     session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url("")
     session.open_login()
     assert messages == []
     session.open_login(QWidget())
-    assert messages == ["请先在 config.yaml 中配置 opencode_workspace_url"]
+    assert messages == ["请先在 config.yaml 中配置 qwen_workspace_url"]
 
 
 def test_open_login_builds_reusable_dialog_and_closes_after_quota(
     monkeypatch, qapp, tmp_path: Path
 ) -> None:
     del qapp
-    import aacc.opencode_web_session as module
+    import aacc.qwen_web_session as module
 
     container = QWidget()
     monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
     session = make_session(tmp_path)
     login_states: list[bool] = []
     session.login_state_changed.connect(login_states.append)
-
     session.open_login()
     assert session._login_dialog is not None
     assert session._login_container is container
-    assert session._login_explanation_label is not None
     assert session._login_dialog_open is True
     assert session.view.url().toString() == WORKSPACE_URL
-
     dialog = session._login_dialog
     session.open_login()
     assert session._login_dialog is dialog
-
     session.retranslate_ui()
-
     generation = session._active_refresh_generation
     assert generation is not None
     payload = {
         "kind": "quota",
         "generation": generation,
-        "raw": {
-            "subscription": {
-                "rollingUsage": {"usagePercent": 5, "resetInSec": 3600},
-                "weeklyUsage": {"usagePercent": 5, "resetInSec": 3600},
-                "monthlyUsage": {"usagePercent": 5, "resetInSec": 3600},
-            }
-        },
+        "raw": {"fiveHourText": "5 小时\n5%\n1 小时后重置", "weeklyText": "7 天\n5%\n6 天后重置"},
     }
     session._on_title_changed(_bridge_title(payload))
     assert login_states == [True]
     assert session._login_dialog_open is False
-
     session.close()
     assert session._login_dialog is None
-    assert session._login_container is None
-    assert session._login_explanation_label is None
-    assert session.view.deleted is True
+
+
+def test_labels_without_usage_do_not_fake_login(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    login_states: list[bool] = []
+    errors: list[str] = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+    session._login_dialog_open = True
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    payload = {"kind": "unauthorized", "generation": generation, "message": "NO_USAGE_DATA"}
+    session._on_title_changed(_bridge_title(payload))
+    assert session._may_reuse is False
+    assert session._login_dialog_open is True
+    assert login_states == [False]
+    assert errors == ["unauthorized"]
 
 
 def test_logout_cleanup_watchdog_timeout_resets_flag(qapp, tmp_path: Path) -> None:
@@ -278,30 +313,6 @@ def test_title_without_bridge_prefix_ignored(qapp, tmp_path: Path) -> None:
     assert session.view.scripts == []
 
 
-def test_title_with_invalid_generation_ignored(qapp, tmp_path: Path) -> None:
-    del qapp
-    session = make_session(tmp_path)
-    errors: list[str] = []
-    session.error_occurred.connect(errors.append)
-    session.refresh()
-    session.view.scripts = []
-    session._on_title_changed(f"{BRIDGE_PREFIX}not-json")
-    assert session.view.scripts == []
-    assert errors == []
-
-
-def test_bridge_invalid_json_title_ignored(qapp, tmp_path: Path) -> None:
-    del qapp
-    session = make_session(tmp_path)
-    errors: list[str] = []
-    session.error_occurred.connect(errors.append)
-    session.refresh()
-    generation = session._active_refresh_generation
-    assert generation is not None
-    session._on_title_changed(f"{BRIDGE_PREFIX}{{not json")
-    assert errors == []
-
-
 def test_bridge_unknown_kind_emits_refresh_failed(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)
@@ -314,10 +325,11 @@ def test_bridge_unknown_kind_emits_refresh_failed(qapp, tmp_path: Path) -> None:
     assert errors == ["refresh_failed"]
 
 
-def test_fetch_script_missing_workspace_id_emits_refresh_failed(qapp, tmp_path: Path) -> None:
+def test_fetch_script_missing_token_plan_url_emits_refresh_failed(qapp, tmp_path: Path) -> None:
     del qapp
-    session = make_session(tmp_path)
-    session.set_workspace_url("https://opencode.ai/zen")
+    session = QwenWebSession(tmp_path)
+    session.view = FakeWebView()  # type: ignore[assignment]
+    session.set_workspace_url("https://bailian.console.aliyun.com/home")
     errors: list[str] = []
     session.error_occurred.connect(errors.append)
     session._run_fetch_script()
@@ -335,33 +347,11 @@ def test_session_bridge_delivers_quota_payload(qapp, tmp_path: Path) -> None:
     payload = {
         "kind": "quota",
         "generation": generation,
-        "raw": {
-            "subscription": {
-                "rollingUsage": {"usagePercent": 0, "resetInSec": 17760},
-                "weeklyUsage": {"usagePercent": 42, "resetInSec": 226800},
-                "monthlyUsage": {"usagePercent": 100, "resetInSec": 2674800},
-            }
-        },
+        "raw": {"fiveHourText": "5 小时\n30%\n5 小时后重置", "weeklyText": "7 天\n65%"},
     }
     session._on_title_changed(_bridge_title(payload))
     assert len(quotas) == 1
-    assert quotas[0]["subscription"]["rollingUsage"]["usagePercent"] == 0
-
-
-def test_session_bridge_unauthorized_emits_login_state(qapp, tmp_path: Path) -> None:
-    del qapp
-    session = make_session(tmp_path)
-    login_states: list[bool] = []
-    errors: list[str] = []
-    session.login_state_changed.connect(login_states.append)
-    session.error_occurred.connect(errors.append)
-    session.refresh()
-    generation = session._active_refresh_generation
-    assert generation is not None
-    payload = {"kind": "unauthorized", "generation": generation, "message": "UNAUTHORIZED:401"}
-    session._on_title_changed(_bridge_title(payload))
-    assert login_states == [False]
-    assert errors == ["unauthorized"]
+    assert quotas[0]["fiveHourText"] == "5 小时\n30%\n5 小时后重置"
 
 
 def test_session_bridge_stale_generation_ignored(qapp, tmp_path: Path) -> None:
@@ -370,9 +360,7 @@ def test_session_bridge_stale_generation_ignored(qapp, tmp_path: Path) -> None:
     errors: list[str] = []
     session.error_occurred.connect(errors.append)
     session.refresh()
-    session._on_title_changed(
-        _bridge_title({"kind": "quota", "generation": 9999, "raw": {"subscription": {}}})
-    )
+    session._on_title_changed(_bridge_title({"kind": "quota", "generation": 9999, "raw": {}}))
     assert errors == []
 
 
@@ -411,7 +399,7 @@ def test_logout_invalidates_in_flight_refresh(qapp, tmp_path: Path) -> None:
     session._on_loading_changed(FakeLoadingInfo())
     assert session._refresh_watchdog.isActive()
     session._login_dialog_open = True
-    payload = {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
+    payload = {"kind": "quota", "generation": generation, "raw": {}}
     assert session.logout() is True
     assert session._active_refresh_generation is None
     assert not session._refresh_watchdog.isActive()
@@ -430,7 +418,7 @@ def test_bridge_payload_generation_mismatch_ignored(qapp, tmp_path: Path) -> Non
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    payload = {"kind": "quota", "generation": generation + 5, "raw": {"subscription": {}}}
+    payload = {"kind": "quota", "generation": generation + 5, "raw": {}}
     session._on_title_changed(_bridge_title(payload))
     assert quotas == []
     assert errors == []
@@ -444,7 +432,7 @@ def test_bridge_completion_clears_active_generation(qapp, tmp_path: Path) -> Non
     session.refresh()
     generation = session._active_refresh_generation
     assert generation is not None
-    payload = {"kind": "quota", "generation": generation, "raw": {"subscription": {}}}
+    payload = {"kind": "quota", "generation": generation, "raw": {"fiveHourText": "5h\n1%"}}
     session._on_title_changed(_bridge_title(payload))
     assert len(quotas) == 1
     assert session._active_refresh_generation is None
@@ -462,7 +450,7 @@ def test_refresh_navigation_path_arms_watchdog(qapp, tmp_path: Path) -> None:
 
 def test_manual_login_dialog_dismissal_resets_state(monkeypatch, qapp, tmp_path: Path) -> None:
     del qapp
-    import aacc.opencode_web_session as module
+    import aacc.qwen_web_session as module
 
     container = QWidget()
     monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
@@ -473,7 +461,6 @@ def test_manual_login_dialog_dismissal_resets_state(monkeypatch, qapp, tmp_path:
     assert session._login_dialog_open is True
     assert session._refreshing is True
     assert session._refresh_watchdog.isActive()
-
     dialog = session._login_dialog
     assert dialog is not None
     dialog.close()
@@ -482,21 +469,18 @@ def test_manual_login_dialog_dismissal_resets_state(monkeypatch, qapp, tmp_path:
     assert session._refresh_watchdog.isActive() is False
     assert session._active_refresh_generation is None
     assert errors == []
-
     session.view.scripts = []
     session.refresh()
-    assert session.view.reloads == 1
-    assert session.view.scripts == []
+    assert session.view.url().toString() == WORKSPACE_URL
     session._on_loading_changed(FakeLoadingInfo())
     assert session.view.scripts
     assert "document.body.innerText" in session.view.scripts[-1]
-    assert session.view.url().toString() == WORKSPACE_URL
     session.close()
 
 
 def test_quota_success_close_does_not_double_handle(monkeypatch, qapp, tmp_path: Path) -> None:
     del qapp
-    import aacc.opencode_web_session as module
+    import aacc.qwen_web_session as module
 
     container = QWidget()
     monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
@@ -505,20 +489,13 @@ def test_quota_success_close_does_not_double_handle(monkeypatch, qapp, tmp_path:
     errors: list[str] = []
     session.login_state_changed.connect(login_states.append)
     session.error_occurred.connect(errors.append)
-
     session.open_login()
     generation = session._active_refresh_generation
     assert generation is not None
     payload = {
         "kind": "quota",
         "generation": generation,
-        "raw": {
-            "subscription": {
-                "rollingUsage": {"usagePercent": 5, "resetInSec": 3600},
-                "weeklyUsage": {"usagePercent": 5, "resetInSec": 3600},
-                "monthlyUsage": {"usagePercent": 5, "resetInSec": 3600},
-            }
-        },
+        "raw": {"fiveHourText": "5 小时\n5%", "weeklyText": "7 天\n5%"},
     }
     session._on_title_changed(_bridge_title(payload))
     assert login_states == [True]
@@ -530,7 +507,7 @@ def test_quota_success_close_does_not_double_handle(monkeypatch, qapp, tmp_path:
 
 def test_open_login_arms_watchdog(monkeypatch, qapp, tmp_path: Path) -> None:
     del qapp
-    import aacc.opencode_web_session as module
+    import aacc.qwen_web_session as module
 
     container = QWidget()
     monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
@@ -549,12 +526,11 @@ def test_refresh_re_entry_is_inert_while_in_flight(qapp, tmp_path: Path) -> None
     assert session.view.reloads == 1
     session.refresh()
     assert session.view.reloads == 1
-    assert session.view.url().toString() == WORKSPACE_URL
 
 
 def test_refresh_during_login_progress_does_not_navigate(monkeypatch, qapp, tmp_path: Path) -> None:
     del qapp
-    import aacc.opencode_web_session as module
+    import aacc.qwen_web_session as module
 
     container = QWidget()
     monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
@@ -566,29 +542,26 @@ def test_refresh_during_login_progress_does_not_navigate(monkeypatch, qapp, tmp_
     session.view.reloads = 0
     session.refresh()
     assert session.view.reloads == 0
-    assert session.view.scripts == []
     assert session.view.url().toString() == WORKSPACE_URL
     session.close()
 
 
-def test_language_switch_retranslates_login_dialog_via_subscription(
-    monkeypatch, qapp, tmp_path: Path
-) -> None:
+def test_language_switch_retranslates_login_dialog(monkeypatch, qapp, tmp_path: Path) -> None:
     del qapp
-    import aacc.opencode_web_session as module
+    import aacc.qwen_web_session as module
 
     container = QWidget()
     monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: container)
     language_manager = LanguageManager(ZH_CN)
-    session = OpenCodeWebSession(tmp_path, language_manager=language_manager)
+    session = QwenWebSession(tmp_path, language_manager=language_manager)
     session.view = FakeWebView()  # type: ignore[assignment]
     session.set_workspace_url(WORKSPACE_URL)
     session.open_login()
     label = session._login_explanation_label
     assert label is not None
-    assert label.text() == "正在启动 OpenCode 登录页面，请稍候…"
+    assert label.text() == "正在启动百炼控制台登录页面，请稍候…"
     language_manager.set_language(EN_US)
-    assert label.text() == "Starting the OpenCode login page. Please wait…"
+    assert label.text() == "Starting the Bailian console login page. Please wait…"
     session.close()
     language_manager.set_language(ZH_CN)
     assert language_manager._subscribers == []

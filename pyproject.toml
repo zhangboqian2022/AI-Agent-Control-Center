@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aacc-control-center"
-version = "1.4.4rc6"
+version = "1.4.5rc2"
 description = "AI Agent Control Center: menu-bar/tray panel to monitor local agent CLI tasks (macOS & Windows)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -20,7 +20,7 @@ dependencies = [
   "pyyaml>=6,<7",
   "regex>=2025,<2027",
   "uvicorn>=0.35,<1",
-  "websocket-client>=1.8,<2; sys_platform == 'win32'",
+  "websocket-client>=1.8,<2",
 ]
 
 [project.optional-dependencies]

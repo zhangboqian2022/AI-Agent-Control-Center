@@ -100,6 +100,14 @@ from aacc.opencode_web_error import (
 from aacc.opencode_web_quota import OpenCodeQuota, OpenCodeUsage
 from aacc.opencode_web_quota_service import OpenCodeWebQuotaService
 from aacc.quota_service import STATE_AUTHORIZED, STATE_PENDING, QuotaService
+from aacc.qwen_discovery import QwenSession
+from aacc.qwen_web_error import (
+    QwenQuotaErrorCategory,
+    normalize_qwen_quota_error_category,
+    qwen_quota_error_text,
+)
+from aacc.qwen_web_quota import QwenQuota
+from aacc.qwen_web_quota_service import QwenWebQuotaService
 from aacc.task_manager import TaskManager
 
 _logger = logging.getLogger("aacc.gui")
@@ -221,6 +229,14 @@ def format_quota_reset(
     )
 
 
+def format_quota_percentage(percentage: float | None) -> str | None:
+    if percentage is None:
+        return None
+    if abs(percentage - round(percentage)) < 0.005:
+        return f"{int(round(percentage))}%"
+    return f"{percentage:.2f}".rstrip("0").rstrip(".") + "%"
+
+
 def load_stylesheet() -> str:
     stylesheet = resources.files("aacc").joinpath("styles.qss").read_text(encoding="utf-8")
     return stylesheet.replace(
@@ -238,6 +254,8 @@ TERMINAL_STATUSES = {
     TaskStatus.CANCELLED,
     TaskStatus.STOPPED,
 }
+
+_ALL_QUOTA_PANELS = ("codex", "kimi", "opencode", "qwen")
 
 
 def _elapsed(state: TaskState, now: datetime | None = None) -> str:
@@ -336,15 +354,17 @@ def _add_quota_metric_row(
 
 def _set_quota_metric(
     row: _QuotaMetricRow,
-    percentage: int | None,
+    percentage: float | None,
     reset_at: datetime | None,
     language: LanguageManager,
 ) -> None:
-    unknown = percentage is None
-    row.percent_label.setText("--" if unknown else f"{percentage}%")
-    row.progress_bar.setValue(0 if percentage is None else percentage)
-    row.progress_bar.setProperty("unknown", unknown)
-    row.reset_label.setText(format_quota_reset(reset_at, language) if not unknown else "--")
+    formatted = format_quota_percentage(percentage)
+    row.percent_label.setText("--" if formatted is None else formatted)
+    row.progress_bar.setValue(0 if percentage is None else min(100, int(round(percentage))))
+    row.progress_bar.setProperty("unknown", formatted is None)
+    row.reset_label.setText(
+        format_quota_reset(reset_at, language) if formatted is not None else "--"
+    )
 
 
 class QuotaBar(QFrame):
@@ -591,7 +611,8 @@ class QuotaBar(QFrame):
             if self.language_manager.language == ZH_CN
             else format_quota_reset(detail.reset_at, self.language_manager)
         )
-        return f"{name}: {detail.percentage}% ({reset})"
+        percentage = format_quota_percentage(detail.percentage) or "--"
+        return f"{name}: {percentage} ({reset})"
 
     def retranslate_ui(self) -> None:
         if self._display_state == "pending":
@@ -784,7 +805,7 @@ class OpenCodeQuotaBar(QFrame):
             if self.language_manager.language == ZH_CN
             else format_quota_reset(usage.reset_at, self.language_manager)
         )
-        percentage = "--" if usage.percentage is None else f"{usage.percentage}%"
+        percentage = format_quota_percentage(usage.percentage) or "--"
         return f"{name}: {percentage} ({reset})"
 
     def _render_error(self) -> None:
@@ -803,6 +824,214 @@ class OpenCodeQuotaBar(QFrame):
         previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
         retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
         error_text = opencode_quota_error_text(self._last_error, self.language_manager)
+        self.setToolTip(f"{previous}{error_text}\n{retry}")
+
+    def retranslate_ui(self) -> None:
+        self._set_period_labels()
+        if self._display_state == "pending":
+            self.show_pending()
+        elif self._display_state == "quota" and self._last_quota is not None:
+            self._render_quota(self._last_quota)
+        elif self._display_state == "error":
+            self._render_error()
+        else:
+            self.show_unauthorized()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class QwenQuotaBar(QFrame):
+    """Qwen Code token-plan strip: personal 5 小时 / 7 天 + team total quota."""
+
+    clicked = Signal()
+
+    def __init__(self, language_manager: LanguageManager | None = None) -> None:
+        super().__init__()
+        self.language_manager = language_manager or LanguageManager(ZH_CN)
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self._last_quota: QwenQuota | None = None
+        self._display_state = "unauthorized"
+        self._last_error: QwenQuotaErrorCategory | None = None
+        self.setObjectName("quotaBar")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QGridLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setHorizontalSpacing(4)
+        layout.setVerticalSpacing(4)
+        self.dot = QLabel("●")
+        self.dot.setObjectName("quotaDot")
+        layout.addWidget(self.dot, 0, 0, Qt.AlignmentFlag.AlignTop)
+        self.summary_label = QLabel()
+        self.summary_label.setObjectName("quotaSummary")
+        self.summary_label.setFixedWidth(98)
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label, 0, 1, Qt.AlignmentFlag.AlignTop)
+        metric_layout = QGridLayout()
+        metric_layout.setContentsMargins(0, 0, 0, 0)
+        metric_layout.setHorizontalSpacing(4)
+        metric_layout.setVerticalSpacing(4)
+        metric_layout.setColumnMinimumWidth(0, 40)
+        metric_layout.setColumnMinimumWidth(1, 36)
+        metric_layout.setColumnMinimumWidth(2, 16)
+        metric_layout.setColumnMinimumWidth(3, 152)
+        metric_layout.setColumnStretch(2, 1)
+        layout.addLayout(metric_layout, 0, 2, 1, 1)
+        layout.setColumnStretch(2, 1)
+        self._five_hour_row = _add_quota_metric_row(metric_layout, 0, "")
+        self._weekly_row = _add_quota_metric_row(metric_layout, 1, "")
+        self._team_row = _add_quota_metric_row(metric_layout, 2, "")
+        self._metric_rows = [self._five_hour_row, self._weekly_row, self._team_row]
+        self.five_hour_label = self._five_hour_row.percent_label
+        self.five_hour_bar = self._five_hour_row.progress_bar
+        self.weekly_label = self._weekly_row.percent_label
+        self.weekly_bar = self._weekly_row.progress_bar
+        self.team_label = self._team_row.percent_label
+        self.team_bar = self._team_row.progress_bar
+        self._set_period_labels()
+        self.show_unauthorized()
+
+    def _set_period_labels(self) -> None:
+        self._five_hour_row.period_label.setText(self.language_manager.text("qwen.five_hour"))
+        self._weekly_row.period_label.setText(self.language_manager.text("qwen.weekly"))
+        self._team_row.period_label.setText(self.language_manager.text("qwen.team_total"))
+
+    def period_labels(self) -> list[str]:
+        return [row.period_label.text() for row in self._metric_rows]
+
+    def percent_labels(self) -> list[str]:
+        return [row.percent_label.text() for row in self._metric_rows]
+
+    def reset_labels(self) -> list[str]:
+        return [row.reset_label.text() for row in self._metric_rows]
+
+    def metric_row_count(self) -> int:
+        return len(self._metric_rows)
+
+    def show_unauthorized(self) -> None:
+        self._display_state = "unauthorized"
+        self._last_quota = None
+        self._last_error = None
+        self._has_known_quota = False
+        self._last_quota_tooltip = ""
+        self.dot.setStyleSheet("color: #e06c75;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('qwen.quota')}\n"
+            + ("点击授权" if self.language_manager.language == ZH_CN else "Authorize")
+        )
+        for row in self._metric_rows:
+            _set_quota_metric(row, None, None, self.language_manager)
+        self.setToolTip(
+            "点击登录百炼控制台，同步 Qwen Code 额度"
+            if self.language_manager.language == ZH_CN
+            else "Sign in to the Bailian console to sync Qwen Code quota"
+        )
+
+    def show_pending(self) -> None:
+        self._display_state = "pending"
+        self._last_error = None
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('qwen.quota')}\n"
+            f"{self.language_manager.text('quota.authorizing')}"
+        )
+        self.setToolTip(self.language_manager.text("quota.authorizing"))
+
+    def show_quota(self, quota: QwenQuota, *, preserve_errors: bool = False) -> None:
+        self._last_quota = quota
+        if not preserve_errors:
+            self._last_error = None
+        if self._last_error is not None:
+            self._display_state = "error"
+            self._render_error()
+            return
+        self._display_state = "quota"
+        self._render_quota(quota)
+
+    def show_error(self, category: object) -> None:
+        self._display_state = "error"
+        self._last_error = normalize_qwen_quota_error_category(category)
+        self._render_error()
+
+    def _render_quota(self, quota: QwenQuota) -> None:
+        self._has_known_quota = quota.status is not QuotaStatus.UNKNOWN
+        if quota.status is QuotaStatus.UNKNOWN:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('qwen.quota')}\n"
+                f"{self.language_manager.text('quota.unavailable')}"
+            )
+        elif quota.status is QuotaStatus.PARTIAL:
+            self.dot.setStyleSheet("color: #e5c07b;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('qwen.quota')}\n"
+                f"{self.language_manager.text('quota.partial')}"
+            )
+        elif quota.status is QuotaStatus.STALE:
+            self.dot.setStyleSheet("color: #8997aa;")
+            self.summary_label.setText(
+                f"{self.language_manager.text('qwen.quota')}\n"
+                f"{self.language_manager.text('quota.stale')}"
+            )
+        else:
+            self.dot.setStyleSheet("color: #98c379;")
+            self.summary_label.setText(self.language_manager.text("qwen.quota"))
+        self._show_detail(self._five_hour_row, quota.five_hour)
+        self._show_detail(self._weekly_row, quota.weekly)
+        self._show_detail(self._team_row, quota.team_total)
+        tooltip_lines = [
+            self._detail_tooltip(self.language_manager.text("qwen.five_hour"), quota.five_hour),
+            self._detail_tooltip(self.language_manager.text("qwen.weekly"), quota.weekly),
+            self._detail_tooltip(self.language_manager.text("qwen.team_total"), quota.team_total),
+        ]
+        if quota.fetched_at is not None:
+            tooltip_lines.append(
+                self.language_manager.text(
+                    "quota.last_update",
+                    updated=quota.fetched_at.astimezone().strftime("%H:%M:%S"),
+                )
+            )
+        tooltip_lines.append(self.language_manager.text("quota.refresh"))
+        self._last_quota_tooltip = "\n".join(tooltip_lines)
+        self.setToolTip(self._last_quota_tooltip)
+
+    def _show_detail(self, row: _QuotaMetricRow, detail: QuotaDetail | None) -> None:
+        if detail is None:
+            _set_quota_metric(row, None, None, self.language_manager)
+            return
+        _set_quota_metric(row, detail.percentage, detail.reset_at, self.language_manager)
+
+    def _detail_tooltip(self, name: str, detail: QuotaDetail | None) -> str:
+        if detail is None:
+            unknown = "未知" if self.language_manager.language == ZH_CN else "Unknown"
+            return f"{name}: {unknown}"
+        reset = (
+            format_reset_countdown(detail.reset_at)
+            if self.language_manager.language == ZH_CN
+            else format_quota_reset(detail.reset_at, self.language_manager)
+        )
+        percentage = format_quota_percentage(detail.percentage) or "--"
+        return f"{name}: {percentage} ({reset})"
+
+    def _render_error(self) -> None:
+        if self._last_quota is not None:
+            self._render_quota(self._last_quota)
+        self.dot.setStyleSheet("color: #8997aa;")
+        if self._has_known_quota:
+            state_text = (
+                "数据过期"
+                if self.language_manager.language == ZH_CN
+                else self.language_manager.text("quota.stale")
+            )
+        else:
+            state_text = self.language_manager.text("quota.unavailable")
+        self.summary_label.setText(f"{self.language_manager.text('qwen.quota')}\n{state_text}")
+        previous = f"{self._last_quota_tooltip}\n" if self._last_quota_tooltip else ""
+        retry = "点击重试" if self.language_manager.language == ZH_CN else "Click to retry"
+        error_text = qwen_quota_error_text(self._last_error, self.language_manager)
         self.setToolTip(f"{previous}{error_text}\n{retry}")
 
     def retranslate_ui(self) -> None:
@@ -1171,7 +1400,7 @@ class TaskCard(QFrame):
         root.addWidget(self.details, 1)
 
         self.remove_button: QPushButton | None = None
-        if task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:")):
+        if task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:", "qwen:")):
             self.remove_button = QPushButton("×")
             self.remove_button.setObjectName("removeTaskButton")
             self.remove_button.setFixedSize(24, 24)
@@ -1205,18 +1434,16 @@ class TaskCard(QFrame):
         self.status_label.setText(status_name(state.status, self.language_manager))
         self.status_label.setStyleSheet(f"color: {color}; font-weight: 700;")
         work_dir = state.metadata.get("work_dir")
-        if (
-            self.task.agent.type in ("codex_cli", "kimi_code", "opencode_cli")
-            and isinstance(work_dir, str)
-            and work_dir
-        ):
+        if isinstance(work_dir, str) and work_dir:
             self.workdir_label.setText(f"· {PurePath(work_dir).name}")
             self.workdir_label.setToolTip(work_dir)
             self.workdir_label.show()
         else:
             self.workdir_label.hide()
         usage = state.metadata.get("usage")
-        if self.task.agent.type == "kimi_code" and isinstance(usage, dict):
+        if isinstance(usage, dict) and (
+            usage.get("total_input_tokens") or usage.get("output_tokens")
+        ):
             self.usage_label.setText(
                 format_usage_line(
                     usage,
@@ -1329,7 +1556,7 @@ class TaskCard(QFrame):
             else self.language_manager.text("task.copy")
         )
         copy_action.triggered.connect(lambda: self.action_requested.emit("copy", self.task.id))
-        if self.task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:")):
+        if self.task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:", "qwen:")):
             rename_action = menu.addAction(
                 "重命名任务"
                 if self.language_manager.language == ZH_CN
@@ -1428,6 +1655,16 @@ class SettingsDialog(QDialog):
         )
         opencode_tasks.clicked.connect(window.open_opencode_task_selector)
         layout.addWidget(opencode_tasks)
+        qwen_tasks = QPushButton(
+            language.text("settings.select_qwen")
+            + language.text(
+                "settings.selected_counts",
+                selected=len(window.qwen_selected_ids),
+                automatic=len(window.qwen_auto_active_ids()),
+            )
+        )
+        qwen_tasks.clicked.connect(window.open_qwen_task_selector)
+        layout.addWidget(qwen_tasks)
         rotate_credentials = QPushButton(language.text("settings.rotate_api"))
         rotate_credentials.clicked.connect(window.rotate_credentials)
         layout.addWidget(rotate_credentials)
@@ -1465,6 +1702,7 @@ class SettingsDialog(QDialog):
             "kimi_code": "Kimi Code",
             "kimi_desktop": "Kimi Desktop",
             "opencode_cli": "OpenCode",
+            "qwen_cli": "Qwen Code",
             "generic_cli": language.text("settings.generic_cli"),
         }
         for agent_type, label in labels.items():
@@ -1474,6 +1712,26 @@ class SettingsDialog(QDialog):
                 lambda checked, value=agent_type: window.set_agent_visible(value, checked)
             )
             layout.addWidget(checkbox)
+        panel_labels = {
+            "codex": "Codex",
+            "kimi": "Kimi",
+            "opencode": "OpenCode",
+            "qwen": "Qwen Code",
+        }
+        available_panels = {
+            panel for panel, bar in window.quota_panel_widgets().items() if bar is not None
+        }
+        if available_panels:
+            layout.addWidget(QLabel(language.text("settings.visible_quota_panels")))
+            for panel, label in panel_labels.items():
+                if panel not in available_panels:
+                    continue
+                checkbox = QCheckBox(label)
+                checkbox.setChecked(panel in window.visible_quota_panels)
+                checkbox.toggled.connect(
+                    lambda checked, value=panel: window.set_quota_panel_visible(value, checked)
+                )
+                layout.addWidget(checkbox)
         close = QPushButton(language.text("common.done"))
         close.clicked.connect(self.accept)
         layout.addWidget(close)
@@ -1610,6 +1868,23 @@ class OpenCodeTaskSelectionDialog(TaskSelectionDialog):
         )
 
 
+class QwenTaskSelectionDialog(TaskSelectionDialog):
+    def __init__(
+        self,
+        sessions: list[QwenSession],
+        selected_ids: set[str],
+        auto_active_ids: set[str],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(
+            [(session.session_id, session.title, session.updated_at) for session in sessions],
+            selected_ids,
+            auto_active_ids,
+            parent,
+            window_title_key="settings.select_qwen",
+        )
+
+
 class KimiDesktopTaskSelectionDialog(TaskSelectionDialog):
     def __init__(
         self,
@@ -1635,14 +1910,17 @@ class MainWindow(QWidget):
     kimi_discovery_health_received = Signal(object)
     kimi_desktop_discovery_health_received = Signal(object)
     opencode_discovery_health_received = Signal(object)
+    qwen_discovery_health_received = Signal(object)
     settings_keys = {
         "geometry",
         "compact_mode",
         "always_on_top",
         "opacity",
         "visible_agents",
+        "visible_quota_panels",
         "agent_visibility_migrated_v2",
         "agent_visibility_migrated_v3",
+        "agent_visibility_migrated_v4",
     }
 
     def __init__(
@@ -1693,6 +1971,17 @@ class MainWindow(QWidget):
         subscribe_opencode_discovery_health: (
             Callable[[HealthSubscriber], Callable[[], None]] | None
         ) = None,
+        qwen_sessions: Callable[[], list[QwenSession]] | None = None,
+        qwen_auto_active_ids: Callable[[], set[str]] | None = None,
+        qwen_retained_ids: Callable[[], set[str]] | None = None,
+        qwen_muted_ids: Callable[[], set[str]] | None = None,
+        set_qwen_monitoring_preferences: (
+            Callable[[set[str], set[str], set[str]], None] | None
+        ) = None,
+        qwen_discovery_health: Callable[[], DiscoveryHealth] | None = None,
+        subscribe_qwen_discovery_health: (
+            Callable[[HealthSubscriber], Callable[[], None]] | None
+        ) = None,
         discovery_log_path: str = str(APP_SUPPORT_DIR / "logs" / "app.log"),
         accessibility_trusted: bool = True,
         open_accessibility_settings_callback: Callable[[], None] | None = None,
@@ -1701,6 +1990,7 @@ class MainWindow(QWidget):
         kimi_web_quota_service: KimiWebQuotaService | None = None,
         codex_quota_service: CodexQuotaService | None = None,
         opencode_web_quota_service: OpenCodeWebQuotaService | None = None,
+        qwen_web_quota_service: QwenWebQuotaService | None = None,
         open_url: Callable[[str], None] | None = None,
         language_manager: LanguageManager | None = None,
     ) -> None:
@@ -1749,6 +2039,18 @@ class MainWindow(QWidget):
             if subscribe_opencode_discovery_health is not None
             else lambda: None
         )
+        self._qwen_sessions = qwen_sessions or (lambda: [])
+        self._qwen_auto_active_ids = qwen_auto_active_ids or (lambda: set())
+        self._qwen_retained_ids = qwen_retained_ids or (lambda: set())
+        self._qwen_muted_ids = qwen_muted_ids or (lambda: set())
+        self._set_qwen_monitoring_preferences = set_qwen_monitoring_preferences or (
+            lambda _m, _r, _u: None
+        )
+        self._unsubscribe_qwen_discovery_health = (
+            subscribe_qwen_discovery_health(self.qwen_discovery_health_received.emit)
+            if subscribe_qwen_discovery_health is not None
+            else lambda: None
+        )
         self._rotate_api_token = rotate_api_token_callback or (lambda: self.config.app.api.token)
         self._discovery_healths: dict[str, DiscoveryHealth] = {}
         for health in (
@@ -1756,6 +2058,7 @@ class MainWindow(QWidget):
             (kimi_discovery_health or (lambda: DiscoveryHealth(brand="Kimi")))(),
             (kimi_desktop_discovery_health or (lambda: DiscoveryHealth(brand="Kimi Desktop")))(),
             (opencode_discovery_health or (lambda: DiscoveryHealth(brand="OpenCode")))(),
+            (qwen_discovery_health or (lambda: DiscoveryHealth(brand="Qwen")))(),
         ):
             self._discovery_healths[health.brand] = health
         self._discovery_log_path = discovery_log_path
@@ -1765,8 +2068,11 @@ class MainWindow(QWidget):
         self.kimi_web_quota_service = kimi_web_quota_service
         self.codex_quota_service = codex_quota_service
         self.opencode_web_quota_service = opencode_web_quota_service
+        self.qwen_web_quota_service = qwen_web_quota_service
         self._latest_opencode_quota: OpenCodeQuota | None = None
+        self._latest_qwen_quota: QwenQuota | None = None
         self._opencode_authorized = False
+        self._qwen_authorized = False
         self._latest_kimi_code_quota: KimiQuota | None = None
         self._latest_kimi_web_quota: KimiQuota | None = None
         self._kimi_web_authorized = False
@@ -1777,6 +2083,7 @@ class MainWindow(QWidget):
         self.quota_bar: QuotaBar | None = None
         self.codex_quota_bar: CodexQuotaBar | None = None
         self.opencode_quota_bar: OpenCodeQuotaBar | None = None
+        self.qwen_quota_bar: QwenQuotaBar | None = None
         self._unsubscribe_discovery_health = (
             subscribe_discovery_health(self.discovery_health_received.emit)
             if subscribe_discovery_health is not None
@@ -1884,6 +2191,28 @@ class MainWindow(QWidget):
         else:
             self.opencode_muted_ids = set()
         self._apply_opencode_monitoring_preferences()
+        saved_qwen_tasks = self._settings.value("qwen_manual_tasks")
+        if isinstance(saved_qwen_tasks, str):
+            self.qwen_manual_ids = {saved_qwen_tasks}
+        elif isinstance(saved_qwen_tasks, list):
+            self.qwen_manual_ids = {str(value) for value in saved_qwen_tasks}
+        else:
+            self.qwen_manual_ids = set()
+        saved_qwen_retained = self._settings.value("qwen_retained_tasks")
+        if isinstance(saved_qwen_retained, str):
+            self.qwen_retained_ids = {saved_qwen_retained}
+        elif isinstance(saved_qwen_retained, list):
+            self.qwen_retained_ids = {str(value) for value in saved_qwen_retained}
+        else:
+            self.qwen_retained_ids = set()
+        saved_qwen_muted = self._settings.value("qwen_muted_tasks")
+        if isinstance(saved_qwen_muted, str):
+            self.qwen_muted_ids = {saved_qwen_muted}
+        elif isinstance(saved_qwen_muted, list):
+            self.qwen_muted_ids = {str(value) for value in saved_qwen_muted}
+        else:
+            self.qwen_muted_ids = set()
+        self._apply_qwen_monitoring_preferences()
         saved_custom_names = self._settings.value("custom_task_names")
         try:
             parsed_names = json.loads(saved_custom_names) if saved_custom_names else {}
@@ -1912,6 +2241,17 @@ class MainWindow(QWidget):
             self.visible_agent_types.add("opencode_cli")
             self._settings.setValue("agent_visibility_migrated_v3", True)
             self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
+        if not self._settings.value("agent_visibility_migrated_v4", False, type=bool):
+            self.visible_agent_types.add("qwen_cli")
+            self._settings.setValue("agent_visibility_migrated_v4", True)
+            self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
+        saved_quota_panels = self._settings.value("visible_quota_panels")
+        if isinstance(saved_quota_panels, str):
+            self.visible_quota_panels = {saved_quota_panels}
+        elif isinstance(saved_quota_panels, list):
+            self.visible_quota_panels = {str(value) for value in saved_quota_panels}
+        else:
+            self.visible_quota_panels = set(_ALL_QUOTA_PANELS)
         self._unsubscribe = self.manager.subscribe(self.state_received.emit)
         self.state_received.connect(self._apply_state)
         self.external_action.connect(self._perform_action)
@@ -1920,6 +2260,7 @@ class MainWindow(QWidget):
         self.kimi_discovery_health_received.connect(self._apply_discovery_health)
         self.kimi_desktop_discovery_health_received.connect(self._apply_discovery_health)
         self.opencode_discovery_health_received.connect(self._apply_discovery_health)
+        self.qwen_discovery_health_received.connect(self._apply_discovery_health)
 
         saved_top = self._settings.value("always_on_top", self.always_on_top, type=bool)
         self.always_on_top = bool(saved_top)
@@ -2007,6 +2348,14 @@ class MainWindow(QWidget):
                 self._on_opencode_login_state
             )
             self.opencode_web_quota_service.error_occurred.connect(self._on_opencode_quota_error)
+        if self.qwen_web_quota_service is not None:
+            self.qwen_quota_bar = QwenQuotaBar(self.language_manager)
+            self.qwen_quota_bar.clicked.connect(self._on_qwen_quota_bar_clicked)
+            layout.addWidget(self.qwen_quota_bar)
+            self.qwen_web_quota_service.quota_updated.connect(self._on_qwen_quota_updated)
+            self.qwen_web_quota_service.login_state_changed.connect(self._on_qwen_login_state)
+            self.qwen_web_quota_service.error_occurred.connect(self._on_qwen_quota_error)
+        self._apply_quota_panel_visibility()
 
         self.discovery_warning = QFrame()
         self.discovery_warning.setObjectName("discoveryWarning")
@@ -2154,6 +2503,8 @@ class MainWindow(QWidget):
             self.codex_quota_bar.retranslate_ui()
         if self.opencode_quota_bar is not None:
             self.opencode_quota_bar.retranslate_ui()
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.retranslate_ui()
         if self.tray_show_action is not None:
             self.tray_show_action.setText(self.language_manager.text("tray.show_hide"))
         if self.tray_compact_action is not None:
@@ -2258,6 +2609,8 @@ class MainWindow(QWidget):
         self._sync_kimi_desktop_muted_ids()
         self._sync_opencode_retained_ids()
         self._sync_opencode_muted_ids()
+        self._sync_qwen_retained_ids()
+        self._sync_qwen_muted_ids()
         self.sync_cards()
         for state in self.manager.list():
             self._apply_state(state)
@@ -2302,6 +2655,15 @@ class MainWindow(QWidget):
             or (
                 task.id.startswith("opencode:")
                 and task.id.removeprefix("opencode:") in self.opencode_selected_ids
+            )
+        ]
+        tasks = [
+            task
+            for task in tasks
+            if task.agent.type != "qwen_cli"
+            or (
+                task.id.startswith("qwen:")
+                and task.id.removeprefix("qwen:") in self.qwen_selected_ids
             )
         ]
         return tasks
@@ -2382,7 +2744,7 @@ class MainWindow(QWidget):
         self.retained_cards_widget.setVisible(bool(terminal_tasks))
         self.clear_retained_button.setVisible(
             any(
-                task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:"))
+                task.id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:", "qwen:"))
                 for task in terminal_tasks
             )
         )
@@ -2586,6 +2948,47 @@ class MainWindow(QWidget):
         if self.opencode_quota_bar is not None:
             self.opencode_quota_bar.show_unauthorized()
 
+    def _on_qwen_quota_bar_clicked(self) -> None:
+        if self.qwen_web_quota_service is None:
+            return
+        if not self._qwen_authorized:
+            self.qwen_web_quota_service.open_login(self)
+            return
+        self.qwen_web_quota_service.refresh_now()
+
+    def _on_qwen_quota_updated(self, quota: object) -> None:
+        if not isinstance(quota, QwenQuota):
+            return
+        self._latest_qwen_quota = quota
+        self._qwen_authorized = quota.status is not QuotaStatus.UNKNOWN
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_quota(quota)
+
+    def _on_qwen_login_state(self, authorized: bool) -> None:
+        self._qwen_authorized = authorized
+        if authorized:
+            return
+        self._latest_qwen_quota = None
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_unauthorized()
+
+    def _on_qwen_quota_error(self, category: str) -> None:
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_error(category)
+
+    def open_qwen_web_login(self) -> None:
+        if self.qwen_web_quota_service is not None:
+            self.qwen_web_quota_service.open_login(self)
+
+    def qwen_logout(self) -> None:
+        if self.qwen_web_quota_service is None:
+            return
+        self.qwen_web_quota_service.logout()
+        self._latest_qwen_quota = None
+        self._qwen_authorized = False
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_unauthorized()
+
     def _on_oauth_code_ready(self, user_code: str, url: str) -> None:
         if self._oauth_dialog is None:
             self._oauth_dialog = KimiOAuthDialog(
@@ -2659,6 +3062,27 @@ class MainWindow(QWidget):
             self.visible_agent_types.discard(agent_type)
         self._settings.setValue("visible_agents", sorted(self.visible_agent_types))
         self.sync_cards()
+
+    def quota_panel_widgets(self) -> dict[str, QFrame | None]:
+        return {
+            "codex": self.codex_quota_bar,
+            "kimi": self.quota_bar,
+            "opencode": self.opencode_quota_bar,
+            "qwen": self.qwen_quota_bar,
+        }
+
+    def set_quota_panel_visible(self, panel: str, visible: bool) -> None:
+        if visible:
+            self.visible_quota_panels.add(panel)
+        else:
+            self.visible_quota_panels.discard(panel)
+        self._settings.setValue("visible_quota_panels", sorted(self.visible_quota_panels))
+        self._apply_quota_panel_visibility()
+
+    def _apply_quota_panel_visibility(self) -> None:
+        for panel, bar in self.quota_panel_widgets().items():
+            if bar is not None:
+                bar.setVisible(panel in self.visible_quota_panels)
 
     def set_codex_selected_ids(self, selected_ids: set[str]) -> None:
         self.set_codex_monitoring_preferences(selected_ids, set(), set())
@@ -2806,6 +3230,49 @@ class MainWindow(QWidget):
             self.opencode_manual_ids | self.opencode_retained_ids | self.opencode_auto_active_ids()
         ) - self.opencode_muted_ids
 
+    def set_qwen_selected_ids(self, selected_ids: set[str]) -> None:
+        self.set_qwen_monitoring_preferences(selected_ids, set(), set())
+
+    def set_qwen_monitoring_preferences(
+        self, manual_ids: set[str], retained_ids: set[str], muted_ids: set[str]
+    ) -> None:
+        self.qwen_manual_ids = set(manual_ids)
+        self.qwen_retained_ids = set(retained_ids) - self.qwen_manual_ids
+        self.qwen_muted_ids = set(muted_ids) - self.qwen_manual_ids
+        self._settings.setValue("qwen_manual_tasks", sorted(self.qwen_manual_ids))
+        self._settings.setValue("qwen_retained_tasks", sorted(self.qwen_retained_ids))
+        self._settings.setValue("qwen_muted_tasks", sorted(self.qwen_muted_ids))
+        self._apply_qwen_monitoring_preferences()
+        self.sync_cards()
+
+    def _apply_qwen_monitoring_preferences(self) -> None:
+        self._set_qwen_monitoring_preferences(
+            self.qwen_manual_ids,
+            self.qwen_retained_ids,
+            self.qwen_muted_ids,
+        )
+
+    def _sync_qwen_retained_ids(self) -> None:
+        retained_ids = self._qwen_retained_ids()
+        if retained_ids != self.qwen_retained_ids:
+            self.qwen_retained_ids = set(retained_ids)
+            self._settings.setValue("qwen_retained_tasks", sorted(self.qwen_retained_ids))
+
+    def _sync_qwen_muted_ids(self) -> None:
+        muted_ids = self._qwen_muted_ids()
+        if muted_ids != self.qwen_muted_ids:
+            self.qwen_muted_ids = set(muted_ids)
+            self._settings.setValue("qwen_muted_tasks", sorted(self.qwen_muted_ids))
+
+    def qwen_auto_active_ids(self) -> set[str]:
+        return set(self._qwen_auto_active_ids())
+
+    @property
+    def qwen_selected_ids(self) -> set[str]:
+        return (
+            self.qwen_manual_ids | self.qwen_retained_ids | self.qwen_auto_active_ids()
+        ) - self.qwen_muted_ids
+
     def _remove_task_requested(self, task_id: str) -> None:
         # Single funnel for card removal: a card whose task id matches no
         # known brand would otherwise be ignored silently by every
@@ -2818,9 +3285,24 @@ class MainWindow(QWidget):
             self.remove_kimi_desktop_task(task_id)
         elif task_id.startswith("opencode:"):
             self.remove_opencode_task(task_id)
+        elif task_id.startswith("qwen:"):
+            self.remove_qwen_task(task_id)
         else:
             _logger.error("Unknown brand dispatch: %s", task_id)
             self._set_subtitle_presentation("feedback.operation_failed", uppercase=False)
+
+    def remove_qwen_task(self, task_id: str) -> None:
+        if not task_id.startswith("qwen:"):
+            return
+        session_id = task_id.removeprefix("qwen:")
+        self.qwen_manual_ids.discard(session_id)
+        self.qwen_retained_ids.discard(session_id)
+        self.qwen_muted_ids.add(session_id)
+        self._settings.setValue("qwen_manual_tasks", sorted(self.qwen_manual_ids))
+        self._settings.setValue("qwen_retained_tasks", sorted(self.qwen_retained_ids))
+        self._settings.setValue("qwen_muted_tasks", sorted(self.qwen_muted_ids))
+        self._apply_qwen_monitoring_preferences()
+        self.sync_cards()
 
     def remove_opencode_task(self, task_id: str) -> None:
         if not task_id.startswith("opencode:"):
@@ -2864,7 +3346,7 @@ class MainWindow(QWidget):
         self.sync_cards()
 
     def rename_task(self, task_id: str) -> None:
-        if not task_id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:")):
+        if not task_id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:", "qwen:")):
             return
         try:
             task = self.manager.task_config(task_id)
@@ -2907,7 +3389,7 @@ class MainWindow(QWidget):
         task_ids = [
             task_id
             for task_id in self._card_order_ids
-            if task_id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:"))
+            if task_id.startswith(("codex:", "kimi:", "kimi_desktop:", "opencode:", "qwen:"))
             and self._is_terminal(self.manager.get(task_id))
         ]
         if not task_ids:
@@ -2936,6 +3418,8 @@ class MainWindow(QWidget):
                 self.remove_kimi_desktop_task(task_id)
             elif task_id.startswith("opencode:"):
                 self.remove_opencode_task(task_id)
+            elif task_id.startswith("qwen:"):
+                self.remove_qwen_task(task_id)
             else:
                 self.remove_kimi_task(task_id)
 
@@ -3010,6 +3494,25 @@ class MainWindow(QWidget):
             if dialog.restore_auto_requested():
                 muted_ids -= auto_active_ids
             self.set_opencode_monitoring_preferences(manual_ids, retained_ids, muted_ids)
+
+    def open_qwen_task_selector(self) -> None:
+        auto_active_ids = self.qwen_auto_active_ids()
+        dialog = QwenTaskSelectionDialog(
+            self._qwen_sessions(),
+            self.qwen_selected_ids,
+            auto_active_ids,
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_ids = dialog.selected_ids()
+            retained_ids = self.qwen_retained_ids & selected_ids
+            manual_ids = (self.qwen_manual_ids & selected_ids) | (
+                selected_ids - auto_active_ids - retained_ids
+            )
+            muted_ids = (self.qwen_muted_ids | (auto_active_ids - selected_ids)) - selected_ids
+            if dialog.restore_auto_requested():
+                muted_ids -= auto_active_ids
+            self.set_qwen_monitoring_preferences(manual_ids, retained_ids, muted_ids)
 
     def dock_top_right(self) -> None:
         screen = self.screen() or QGuiApplication.primaryScreen()
@@ -3248,7 +3751,11 @@ class MainWindow(QWidget):
         super().changeEvent(event)
 
     def _request_quota_refresh_on_restore(self) -> None:
-        if self.kimi_web_quota_service is None and self.opencode_web_quota_service is None:
+        if (
+            self.kimi_web_quota_service is None
+            and self.opencode_web_quota_service is None
+            and self.qwen_web_quota_service is None
+        ):
             return
         now = time.monotonic()
         if now - self._last_restore_quota_refresh < RESTORE_QUOTA_REFRESH_INTERVAL_SECONDS:
@@ -3258,6 +3765,8 @@ class MainWindow(QWidget):
             self.kimi_web_quota_service.refresh_now()
         if self.opencode_web_quota_service is not None:
             self.opencode_web_quota_service.refresh_now()
+        if self.qwen_web_quota_service is not None:
+            self.qwen_web_quota_service.refresh_now()
 
     def handle_app_state_change(self, state: Qt.ApplicationState) -> None:
         if sys.platform != "darwin":
@@ -3305,4 +3814,5 @@ class MainWindow(QWidget):
         self._unsubscribe_kimi_discovery_health()
         self._unsubscribe_kimi_desktop_discovery_health()
         self._unsubscribe_opencode_discovery_health()
+        self._unsubscribe_qwen_discovery_health()
         event.accept()

@@ -22,6 +22,7 @@ a = Analysis(
         'aacc.adapters',
         'aacc.opencode_edge_cdp',
         'aacc.opencode_edge_session',
+        'aacc.qwen_web_session',
         'aacc.windows_broker',
         'websocket',
         'win32api',

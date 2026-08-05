@@ -62,6 +62,7 @@ class AppSettings(BaseModel):
     api: APIConfig = Field(default_factory=APIConfig)
     codex_quota_enabled: bool = True
     kimi_quota_enabled: bool = True
+    qwen_quota_enabled: bool = True
 
 
 class VoiceConfig(BaseModel):
@@ -126,6 +127,13 @@ class AppConfig(BaseModel):
     hotkeys: dict[str, str] = Field(default_factory=dict)
     tasks: list[TaskConfig] = Field(default_factory=list)
     opencode_workspace_url: str = Field(default="", max_length=2048)
+    qwen_workspace_url: str = Field(
+        default=(
+            "https://bailian.console.aliyun.com/cn-beijing?tab=plan"
+            "#/efm/subscription/token-plan/personal"
+        ),
+        max_length=2048,
+    )
 
     @field_validator("opencode_workspace_url")
     @classmethod
@@ -148,6 +156,20 @@ class AppConfig(BaseModel):
         decoded_path = unquote(parsed.path)
         if re.fullmatch(r"/workspace/[A-Za-z0-9_-]+(?:/go)?/?", decoded_path) is None:
             raise ValueError("opencode_workspace_url must point to an opencode.ai workspace page")
+        return value
+
+    @field_validator("qwen_workspace_url")
+    @classmethod
+    def validate_qwen_workspace_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        try:
+            parsed = urlparse(value)
+        except ValueError as error:
+            raise ValueError("qwen_workspace_url must be a valid URL") from error
+        if parsed.scheme != "https" or parsed.netloc != "bailian.console.aliyun.com":
+            raise ValueError("qwen_workspace_url host must be bailian.console.aliyun.com")
         return value
 
 
