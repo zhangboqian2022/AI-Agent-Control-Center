@@ -311,6 +311,10 @@ def _make_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
         "session_id TEXT NOT NULL, time_created INTEGER NOT NULL, "
         "time_updated INTEGER NOT NULL, data TEXT NOT NULL)"
     )
+    connection.execute(
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+        "time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)"
+    )
     return path, connection
 
 
@@ -804,3 +808,79 @@ def test_shadowed_running_tool_detected_from_db_history(tmp_path: Path) -> None:
     tasks = discovery.discover()
     assert len(tasks) == 1
     assert tasks[0].state.status is TaskStatus.RUNNING
+
+
+def _add_message(
+    connection: sqlite3.Connection,
+    session_id: str,
+    message_id: str,
+    *,
+    role: str,
+    tokens: dict[str, Any] | None = None,
+) -> None:
+    import json
+
+    data: dict[str, Any] = {"role": role}
+    if tokens is not None:
+        data["tokens"] = tokens
+    now = datetime.now(UTC)
+    connection.execute(
+        "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)",
+        (
+            message_id,
+            session_id,
+            int(now.timestamp() * 1000),
+            int(now.timestamp() * 1000),
+            json.dumps(data),
+        ),
+    )
+
+
+def test_discover_attaches_usage_from_assistant_messages(tmp_path: Path) -> None:
+    path, connection = _make_db(tmp_path)
+    _add_session(connection, "ses_usage", title="用量会话", directory="/work/u")
+    _add_part(connection, "ses_usage", "text_usage", {"type": "text"})
+    _add_message(
+        connection,
+        "ses_usage",
+        "msg_1",
+        role="assistant",
+        tokens={"input": 100, "output": 50, "reasoning": 5, "cache": {"read": 30, "write": 10}},
+    )
+    _add_message(
+        connection,
+        "ses_usage",
+        "msg_2",
+        role="assistant",
+        tokens={"input": 200, "output": 80, "cache": {"read": 40, "write": 0}},
+    )
+    _add_message(connection, "ses_usage", "msg_3", role="user")
+    connection.commit()
+    connection.close()
+
+    tasks = OpenCodeLocalDiscovery(
+        db_path=path,
+        process_alive_for_session=lambda _session: True,
+        process_alive=lambda: True,
+    ).discover()
+
+    usage = tasks[0].state.metadata["usage"]
+    assert usage["total_input_tokens"] == 100 + 200 + 30 + 40 + 10
+    assert usage["output_tokens"] == 130
+    assert usage["cache_read_pct"] == round(70 / 380 * 100)
+
+
+def test_discover_omits_usage_without_assistant_tokens(tmp_path: Path) -> None:
+    path, connection = _make_db(tmp_path)
+    _add_session(connection, "ses_nousage", title="无用量", directory="/work/n")
+    _add_part(connection, "ses_nousage", "text_n", {"type": "text"})
+    _add_message(connection, "ses_nousage", "msg_u", role="user")
+    connection.commit()
+    connection.close()
+
+    tasks = OpenCodeLocalDiscovery(
+        db_path=path,
+        process_alive_for_session=lambda _session: True,
+        process_alive=lambda: True,
+    ).discover()
+    assert "usage" not in tasks[0].state.metadata

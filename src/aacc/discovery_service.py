@@ -26,6 +26,7 @@ from aacc.opencode_discovery import (
     OpenCodeLocalDiscovery,
     OpenCodeSession,
 )
+from aacc.qwen_discovery import QwenDiscoveryError, QwenLocalDiscovery, QwenSession
 from aacc.security import redact
 from aacc.task_manager import TaskManager
 
@@ -341,4 +342,25 @@ class OpenCodeDiscoveryService(LocalDiscoveryService[OpenCodeSession]):
             error_type=OpenCodeDiscoveryError,
             brand="OpenCode",
             state_source="opencode_local",
+        )
+
+
+class QwenDiscoveryService(LocalDiscoveryService[QwenSession]):
+    """Polls local Qwen Code metadata outside the Qt event loop."""
+
+    def __init__(
+        self,
+        manager: TaskManager,
+        *,
+        discovery: QwenLocalDiscovery | None = None,
+        interval_seconds: float = 5.0,
+    ) -> None:
+        super().__init__(
+            manager,
+            discovery=discovery or QwenLocalDiscovery(),
+            interval_seconds=interval_seconds,
+            thread_name="aacc-qwen-discovery",
+            error_type=QwenDiscoveryError,
+            brand="Qwen",
+            state_source="qwen_local",
         )

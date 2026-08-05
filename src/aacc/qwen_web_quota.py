@@ -20,10 +20,16 @@ from datetime import datetime, timedelta
 
 from aacc.kimi_quota import QuotaDetail, QuotaStatus
 
-_FIVE_HOUR_KEYS = ("fiveHourText", "five_hour_text")
-_WEEKLY_KEYS = ("weeklyText", "sevenDayText", "weekly_text")
+_FIVE_HOUR_KEYS = ("personalFiveHourText", "fiveHourText", "five_hour_text")
+_WEEKLY_KEYS = ("personalWeeklyText", "weeklyText", "sevenDayText", "weekly_text")
+_TEAM_KEYS = ("teamTotalText", "team_total_text")
 _PERCENTAGE_PATTERN = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_USED_PERCENTAGE_PATTERN = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%\s*(?:已用|used)", re.IGNORECASE)
+_GAUGE_TICKS = ("0%", "50%", "90%", "100%")
 _RESET_MARKERS = re.compile(r"重置|reset|resets|后", re.IGNORECASE)
+_ABSOLUTE_RESET_PATTERN = re.compile(
+    r"(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?"
+)
 _RESET_UNITS = (
     (re.compile(r"(\d+)\s*(?:天|days?|day)"), 86_400),
     (re.compile(r"(\d+)\s*(?:小时|hours?|hour)"), 3_600),
@@ -37,6 +43,7 @@ class QwenQuota:
     weekly: QuotaDetail | None
     status: QuotaStatus
     fetched_at: datetime
+    team_total: QuotaDetail | None = None
 
 
 def _window_text(node: dict[str, object], keys: tuple[str, ...]) -> str | None:
@@ -47,23 +54,51 @@ def _window_text(node: dict[str, object], keys: tuple[str, ...]) -> str | None:
     return None
 
 
+def _before_gauge_ticks(text: str) -> str:
+    """Drop the gauge tick ladder (0%/50%/90%/100%) and everything after it.
+
+    The console renders each quota gauge as ``value`` followed by the tick
+    ladder, so everything before the ladder is signal and the ladder itself
+    (plus the marketing copy below it) is noise. Snippets without a ladder
+    are returned unchanged.
+    """
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index in range(len(lines) - len(_GAUGE_TICKS) + 1):
+        if tuple(lines[index : index + len(_GAUGE_TICKS)]) == _GAUGE_TICKS:
+            return "\n".join(lines[:index])
+    return "\n".join(lines)
+
+
 def _percentage(text: str) -> float | None:
-    match = _PERCENTAGE_PATTERN.search(text)
+    searchable = _before_gauge_ticks(text)
+    match = _USED_PERCENTAGE_PATTERN.search(searchable) or _PERCENTAGE_PATTERN.search(searchable)
     if match is None:
         return None
     value = float(match.group(1))
     return value if 0 <= value <= 100 else None
 
 
-def _reset_seconds(lines: list[str]) -> int | None:
+def _reset_at(lines: list[str], *, now: datetime) -> datetime | None:
     candidates = lines[1:] if len(lines) > 1 else []
     marked = [line for line in candidates if _RESET_MARKERS.search(line)]
-    text = "\n".join(marked if marked else candidates)
+    ordered = marked if marked else candidates
+    for line in ordered:
+        match = _ABSOLUTE_RESET_PATTERN.search(line)
+        if match is None:
+            continue
+        year, month, day, hour, minute, second = (int(group or 0) for group in match.groups())
+        try:
+            local = datetime(year, month, day, hour, minute, second)
+        except ValueError:
+            continue
+        # The console renders the instant in the local timezone.
+        return local.astimezone()
     seconds = 0
     for pattern, unit in _RESET_UNITS:
-        for match in pattern.finditer(text):
+        for match in pattern.finditer("\n".join(ordered)):
             seconds += int(match.group(1)) * unit
-    return seconds if seconds > 0 else None
+    return now + timedelta(seconds=seconds) if seconds > 0 else None
 
 
 def _parse_window(text: str | None, *, now: datetime) -> QuotaDetail | None:
@@ -72,8 +107,7 @@ def _parse_window(text: str | None, *, now: datetime) -> QuotaDetail | None:
     percentage = _percentage(text)
     if percentage is None:
         return None
-    reset_seconds = _reset_seconds(text.splitlines())
-    reset_at = now + timedelta(seconds=reset_seconds) if reset_seconds else None
+    reset_at = _reset_at(text.splitlines(), now=now)
     used = int(percentage)
     return QuotaDetail(
         used=used,
@@ -93,8 +127,19 @@ def parse_qwen_quota(payload: object, *, now: datetime) -> QwenQuota:
         return QwenQuota(None, None, QuotaStatus.UNKNOWN, now)
     five_hour = _parse_window(_window_text(node, _FIVE_HOUR_KEYS), now=now)
     weekly = _parse_window(_window_text(node, _WEEKLY_KEYS), now=now)
+    team_total = _parse_window(_window_text(node, _TEAM_KEYS), now=now)
     known = sum(item is not None for item in (five_hour, weekly))
     status = (
-        QuotaStatus.OK if known == 2 else QuotaStatus.PARTIAL if known == 1 else QuotaStatus.UNKNOWN
+        QuotaStatus.OK
+        if known == 2
+        else QuotaStatus.PARTIAL
+        if known == 1
+        else (QuotaStatus.PARTIAL if team_total is not None else QuotaStatus.UNKNOWN)
     )
-    return QwenQuota(five_hour=five_hour, weekly=weekly, status=status, fetched_at=now)
+    return QwenQuota(
+        five_hour=five_hour,
+        weekly=weekly,
+        status=status,
+        fetched_at=now,
+        team_total=team_total,
+    )

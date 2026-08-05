@@ -37,6 +37,7 @@ from aacc.discovery_service import (
     KimiDesktopDiscoveryService,
     KimiDiscoveryService,
     OpenCodeDiscoveryService,
+    QwenDiscoveryService,
 )
 from aacc.file_security import FileProtectionError
 from aacc.gui import MainWindow
@@ -69,6 +70,7 @@ class Runtime:
     kimi_discovery: KimiDiscoveryService
     kimi_desktop_discovery: KimiDesktopDiscoveryService
     opencode_discovery: OpenCodeDiscoveryService
+    qwen_discovery: QwenDiscoveryService
     adapter_discovery: AdapterDiscoveryService | None = None
     codex_quota_service: CodexQuotaService | None = None
     quota_service: QuotaService | None = None
@@ -95,6 +97,7 @@ class Runtime:
                 else lambda: None,
             ),
             ("opencode-discovery", self.opencode_discovery.stop),
+            ("qwen-discovery", self.qwen_discovery.stop),
             (
                 "adapter-discovery",
                 self.adapter_discovery.stop if self.adapter_discovery is not None else lambda: None,
@@ -319,6 +322,7 @@ def build_runtime(
         kimi_discovery=KimiDiscoveryService(manager),
         kimi_desktop_discovery=KimiDesktopDiscoveryService(manager),
         opencode_discovery=OpenCodeDiscoveryService(manager),
+        qwen_discovery=QwenDiscoveryService(manager),
         adapter_discovery=AdapterDiscoveryService(manager, config=config),
         codex_quota_service=codex_quota_factory(),
         quota_service=quota_service,
@@ -507,6 +511,13 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
         set_opencode_monitoring_preferences=runtime.opencode_discovery.set_monitoring_preferences,
         opencode_discovery_health=runtime.opencode_discovery.health,
         subscribe_opencode_discovery_health=runtime.opencode_discovery.subscribe_health,
+        qwen_sessions=runtime.qwen_discovery.catalog,
+        qwen_auto_active_ids=runtime.qwen_discovery.auto_active_ids,
+        qwen_retained_ids=runtime.qwen_discovery.retained_ids,
+        qwen_muted_ids=runtime.qwen_discovery.muted_ids,
+        set_qwen_monitoring_preferences=runtime.qwen_discovery.set_monitoring_preferences,
+        qwen_discovery_health=runtime.qwen_discovery.health,
+        subscribe_qwen_discovery_health=runtime.qwen_discovery.subscribe_health,
         discovery_log_path=str(data_dir / "logs" / "app.log"),
         accessibility_trusted=trusted,
         open_accessibility_settings_callback=open_accessibility_settings,
@@ -668,6 +679,9 @@ def _run_application(config_path: Path, database_path: Path, data_dir: Path) -> 
             if cleaned:
                 return
             runtime.opencode_discovery.start()
+            if cleaned:
+                return
+            runtime.qwen_discovery.start()
             if cleaned:
                 return
             adapter_discovery = getattr(runtime, "adapter_discovery", None)
