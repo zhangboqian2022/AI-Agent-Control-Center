@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QObject, QUrl
+from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtWebView import QWebViewLoadingInfo
 from PySide6.QtWidgets import QWidget
 
@@ -25,6 +25,11 @@ WORKSPACE_URL = (
 
 
 class FakeWebView(QObject):
+    # Session construction connects these on the view, so the fake must
+    # provide them when it stands in for QWebView before __init__ runs.
+    loadingChanged = Signal(object)
+    titleChanged = Signal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self._url = QUrl()
@@ -76,6 +81,17 @@ class FakeLoadingInfo:
 
 def _bridge_title(payload: object) -> str:
     return BRIDGE_PREFIX + json.dumps(payload)
+
+
+@pytest.fixture(autouse=True)
+def _patch_qwebview(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Constructing a real QWebView crashes on Windows CI (WebView2 under the
+    # offscreen platform raises an access violation). Swap in FakeWebView for
+    # every session construction in this module, matching the kimi/opencode
+    # test convention of never touching the real web view in unit tests.
+    import aacc.qwen_web_session as module
+
+    monkeypatch.setattr(module, "QWebView", FakeWebView)
 
 
 def make_session(tmp_path: Path) -> QwenWebSession:
