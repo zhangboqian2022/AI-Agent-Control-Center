@@ -2,7 +2,7 @@
 
 日期：2026-08-05
 分支：feat/qwen-quota
-状态：设计已定稿（用户已批准全部决策），待转入实现计划
+状态：已实现并真机验证（含一项实现后实测修正，见文末）
 
 ## 1. 背景与问题
 
@@ -209,3 +209,18 @@ CI 提醒：diff-cover 改动行覆盖率 ≥90%，上述每个新分支（open 
 3. 实现后全绿（pytest + ruff + mypy）→ `scripts/build_app.sh` +
    `scripts/install.sh` 真机实测隐藏刷新能否稳定取数、不抢焦点。
 4. 双语 CHANGELOG / KNOWN_LIMITATIONS 同步。
+
+## 8. 实现后实测修正（2026-08-05 真机）
+
+首版按第 3 节用 `--window-size=500,375`（Chrome 最小窗尺寸）启动，真机
+取数失败（`refresh_failed`）。隔离探针 dump 页面发现百炼控制台对**低于
+桌面宽度**的视口渲染「暂不支持移动端体验」拦截页，额度 DOM 完全不出现，
+提取自然 DOM_TIMEOUT。上午 headless 能取数正是因为 headless 默认视口是
+桌面宽度。
+
+修正（已实现并真机验证 T+2s 渲染出额度）：
+
+- 启动窗口改 `--window-size=1100,700`（桌面尺寸，瞬态窗口仍后台不抢焦点）。
+- stealth 序列在 `Page.reload` 之前追加
+  `Emulation.setDeviceMetricsOverride`（1100×700、`mobile:false`）作双保险，
+  确保窗口被钳成屏外细条后重载的文档仍按桌面视口渲染。

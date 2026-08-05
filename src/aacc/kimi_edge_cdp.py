@@ -339,6 +339,11 @@ class CdpConnection:
     def close_browser(self) -> None:
         self._request("Browser.close", {})
 
+    def send_command(self, method: str, params: Mapping[str, object]) -> dict[str, object]:
+        """Send one raw CDP command and return its full response message."""
+
+        return self._request(method, params)
+
     def close(self) -> None:
         with suppress(Exception):
             self._socket.close()

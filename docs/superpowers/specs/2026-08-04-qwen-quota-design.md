@@ -39,7 +39,7 @@ WebView 一次性登录、cookie 持久化，提取脚本读 `document.body.inne
 | `qwen_web_quota.py` | 纯函数解析：脚本抓到的 `{fiveHourText, weeklyText}` 渲染文本 → 归一化 `QwenQuota{five_hour, weekly, status, fetched_at}`，复用 `kimi_quota.py::QuotaStatus` | `opencode_web_quota.py` |
 | `qwen_web_error.py` | 错误归一化枚举 `QwenQuotaErrorCategory` + i18n 文案 | `opencode_web_error.py` |
 | `qwen_web_session.py` | macOS QtWebView 会话：百炼登录、cookie 持久化、页面内 DOM 提取脚本、title-bridge 上抛、open_login / refresh / logout / close | `opencode_web_session.py` + `kimi_web_session.py`（登录对话框架次序与 generation 防竞态） |
-| `qwen_web_quota_service.py` | `QTimer(300_000ms)` 轮询、`set_workspace_url` / `start` / `stop` / `refresh_now` / `open_login` / `logout`、信号 `quota_updated` / `login_state_changed` / `error_occurred` | `opencode_web_quota_service.py` |
+| `qwen_web_quota_service.py` | `QTimer(900_000ms)` 轮询、`set_workspace_url` / `start` / `stop` / `refresh_now` / `open_login` / `logout`、信号 `quota_updated` / `login_state_changed` / `error_occurred` | `opencode_web_quota_service.py` |
 | `gui.py` 扩展 | 新增 `QwenQuotaBar`（两行：5 小时 / 7 天）+ `Runtime.qwen_web_quota_service` 透传 + 启动连接 + 面板恢复显示补刷（复用 60s 节流 `showEvent` 路径） | `OpenCodeQuotaBar` |
 | `config.py` | `AppConfig.app.qwen_quota_enabled: bool = True`；`AppConfig.qwen_workspace_url: str`（默认百炼 token-plan personal URL） | `opencode_workspace_url` |
 | `app.py` | `_default_qwen_web_quota_service_factory` + `build_runtime` 装配 + `start_qwen_web_quota` 启动序列 + `Runtime` 持有与 shutdown stop | opencode 装配块 |
@@ -83,7 +83,8 @@ Python 侧 `parse_qwen_quota` 再对 `fiveHourText` / `weeklyText` 二次解析�
 
 ## 刷新节奏与面板恢复
 
-- 主轮询 `QWEN_WEB_QUOTA_INTERVAL_MS = 300_000`（5 分钟，与 opencode 一致）。
+- 主轮询 `QWEN_WEB_QUOTA_INTERVAL_MS = 900_000`（15 分钟；见 2026-08-05
+  hidden-refresh 设计，headless 被风控作废后改为有头隐藏刷新并拉长间隔）。
 - 面板恢复显示（showEvent / 取消最小化）补刷额度：复用 `gui.py` 现有 60s 节流
   `showEvent` 路径，加一行 qwen 分支（参照 opencode 当前实现 `gui.py:3259`）。
 

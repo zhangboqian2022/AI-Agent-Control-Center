@@ -53,13 +53,13 @@ def _default_url() -> str:
     )
 
 
-def test_service_starts_five_minute_timer(qapp, tmp_path: Path) -> None:
+def test_service_starts_fifteen_minute_timer(qapp, tmp_path: Path) -> None:
     session = FakeSession()
     service = QwenWebQuotaService(tmp_path, session=session)
     service.set_workspace_url(_default_url())
     service.start()
-    assert QWEN_WEB_QUOTA_INTERVAL_MS == 300_000
-    assert service.timer.interval() == 300_000
+    assert QWEN_WEB_QUOTA_INTERVAL_MS == 900_000
+    assert service.timer.interval() == 900_000
     assert service.timer.isActive()
     assert session.refreshes == 1
     service.timer.timeout.emit()
@@ -234,3 +234,38 @@ def test_platform_dispatch_uses_native_on_windows(qapp, tmp_path: Path, monkeypa
         tmp_path, None, language_manager=module.LanguageManager(module.ZH_CN)
     )
     assert created == ["native"]
+
+
+def test_create_chrome_web_session_builds_real_chrome_session(qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.qwen_web_quota_service as module
+    from aacc.qwen_chrome_session import QwenChromeSession
+
+    session = module._create_chrome_web_session(
+        tmp_path, None, language_manager=module.LanguageManager(module.ZH_CN)
+    )
+    assert isinstance(session, QwenChromeSession)
+    session.close()
+
+
+def test_create_native_web_session_builds_real_web_session(qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.qwen_web_quota_service as module
+    from aacc.qwen_web_session import QwenWebSession
+
+    session = module._create_native_web_session(
+        tmp_path, None, language_manager=module.LanguageManager(module.ZH_CN)
+    )
+    assert isinstance(session, QwenWebSession)
+    session.close()
+
+
+def test_logout_returns_false_when_session_logout_raises(qapp, tmp_path: Path) -> None:
+    del qapp
+
+    class ExplodingSession(FakeSession):
+        def logout(self) -> bool | None:
+            raise RuntimeError("state store unavailable")
+
+    service = QwenWebQuotaService(tmp_path, session=ExplodingSession())
+    assert service.logout() is False

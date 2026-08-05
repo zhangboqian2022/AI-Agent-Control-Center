@@ -4,10 +4,11 @@
 
 [中英文发布说明](docs/release-notes-1.4.5rc2.md)
 
-- [修复] 百炼（Qwen Code）登录现在可以在 macOS 上完成：会话改为通过 CDP 驱动真实的 Google Chrome（与 Windows 上驱动 Edge 的范式一致）——首次授权弹出一个可见的 Chrome 窗口完成阿里云登录（含 RAM 登录），之后的定时刷新走 headless。cookie 保存在 AACC 自有的 Chrome profile 目录，AACC 全程不接触账号密码；未安装 Chrome 时回退到原有原生 WebView。
+- [修复] 百炼（Qwen Code）登录现在可以在 macOS 上完成：会话改为通过 CDP 驱动真实的 Google Chrome（与 Windows 上驱动 Edge 的范式一致）——首次授权弹出一个可见的 Chrome 窗口完成阿里云登录（含 RAM 登录）。之后的额度刷新每 15 分钟一次，走「有头但完全隐藏」的 Chrome：阿里云风控会作废由 headless 浏览器出示的会话票据，因此 AACC 通过 `open -g -n` 启动 Chrome（不抢焦点、不 Dock 弹跳），经 CDP 把窗口推出屏幕，并在页面加载前掩盖 `navigator.webdriver` 与屏外负坐标。cookie 保存在 AACC 自有的 Chrome profile 目录，AACC 全程不接触账号密码；未安装 Chrome 时回退到原有原生 WebView。
+- [修复] 百炼会话过期不再死循环显示旧数据：登出后的控制台停留在原域名并渲染内嵌登录横幅，提取脚本现在将其判定为未登录——额度栏回到「点击授权」，可以重新发起可见登录。
 - [修复] token-plan 额度条不再把「未登录」误判成「已授权 + 0%」：匿名/登录页的介绍文案里同样出现「5 小时 / 7 天」字样，凡是没有渲染出任何百分比的文本片段一律按未登录处理，不再冒充额度数据。
 - [修复] 小数用量端到端保留：0.04% 这类真实用量现在显示为「0.04%」而不是 0%；5 小时窗口的重置时间也不会再把相邻「7 天」窗口的文案累加进来。
-- [修复] OpenCode 与 Qwen 额度的 5 分钟轮询现在每次都整页重载工作区页面再提取（此前只是重读旧页面 DOM，数值永远不变）；Kimi 刷新逻辑不变。
+- [修复] OpenCode 与 Qwen 额度每次轮询都先整页重载工作区页面再提取（此前只是重读旧页面 DOM，数值永远不变）；Qwen 每 15 分钟一次，OpenCode 每 5 分钟一次；Kimi 刷新逻辑不变。
 - [修复] Windows 额度服务不再导入尚不存在的 `aacc.qwen_edge_session` 模块；在专属 Edge CDP 会话落地前，Windows 与 macOS 一致走原生 WebView 路径。
 - [说明] `websocket-client` 改为跨平台依赖（macOS 的 CDP 传输通道）。
 
