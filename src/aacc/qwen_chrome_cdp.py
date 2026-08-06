@@ -6,10 +6,14 @@ Following the Windows Edge-CDP paradigm, this module drives a real Google
 Chrome instance through the DevTools Protocol: one visible window for the
 initial login, and background refreshes inside a headed-but-hidden window.
 Aliyun's risk control fingerprints headless browsers and voids session
-tickets presented by them, so refreshes launch Chrome through
-``open -g -n`` (no focus steal, no Dock bounce) and push the window
-off-screen through CDP instead of passing ``--headless``. Cookies stay in
-an AACC-owned Chrome profile directory; AACC never sees the account
+tickets presented by them, so refreshes launch a real headed Chrome binary
+directly with ``--no-startup-window`` and open the refresh page in a
+background window through ``Target.createTarget``, pushing it off-screen
+through CDP instead of passing ``--headless``. Bypassing LaunchServices
+(the ``open`` command) keeps the instance out of the Dock's recent items
+and avoids the second-instance Dock tile that ``open -n`` creates, so a
+finished refresh leaves neither an icon nor a process behind. Cookies stay
+in an AACC-owned Chrome profile directory; AACC never sees the account
 password.
 
 Chrome ships its own debugging endpoint files and accepts CDP commands the
@@ -76,9 +80,9 @@ _QWEN_RECOPY_QUARANTINE_PREFIX = f".{QWEN_CHROME_PROFILE_NAME}.pre-dailycopy-"
 _QWEN_RECOPY_KEEP = 3
 _PAGE_PATH = re.compile(r"^/devtools/page/[A-Za-z0-9_-]+$")
 _MAX_SNIPPET_CHARS = 20_000
-_QWEN_HIDDEN_OPEN_EXECUTABLE = Path("/usr/bin/open")
-_QWEN_CHROME_BUNDLE_ID = "com.google.Chrome"
 _QWEN_HIDDEN_WINDOW_OFFSET = -32000
+_QWEN_HIDDEN_WINDOW_WIDTH = 1100
+_QWEN_HIDDEN_WINDOW_HEIGHT = 700
 _logger = logging.getLogger("aacc.qwen_chrome_cdp")
 
 
@@ -303,11 +307,14 @@ def build_qwen_chrome_launch(
     """Build the launch specification for one owned Chrome run.
 
     Hidden refreshes need a real headed browser (Aliyun's risk control voids
-    tickets presented by headless fingerprints), launched through
-    ``open -g -n`` so the window appears without stealing focus or bouncing
-    in the Dock. ``executable`` only gates the visible path; the hidden path
-    always execs the system ``open`` launcher. Hidden mode is macOS-only and
-    fails closed elsewhere instead of falling back to headless.
+    tickets presented by headless fingerprints). The hidden path execs the
+    Chrome binary directly with ``--no-startup-window`` — bypassing
+    LaunchServices keeps the instance out of the Dock's recent items and
+    avoids the second-instance Dock tile ``open -n`` would create — and the
+    quota page is opened later in a background window through CDP, so the
+    launch URL is deliberately absent from the arguments. Hidden mode is
+    macOS-only and fails closed elsewhere instead of falling back to
+    headless.
     """
 
     _validate_workspace_url(workspace_url)
@@ -328,14 +335,9 @@ def build_qwen_chrome_launch(
     if resolved_platform != "darwin":
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
     return QwenChromeLaunchSpec(
-        executable=_QWEN_HIDDEN_OPEN_EXECUTABLE,
+        executable=executable,
         profile=profile,
         arguments=(
-            "-g",
-            "-n",
-            "-b",
-            _QWEN_CHROME_BUNDLE_ID,
-            "--args",
             f"--user-data-dir={profile}",
             "--remote-debugging-address=127.0.0.1",
             "--remote-debugging-port=0",
@@ -350,13 +352,11 @@ def build_qwen_chrome_launch(
             "--disable-background-timer-throttling",
             "--disable-renderer-backgrounding",
             "--disable-backgrounding-occluded-windows",
-            # macOS clamps negative launch positions back on-screen; start
-            # with a desktop-sized window and move off-screen through CDP.
-            # The Bailian console serves a mobile interstitial below desktop
-            # viewport widths, which would block the quota render entirely.
-            "--window-position=0,0",
-            "--window-size=1100,700",
-            workspace_url,
+            # Start windowless: the refresh page is created through CDP
+            # Target.createTarget in a background window, so the instance
+            # never activates, never steals focus, and exits cleanly through
+            # Browser.close (A/B verified on Chrome 151).
+            "--no-startup-window",
         ),
     )
 
@@ -604,6 +604,12 @@ def install_qwen_hidden_page_stealth(page: CdpConnection) -> None:
                 "bounds": {
                     "left": _QWEN_HIDDEN_WINDOW_OFFSET,
                     "top": _QWEN_HIDDEN_WINDOW_OFFSET,
+                    # The CDP-created background window starts at Chrome's
+                    # default size; the Bailian console serves a mobile
+                    # interstitial below desktop viewport widths, so size it
+                    # explicitly alongside the device-metrics override.
+                    "width": _QWEN_HIDDEN_WINDOW_WIDTH,
+                    "height": _QWEN_HIDDEN_WINDOW_HEIGHT,
                 },
             },
         )
@@ -671,55 +677,6 @@ def terminate_qwen_chrome_profile_processes(
     for process in alive:
         with suppress(Exception):
             process.kill()
-
-
-class _DetachedQwenChromeHandle:
-    """Fire-and-forget handle for Chrome launched through ``open -g -n``.
-
-    ``open`` hands the launch to LaunchServices and exits immediately, so the
-    Popen pid belongs to the launcher, not Chrome. ``poll`` therefore masks a
-    zero launcher exit — Chrome liveness is probed through the DevTools
-    endpoint and the per-profile process finder — and only surfaces a
-    non-zero launcher failure. The price is that a Chrome that crashes at
-    startup is only noticed once the startup budget is exhausted.
-    """
-
-    def __init__(
-        self,
-        opener: _ProcessLike,
-        *,
-        profile: Path,
-        process_finder: Callable[[Path], Iterable[Any]],
-        sleep: Callable[[float], None],
-        monotonic: Callable[[], float],
-    ) -> None:
-        self.pid = opener.pid
-        self._opener = opener
-        self._profile = profile
-        self._process_finder = process_finder
-        self._sleep = sleep
-        self._monotonic = monotonic
-
-    def poll(self) -> int | None:
-        code = self._opener.poll()
-        if code is None or code == 0:
-            return None
-        return code
-
-    def wait(self, timeout: float | None = None) -> int:
-        deadline = None if timeout is None else self._monotonic() + timeout
-        while True:
-            code = self._opener.poll()
-            if code is not None and code != 0:
-                return code
-            if not list(self._process_finder(self._profile)):
-                return 0
-            if deadline is not None and self._monotonic() >= deadline:
-                raise TimeoutError("Qwen Chrome outlived the shutdown window")
-            self._sleep(0.1)
-
-    def terminate(self) -> None:
-        terminate_qwen_chrome_profile_processes(self._profile, process_finder=self._process_finder)
 
 
 class ManagedQwenChromeOperation:
@@ -826,14 +783,6 @@ class ManagedQwenChromeOperation:
             raise
         except Exception as error:
             raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from error
-        if not visible:
-            process = _DetachedQwenChromeHandle(
-                process,
-                profile=self.profile,
-                process_finder=self._chrome_process_finder,
-                sleep=self._sleep,
-                monotonic=self._monotonic,
-            )
 
         browser: CdpConnection | None = None
         try:
@@ -845,12 +794,29 @@ class ManagedQwenChromeOperation:
             startup_deadline = self._monotonic() + QWEN_STARTUP_TIMEOUT_SECONDS
             login_deadline = self._monotonic() + EDGE_LOGIN_TIMEOUT_SECONDS
             refresh_auth_deadline = self._monotonic() + _QWEN_REFRESH_AUTH_GRACE_SECONDS
+            target_requested = visible
             while True:
                 if cancel.is_set():
                     raise QwenChromeCancelledError
                 if process.poll() is not None:
                     raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
                 try:
+                    if not target_requested:
+                        # The hidden launch starts windowless; open the quota
+                        # page in a background window so the instance never
+                        # activates (verified on Chrome 151: no focus steal,
+                        # no Dock tile, clean Browser.close exit). Requested
+                        # once per run; a failed send leaves the flag clear
+                        # and the retry below issues it again.
+                        browser.send_command(
+                            "Target.createTarget",
+                            {
+                                "url": self.workspace_url,
+                                "newWindow": True,
+                                "background": True,
+                            },
+                        )
+                        target_requested = True
                     targets = self._target_loader(endpoint.http_origin)
                     page_url = select_qwen_target(targets, expected_port=port)
                     page = CdpConnection(self._socket_factory(page_url))  # type: ignore[arg-type]
@@ -924,9 +890,9 @@ class ManagedQwenChromeOperation:
     def _cleanup_lingering_profile_processes(self) -> None:
         """Kill zombie Chrome instances holding the profile before a new launch.
 
-        Fire-and-forget: the hidden launcher hands off to LaunchServices, so a
-        leftover instance would otherwise lock the profile and the failure
-        would only surface as an endpoint timeout.
+        Fire-and-forget: a leftover instance from an earlier interrupted run
+        would otherwise lock the profile and the failure would only surface
+        as an endpoint timeout.
         """
 
         try:
