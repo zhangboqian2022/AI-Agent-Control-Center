@@ -24,11 +24,13 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import time
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -70,6 +72,8 @@ QWEN_PAGE_SOCKET_TIMEOUT_SECONDS = 90.0
 # so alias it locally instead of renaming across modules.
 _QWEN_REFRESH_AUTH_GRACE_SECONDS = EDGE_HEADLESS_AUTH_GRACE_SECONDS
 _QUARANTINE_PREFIX = f".{QWEN_CHROME_PROFILE_NAME}.logout-"
+_QWEN_RECOPY_QUARANTINE_PREFIX = f".{QWEN_CHROME_PROFILE_NAME}.pre-dailycopy-"
+_QWEN_RECOPY_KEEP = 3
 _PAGE_PATH = re.compile(r"^/devtools/page/[A-Za-z0-9_-]+$")
 _MAX_SNIPPET_CHARS = 20_000
 _QWEN_HIDDEN_OPEN_EXECUTABLE = Path("/usr/bin/open")
@@ -171,6 +175,114 @@ def clear_owned_qwen_chrome_profile(profile: Path, config_dir: Path) -> None:
     except QwenChromeQuotaError:
         raise
     except OSError as error:
+        raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from error
+
+
+def daily_chrome_session_source(
+    *, platform_name: str | None = None, home: Path | None = None
+) -> Path | None:
+    """Locate the daily Chrome user-data root when its Default profile exists.
+
+    Only the default profile location is considered: the automatic recopy
+    must never guess at foreign browser profiles.
+    """
+
+    resolved_platform = sys.platform if platform_name is None else platform_name
+    resolved_home = Path.home() if home is None else home
+    if resolved_platform != "darwin":
+        return None
+    root = resolved_home / "Library" / "Application Support" / "Google" / "Chrome"
+    if _is_reparse_point(root) or not (root / "Default").is_dir():
+        return None
+    return root
+
+
+def _backup_sqlite_database(source: Path, destination: Path) -> None:
+    """Online-backup a live database (the daily Chrome holds the lock)."""
+
+    connection = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    try:
+        target = sqlite3.connect(destination)
+        try:
+            with target:
+                connection.backup(target)
+        finally:
+            target.close()
+    finally:
+        connection.close()
+
+
+def _prune_qwen_recopy_quarantines(config_dir: Path) -> None:
+    quarantines = sorted(
+        (
+            entry
+            for entry in config_dir.iterdir()
+            if entry.name.startswith(_QWEN_RECOPY_QUARANTINE_PREFIX)
+            and entry.is_dir()
+            and not _is_reparse_point(entry)
+        ),
+        key=lambda entry: entry.name,
+    )
+    for entry in quarantines[:-_QWEN_RECOPY_KEEP]:
+        shutil.rmtree(entry, ignore_errors=True)
+
+
+def recopy_qwen_daily_chrome_session(
+    config_dir: Path,
+    *,
+    source_root: Path | None = None,
+    platform_name: str | None = None,
+    home: Path | None = None,
+) -> None:
+    """Rebuild the managed profile from the daily Chrome session subset.
+
+    Aliyun expires copied sessions server-side after roughly five and a half
+    hours while the daily browser keeps a live session through real use, so
+    re-copying the minimal session set restores hidden refreshes without any
+    login. Login Data (saved passwords) is never copied.
+    """
+
+    root = (
+        source_root
+        if source_root is not None
+        else daily_chrome_session_source(platform_name=platform_name, home=home)
+    )
+    if root is None or _is_reparse_point(root):
+        raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
+    source_default = root / "Default"
+    required = (
+        root / "Local State",
+        source_default / "Cookies",
+        source_default / "Preferences",
+        source_default / "Secure Preferences",
+    )
+    if not source_default.is_dir() or any(
+        _is_reparse_point(path) or not path.is_file() for path in required
+    ):
+        raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
+    profile = qwen_chrome_profile_path(config_dir)
+    validate_owned_qwen_chrome_profile(profile, config_dir)
+    terminate_qwen_chrome_profile_processes(profile)
+    try:
+        if profile.exists():
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            os.replace(profile, config_dir / f"{_QWEN_RECOPY_QUARANTINE_PREFIX}{timestamp}")
+        _prune_qwen_recopy_quarantines(config_dir)
+        profile.mkdir(parents=True)
+        default = profile / "Default"
+        default.mkdir()
+        shutil.copy2(root / "Local State", profile / "Local State")
+        _backup_sqlite_database(source_default / "Cookies", default / "Cookies")
+        for name in ("Preferences", "Secure Preferences"):
+            shutil.copy2(source_default / name, default / name)
+        for name in ("Local Storage", "Session Storage"):
+            storage = source_default / name
+            if storage.is_dir() and not _is_reparse_point(storage):
+                shutil.copytree(storage, default / name)
+        protect_directory(profile)
+    except QwenChromeQuotaError:
+        raise
+    except Exception as error:
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from error
 
 
@@ -629,6 +741,7 @@ class ManagedQwenChromeOperation:
         expression_factory: Callable[[], str] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        session_recopy: Callable[[Path], None] | None = None,
     ) -> None:
         _validate_workspace_url(workspace_url)
         self.workspace_url = workspace_url
@@ -649,10 +762,46 @@ class ManagedQwenChromeOperation:
         self._expression_factory = expression_factory or qwen_dom_extract_expression
         self._sleep = sleep
         self._monotonic = monotonic
+        self._session_recopy = session_recopy
 
     def run(self, *, visible: bool, cancel: Event) -> dict[str, object]:
+        """Run one operation, transparently recopying an expired session.
+
+        Aliyun expires copied sessions server-side (~5.5 h), after which the
+        console renders an inline login banner. When a recopy callback is
+        configured, a hidden refresh that hits that banner rebuilds the
+        profile from the daily Chrome session and retries once instead of
+        surfacing the logout; the retry keeps the full grace behaviour.
+        """
+
         if cancel.is_set():
             raise QwenChromeCancelledError
+        fail_fast_unauthorized = not visible and self._session_recopy is not None
+        try:
+            return self._run_once(
+                visible=visible,
+                cancel=cancel,
+                fail_fast_unauthorized=fail_fast_unauthorized,
+            )
+        except QwenChromeUnauthorizedError:
+            if visible or self._session_recopy is None:
+                raise
+            _logger.warning(
+                "Qwen hidden refresh found an expired session; "
+                "recopying the daily Chrome session before retrying"
+            )
+            try:
+                self._session_recopy(self.config_dir)
+            except Exception:
+                _logger.warning("Qwen daily Chrome session recopy failed", exc_info=True)
+                # Surface the original logout: the retry never happened, so
+                # the session layer must prompt for a visible re-login.
+                raise QwenChromeUnauthorizedError from None
+            return self._run_once(visible=visible, cancel=cancel, fail_fast_unauthorized=False)
+
+    def _run_once(
+        self, *, visible: bool, cancel: Event, fail_fast_unauthorized: bool
+    ) -> dict[str, object]:
         validate_owned_qwen_chrome_profile(self.profile, self.config_dir)
         try:
             self._protector(self.profile)
@@ -718,7 +867,10 @@ class ManagedQwenChromeOperation:
                             raise QwenChromeQuotaError(
                                 QwenQuotaErrorCategory.REFRESH_TIMEOUT
                             ) from None
-                    elif self._monotonic() >= refresh_auth_deadline:
+                    elif fail_fast_unauthorized or self._monotonic() >= refresh_auth_deadline:
+                        # Fail fast hands the expired session to the outer
+                        # recopy path without burning the grace window on a
+                        # banner that cannot change by itself.
                         raise
                     self._sleep(2.0)
                 except QwenChromeCancelledError:

@@ -2,6 +2,13 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.5-rc.3 — 2026-08-06
+
+[Bilingual release notes](docs/release-notes-1.4.5rc3.md)
+
+- [Feat] Qwen quota now survives the Aliyun session expiry (~5.5 hours after a session copy): with `qwen_auto_session_recopy: true` in `config.yaml`, a hidden refresh that hits the console's inline "not logged in" banner rebuilds AACC's Chrome profile from the daily Chrome's minimal session set (Cookies via online backup, Local State, Preferences, Local/Session Storage — never Login Data) and retries within the same tick, so the bar keeps showing quota without a visible re-login. The replaced managed profile is quarantined as `.qwen-chrome-profile.pre-dailycopy-*` (pruned to the 3 newest). The flag defaults to off: enable it only on machines that already use the daily-session copy flow.
+- [Fix] The Qwen logged-out path is no longer silent: detecting an expired session now logs a WARNING (previously the bar flipped back to "click to authorize" with no trace in the log), and skipped refreshes leave a debug line.
+
 ## 1.4.5-rc.2 — 2026-08-04
 
 [Bilingual release notes](docs/release-notes-1.4.5rc2.md)

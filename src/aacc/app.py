@@ -174,6 +174,7 @@ def _default_qwen_web_quota_service_factory(
         language_manager=language_manager,
     )
     service.set_workspace_url(config.qwen_workspace_url)
+    service.set_auto_session_recopy(config.qwen_auto_session_recopy)
     return service
 
 

@@ -55,11 +55,17 @@ def _create_chrome_web_session(
     parent: QObject,
     *,
     language_manager: LanguageManager,
+    auto_session_recopy: bool = False,
 ) -> _WebSessionLike:
     session_type: Any = import_module("aacc.qwen_chrome_session").QwenChromeSession
     return cast(
         _WebSessionLike,
-        session_type(config_dir, parent, language_manager=language_manager),
+        session_type(
+            config_dir,
+            parent,
+            language_manager=language_manager,
+            auto_session_recopy=auto_session_recopy,
+        ),
     )
 
 
@@ -68,6 +74,7 @@ def _create_platform_web_session(
     parent: QObject,
     *,
     language_manager: LanguageManager,
+    auto_session_recopy: bool = False,
 ) -> _WebSessionLike:
     """Prefer the Chrome-CDP session on macOS when Chrome is installed.
 
@@ -82,7 +89,12 @@ def _create_platform_web_session(
         except QwenChromeMissingError:
             pass
         else:
-            return _create_chrome_web_session(config_dir, parent, language_manager=language_manager)
+            return _create_chrome_web_session(
+                config_dir,
+                parent,
+                language_manager=language_manager,
+                auto_session_recopy=auto_session_recopy,
+            )
     return _create_native_web_session(config_dir, parent, language_manager=language_manager)
 
 
@@ -103,6 +115,7 @@ class QwenWebQuotaService(QObject):
         super().__init__(parent)
         self._config_dir = config_dir
         self._session: _WebSessionLike | None = session
+        self.auto_session_recopy = False
         self.language_manager = language_manager or LanguageManager(ZH_CN)
         self._now = now
         self.last_quota: QwenQuota | None = None
@@ -116,6 +129,9 @@ class QwenWebQuotaService(QObject):
 
     def set_workspace_url(self, url: str) -> None:
         self.workspace_url = url.strip()
+
+    def set_auto_session_recopy(self, enabled: bool) -> None:
+        self.auto_session_recopy = enabled
 
     def start(self) -> None:
         self._ensure_session().set_workspace_url(self.workspace_url)
@@ -168,7 +184,10 @@ class QwenWebQuotaService(QObject):
     def _ensure_session(self) -> _WebSessionLike:
         if self._session is None:
             self._session = _create_platform_web_session(
-                self._config_dir, self, language_manager=self.language_manager
+                self._config_dir,
+                self,
+                language_manager=self.language_manager,
+                auto_session_recopy=self.auto_session_recopy,
             )
             self._connect_session(self._session)
         return self._session

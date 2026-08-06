@@ -134,6 +134,7 @@ class AppConfig(BaseModel):
         ),
         max_length=2048,
     )
+    qwen_auto_session_recopy: bool = False
 
     @field_validator("opencode_workspace_url")
     @classmethod
