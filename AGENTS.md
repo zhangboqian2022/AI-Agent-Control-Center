@@ -90,31 +90,35 @@ ruff/mypy/pytest（`QT_QPA_PLATFORM=offscreen`）；mac 腿另跑 diff-cover
 - 证据边界：托管 Windows Server CI ≠ 消费级 Windows 10/11 真机验证，**不得宣称
   真机验证**（KNOWN_LIMITATIONS 双语有此声明，`test_packaging.py` 校验条目数对齐）。
 
-## 当前进度（2026-08-05）
+## 当前进度（2026-08-06）
 
-- **Qwen 额度 hidden 有头刷新落地并真机验证通过（macOS）**：headless UA 被
+- **1.4.5-rc.3 已合并 main**（含 hidden 刷新 Dock 修复与 auto recopy 开关
+  `qwen_auto_session_recopy`，默认关）。机制要点（真机实测）：headless UA 被
   阿里云 baxia 风控按指纹作废同一票据 → 定时刷新改为「有头但完全隐藏」的
-  Chrome。**2026-08-06 启动机制重做**：原 `open -g -n -b com.google.Chrome`
-  方案每次刷新生成一个 LaunchServices 新实例 → Dock 多出第二枚 Chrome 磁贴
-  且退出后留在「最近使用」；改为**直接 exec Chrome 二进制 +
-  `--no-startup-window` 无窗启动**（绕过 LaunchServices：不产生新实例磁贴、
-  不进最近使用、不抢焦点，Chrome 151 实测），页面经 CDP
-  `Target.createTarget(newWindow, background=true)` 开在后台窗口，
-  stealth 注入后 `Browser.setWindowBounds` 推出屏外并显式设 1100×700；
-  收尾 `Browser.close` 干净退出（exit_type=Normal，不再 SIGTERM/SIGKILL
-  强杀），进程为 Popen 亲儿子、判死直接 poll（`_DetachedQwenChromeHandle`
-  已删）。端到端实测 ~6s 完成、无残留进程、Dock 零变化。仍按
-  `--user-data-dir=` 精确 argv 找/杀进程 + 启动前僵尸清理、CDP stealth 注入
-  （Page.enable → addScript 掩盖 `navigator.webdriver`/屏外负坐标 →
-  Emulation.setDeviceMetricsOverride → Page.reload → setWindowBounds 推出
-  屏外；注入失败不致命，继续走原提取路径）。**实测坑**：500×375 小窗触发
-  百炼「移动端体验」拦截页（额度 DOM 完全不出现 → DOM_TIMEOUT），改
-  1100×700 视口覆盖 + setWindowBounds 双保险后 T+2s 渲染出额度。刷新间隔
-  5→15 分钟（`QWEN_WEB_QUOTA_INTERVAL_MS=900_000`）；hidden 模式非 darwin
-  fail-closed（不回退 headless）；`--disable-extensions` 防 profile 副本按
-  Preferences 回装 ~241MB 日常扩展。会话副本 ~5.5h 过期
-  与风控升级风险仍在（服务端行为；兜底=未登录检测，栏如实显示「点击授权」）。
-- **1.4.5-rc.2**（feat 分支 `feat/qwen-quota`，未发布，未合并 main）。
+  Chrome；启动**直接 exec Chrome 二进制 + `--no-startup-window`**（绕过
+  LaunchServices：不产生新实例 Dock 磁贴、不进最近使用、不抢焦点，Chrome 151
+  实测），页面经 CDP `Target.createTarget(newWindow, background=true)` 开在
+  后台窗口，stealth 注入后 `Browser.setWindowBounds` 推出屏外并显式设
+  1100×700；收尾 `Browser.close` 干净退出（exit_type=Normal，不再
+  SIGTERM/SIGKILL 强杀），进程为 Popen 亲儿子、判死直接 poll。端到端 ~6s、
+  无残留进程、Dock 零变化。仍按 `--user-data-dir=` 精确 argv 找/杀进程 +
+  启动前僵尸清理。**实测坑**：500×375 小窗触发百炼「移动端体验」拦截页
+  （额度 DOM 完全不出现 → DOM_TIMEOUT），1100×700 视口覆盖 + setWindowBounds
+  双保险后 T+2s 渲染出额度。刷新间隔 15 分钟
+  （`QWEN_WEB_QUOTA_INTERVAL_MS=900_000`）；hidden 模式非 darwin fail-closed
+  （不回退 headless）；`--disable-extensions` 防 profile 副本按 Preferences
+  回装 ~241MB 日常扩展。传输层：Qwen 页面 socket 90s
+  （`QWEN_PAGE_SOCKET_TIMEOUT_SECONDS`）、`QWEN_STARTUP_TIMEOUT_SECONDS=90`——
+  长 JS 等待必须给足 socket 预算，别让 transport 截断重试。会话副本 ~5.5h
+  过期与风控升级风险仍在（服务端行为；兜底=未登录检测，栏如实显示
+  「点击授权」）。
+- **recopy 误触发修复**（`fix/qwen-recopy-only-on-login-banner`，2026-08-06）：
+  CDP 目标列表没有百炼页面（启动竞态/其它来源拦截页）此前抛与真退出登录相同
+  的 `QwenChromeUnauthorizedError`，fail-fast 会在登录成功几十秒内用日常会话
+  副本覆盖健康 profile。现改为：页面缺失映射为可重试 `REFRESH_FAILED`（受
+  90s 启动超时约束），**只有页面载荷渲染出登录横幅**才触发 recopy。
+  `select_qwen_target` 本身未改（保留原语，调用侧重映射）。
+- **1.4.5-rc.2**（历史记录，后续已并入 rc.3）。
   本轮在本机实测驱动下完成三块：
   1. **Qwen 额度对齐真实控制台**：百炼 token-plan 页实为个人版（5小时限额/
      7天限额，`X%已用` + `将于 <绝对时间> 重置刷新`）+ 团队版（路由 hash
