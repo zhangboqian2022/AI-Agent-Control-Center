@@ -94,19 +94,25 @@ ruff/mypy/pytest（`QT_QPA_PLATFORM=offscreen`）；mac 腿另跑 diff-cover
 
 - **Qwen 额度 hidden 有头刷新落地并真机验证通过（macOS）**：headless UA 被
   阿里云 baxia 风控按指纹作废同一票据 → 定时刷新改为「有头但完全隐藏」的
-  Chrome：`open -g -n -b com.google.Chrome` 不抢焦点启动（fire-and-forget；
-  `_DetachedQwenChromeHandle` 掩盖 open 的 0 退出码，判死改走 DevTools
-  endpoint + 按 profile 进程探测）、按 `--user-data-dir=` 精确 argv 找/杀
-  进程（名字过滤排除 `open` 启动器）+ 启动前僵尸清理、CDP stealth 注入
+  Chrome。**2026-08-06 启动机制重做**：原 `open -g -n -b com.google.Chrome`
+  方案每次刷新生成一个 LaunchServices 新实例 → Dock 多出第二枚 Chrome 磁贴
+  且退出后留在「最近使用」；改为**直接 exec Chrome 二进制 +
+  `--no-startup-window` 无窗启动**（绕过 LaunchServices：不产生新实例磁贴、
+  不进最近使用、不抢焦点，Chrome 151 实测），页面经 CDP
+  `Target.createTarget(newWindow, background=true)` 开在后台窗口，
+  stealth 注入后 `Browser.setWindowBounds` 推出屏外并显式设 1100×700；
+  收尾 `Browser.close` 干净退出（exit_type=Normal，不再 SIGTERM/SIGKILL
+  强杀），进程为 Popen 亲儿子、判死直接 poll（`_DetachedQwenChromeHandle`
+  已删）。端到端实测 ~6s 完成、无残留进程、Dock 零变化。仍按
+  `--user-data-dir=` 精确 argv 找/杀进程 + 启动前僵尸清理、CDP stealth 注入
   （Page.enable → addScript 掩盖 `navigator.webdriver`/屏外负坐标 →
   Emulation.setDeviceMetricsOverride → Page.reload → setWindowBounds 推出
   屏外；注入失败不致命，继续走原提取路径）。**实测坑**：500×375 小窗触发
   百炼「移动端体验」拦截页（额度 DOM 完全不出现 → DOM_TIMEOUT），改
-  `--window-size=1100,700` + 视口覆盖双保险后 T+2s 渲染出额度。刷新间隔
+  1100×700 视口覆盖 + setWindowBounds 双保险后 T+2s 渲染出额度。刷新间隔
   5→15 分钟（`QWEN_WEB_QUOTA_INTERVAL_MS=900_000`）；hidden 模式非 darwin
   fail-closed（不回退 headless）；`--disable-extensions` 防 profile 副本按
-  Preferences 回装 ~241MB 日常扩展。新构建两轮连续周期（启动即刷 + 15 分钟
-  定时）真机取数成功、无告警、进程干净收尾、不抢焦点。会话副本 ~5.5h 过期
+  Preferences 回装 ~241MB 日常扩展。会话副本 ~5.5h 过期
   与风控升级风险仍在（服务端行为；兜底=未登录检测，栏如实显示「点击授权」）。
 - **1.4.5-rc.2**（feat 分支 `feat/qwen-quota`，未发布，未合并 main）。
   本轮在本机实测驱动下完成三块：

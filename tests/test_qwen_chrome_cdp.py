@@ -12,7 +12,6 @@ from aacc.qwen_chrome_cdp import (
     QwenChromeMissingError,
     QwenChromeQuotaError,
     QwenChromeUnauthorizedError,
-    _DetachedQwenChromeHandle,
     _find_qwen_chrome_processes_for_profile,
     build_qwen_chrome_launch,
     clear_owned_qwen_chrome_profile,
@@ -68,29 +67,31 @@ def test_find_chrome_executable_no_candidates_on_windows() -> None:
         find_qwen_chrome_executable(platform_name="win32")
 
 
-def test_hidden_launch_spec_wraps_open_and_drops_headless(tmp_path: Path) -> None:
+def test_hidden_launch_spec_execs_chrome_directly_without_window(tmp_path: Path) -> None:
     # Aliyun's baxia risk control voids session tickets shown by headless
-    # browsers, so the hidden refresh must launch a real headed Chrome via
-    # `open -g -n` (no focus steal) instead of --headless=new.
+    # browsers, so the hidden refresh must launch a real headed Chrome. The
+    # binary is exec'd directly with --no-startup-window: bypassing
+    # LaunchServices keeps the instance out of the Dock's recent items and
+    # avoids the second-instance Dock tile `open -n` creates, and the page
+    # is opened later in a background window through CDP.
     spec = build_qwen_chrome_launch(
         Path("chrome"), tmp_path, WORKSPACE_URL, visible=False, platform_name="darwin"
     )
 
-    assert spec.executable == Path("/usr/bin/open")
-    assert spec.arguments[:5] == ("-g", "-n", "-b", "com.google.Chrome", "--args")
-    chrome_flags = spec.arguments[5:]
-    assert "--headless=new" not in chrome_flags
-    assert "--disable-gpu" not in chrome_flags
-    assert f"--user-data-dir={tmp_path}" in chrome_flags
-    assert "--remote-debugging-address=127.0.0.1" in chrome_flags
-    assert "--remote-debugging-port=0" in chrome_flags
-    assert "--disable-extensions" in chrome_flags
-    assert "--disable-background-timer-throttling" in chrome_flags
-    assert "--disable-renderer-backgrounding" in chrome_flags
-    assert "--disable-backgrounding-occluded-windows" in chrome_flags
-    assert "--window-position=0,0" in chrome_flags
-    assert "--window-size=1100,700" in chrome_flags
-    assert chrome_flags[-1] == WORKSPACE_URL
+    assert spec.executable == Path("chrome")
+    assert "--headless=new" not in spec.arguments
+    assert "--disable-gpu" not in spec.arguments
+    assert f"--user-data-dir={tmp_path}" in spec.arguments
+    assert "--remote-debugging-address=127.0.0.1" in spec.arguments
+    assert "--remote-debugging-port=0" in spec.arguments
+    assert "--disable-extensions" in spec.arguments
+    assert "--disable-background-timer-throttling" in spec.arguments
+    assert "--disable-renderer-backgrounding" in spec.arguments
+    assert "--disable-backgrounding-occluded-windows" in spec.arguments
+    assert "--no-startup-window" in spec.arguments
+    # The quota page is opened through CDP Target.createTarget, not a launch
+    # URL, so the windowless instance never activates at startup.
+    assert WORKSPACE_URL not in spec.arguments
 
 
 @pytest.mark.parametrize("platform_name", ["win32", "linux"])
@@ -413,6 +414,9 @@ def test_managed_operation_returns_sanitized_quota_and_closes_process(
         def __init__(self, _socket: object) -> None:
             pass
 
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
         def evaluate(self, _expression: str) -> object:
             return payload
 
@@ -463,6 +467,9 @@ def test_managed_operation_hidden_unauthorized_is_bounded(
     class FakeCdp:
         def __init__(self, _socket: object) -> None:
             pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
 
         def close_browser(self) -> None:
             pass
@@ -649,7 +656,7 @@ def test_clear_profile_skips_foreign_entries_and_rejects_unsafe_quarantine(
 
 
 class ImmediateExitOpener:
-    """The ``open -g -n`` launcher hands off to LaunchServices and exits at once."""
+    """A process that has already exited (e.g. Chrome crashing at startup)."""
 
     pid = 777
 
@@ -719,92 +726,14 @@ def _quota_payload() -> dict[str, object]:
     }
 
 
-def test_detached_handle_masks_zero_exit_of_open_launcher(tmp_path: Path) -> None:
-    events: list[str] = []
-
-    def finder(_profile: Path) -> list[object]:
-        events.append("find")
-        return []
-
-    handle = _DetachedQwenChromeHandle(
-        ImmediateExitOpener(0),
-        profile=tmp_path,
-        process_finder=finder,
-        sleep=lambda _seconds: None,
-        monotonic=lambda: 0.0,
-    )
-
-    # Chrome liveness is probed through the DevTools endpoint and the
-    # per-profile process finder, so a zero exit of the `open` launcher must
-    # not read as a dead browser.
-    assert handle.pid == 777
-    assert handle.poll() is None
-    assert handle.wait(timeout=5.0) == 0
-    assert events == ["find"]
-
-
-def test_detached_handle_surfaces_non_zero_open_exit(tmp_path: Path) -> None:
-    handle = _DetachedQwenChromeHandle(
-        ImmediateExitOpener(3),
-        profile=tmp_path,
-        process_finder=lambda _profile: [],
-        sleep=lambda _seconds: None,
-        monotonic=lambda: 0.0,
-    )
-
-    assert handle.poll() == 3
-    assert handle.wait(timeout=5.0) == 3
-
-
-def test_detached_handle_wait_times_out_while_chrome_alive(tmp_path: Path) -> None:
-    clock = iter([0.0, 4.9, 5.1])
-    handle = _DetachedQwenChromeHandle(
-        ImmediateExitOpener(0),
-        profile=tmp_path,
-        process_finder=lambda _profile: [FakeChromeProcess(stubborn=True)],
-        sleep=lambda _seconds: None,
-        monotonic=lambda: next(clock, 99.0),
-    )
-
-    with pytest.raises(TimeoutError):
-        handle.wait(timeout=5.0)
-
-
-def test_detached_handle_terminate_delegates_to_profile_killer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import aacc.qwen_chrome_cdp as module
-
-    seen: list[tuple[Path, object]] = []
-
-    def record(profile: Path, *, process_finder: object = None) -> None:
-        seen.append((profile, process_finder))
-
-    def finder(_profile: Path) -> list[object]:
-        return []
-
-    monkeypatch.setattr(module, "terminate_qwen_chrome_profile_processes", record)
-    handle = _DetachedQwenChromeHandle(
-        ImmediateExitOpener(0),
-        profile=tmp_path,
-        process_finder=finder,
-        sleep=lambda _seconds: None,
-        monotonic=lambda: 0.0,
-    )
-
-    handle.terminate()
-
-    assert seen == [(tmp_path, finder)]
-
-
 def test_find_chrome_processes_matches_exact_user_data_dir(tmp_path: Path) -> None:
     profile = tmp_path / "qwen-chrome-profile"
     flag = f"--user-data-dir={profile}"
     chrome_main = FakeIterProcess("Google Chrome", ["/Applications/chrome", flag])
     chrome_helper = FakeIterProcess("Google Chrome Helper", ["helper", flag])
     substring_profile = FakeIterProcess("Google Chrome", ["chrome", f"{flag}-evil"])
-    # The `open` launcher carries the same flag after --args; the name filter
-    # must keep it out of the kill set.
+    # A foreign launcher could carry the same flag in its argv; the name
+    # filter must keep non-Chrome processes out of the kill set.
     open_launcher = FakeIterProcess(
         "open", ["/usr/bin/open", "-g", "-n", "-b", "com.google.Chrome", "--args", flag]
     )
@@ -981,6 +910,10 @@ def test_hidden_refresh_installs_stealth_before_evaluate(
         def __init__(self, _socket: object) -> None:
             pass
 
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            calls.append("create_target")
+            return {"result": {}}
+
         def evaluate(self, _expression: str) -> object:
             calls.append("evaluate")
             return _quota_payload()
@@ -1018,7 +951,7 @@ def test_hidden_refresh_installs_stealth_before_evaluate(
 
     operation.run(visible=False, cancel=Event())
 
-    assert calls == ["stealth", "evaluate"]
+    assert calls == ["create_target", "stealth", "evaluate"]
 
 
 def test_visible_login_skips_stealth_installation(
@@ -1074,24 +1007,29 @@ def test_visible_login_skips_stealth_installation(
     assert calls == ["evaluate"]
 
 
-def test_hidden_refresh_succeeds_after_fire_and_forget_open_exit(
+def test_hidden_refresh_opens_quota_page_in_background_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import aacc.qwen_chrome_cdp as module
 
     profile = _make_chrome_profile(tmp_path)
     launched: list[list[str]] = []
+    cdp_commands: list[tuple[str, object]] = []
 
-    def start(command: list[str]) -> ImmediateExitOpener:
+    def start(command: list[str]) -> FakeProcess:
         launched.append(command)
         (profile / "DevToolsActivePort").write_text(
             "9222\n/devtools/browser/browser-id\n", encoding="ascii"
         )
-        return ImmediateExitOpener(0)
+        return FakeProcess()
 
     class FakeCdp:
         def __init__(self, _socket: object) -> None:
             pass
+
+        def send_command(self, method: str, params: object) -> dict[str, object]:
+            cdp_commands.append((method, params))
+            return {"result": {}}
 
         def evaluate(self, _expression: str) -> object:
             return _quota_payload()
@@ -1127,15 +1065,17 @@ def test_hidden_refresh_succeeds_after_fire_and_forget_open_exit(
     result = operation.run(visible=False, cancel=Event())
 
     assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
-    # Compare against the same Path the code stringifies so the assertion is
-    # platform-neutral (str(Path) renders backslashes on Windows runners even
-    # though the hidden launcher is only ever exec'd on darwin).
-    assert launched[0][0] == str(module._QWEN_HIDDEN_OPEN_EXECUTABLE)
-    assert "-g" in launched[0]
-    assert "-n" in launched[0]
+    # The hidden path execs the Chrome binary directly (never the `open`
+    # launcher) and starts windowless; the page is opened in a background
+    # window through CDP so the instance never activates or leaves a Dock
+    # tile behind.
+    assert launched[0][0] == "chrome"
+    assert "--no-startup-window" in launched[0]
+    create_target = [params for method, params in cdp_commands if method == "Target.createTarget"]
+    assert create_target == [{"url": WORKSPACE_URL, "newWindow": True, "background": True}]
 
 
-def test_hidden_refresh_fails_fast_when_open_launcher_fails(tmp_path: Path) -> None:
+def test_hidden_refresh_fails_fast_when_chrome_exits_at_startup(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     qwen_chrome_profile_path(config_dir).mkdir(parents=True)
 
@@ -1182,6 +1122,9 @@ def test_hidden_refresh_cleans_profile_processes_before_launch(
     class FakeCdp:
         def __init__(self, _socket: object) -> None:
             pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
 
         def evaluate(self, _expression: str) -> object:
             return _quota_payload()
@@ -1244,6 +1187,9 @@ def test_profile_cleanup_failure_does_not_block_refresh(
         def __init__(self, _socket: object) -> None:
             pass
 
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
         def evaluate(self, _expression: str) -> object:
             return _quota_payload()
 
@@ -1286,26 +1232,41 @@ def test_hidden_refresh_falls_back_to_terminator_when_chrome_outlives_close(
     import aacc.qwen_chrome_cdp as module
 
     profile = _make_chrome_profile(tmp_path)
-    stubborn = FakeChromeProcess(stubborn=True)
-    # First finding is consumed by the pre-launch cleanup; the shutdown wait
-    # then sees the stubborn process, times out, and the injected terminator
-    # must kick in before the final wait sees an empty profile.
-    findings = iter([[], [stubborn], []])
-    clock = iter([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 6.0])
     terminated: list[int] = []
 
-    def finder(_profile: Path) -> list[object]:
-        return next(findings, [])
+    class StubbornProcess:
+        """Chrome that ignores Browser.close past the shutdown window."""
 
-    def start(_command: list[str]) -> ImmediateExitOpener:
+        pid = 777
+
+        def __init__(self) -> None:
+            self.waits = 0
+
+        def poll(self) -> int | None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.waits += 1
+            if self.waits == 1:
+                raise TimeoutError
+            return 0
+
+        def terminate(self) -> None:
+            pass
+
+    def start(_command: list[str]) -> StubbornProcess:
         (profile / "DevToolsActivePort").write_text(
             "9222\n/devtools/browser/browser-id\n", encoding="ascii"
         )
-        return ImmediateExitOpener(0)
+        return StubbornProcess()
 
     class FakeCdp:
         def __init__(self, _socket: object) -> None:
             pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
 
         def evaluate(self, _expression: str) -> object:
             return _quota_payload()
@@ -1335,9 +1296,9 @@ def test_hidden_refresh_falls_back_to_terminator_when_chrome_outlives_close(
         socket_factory=lambda _url: object(),
         expression_factory=lambda: "return quota",
         process_tree_terminator=lambda owned: terminated.append(owned.pid),
-        chrome_process_finder=finder,
+        chrome_process_finder=lambda _profile: [],
         sleep=lambda _seconds: None,
-        monotonic=lambda: next(clock, 6.0),
+        monotonic=lambda: 0.0,
     )
 
     result = operation.run(visible=False, cancel=Event())
@@ -1490,6 +1451,9 @@ def test_hidden_refresh_recopies_and_retries_after_unauthorized(
         def __init__(self, _socket: object) -> None:
             pass
 
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
         def evaluate(self, _expression: str) -> object:
             return _quota_payload()
 
@@ -1542,6 +1506,9 @@ def test_hidden_refresh_recopy_failure_surfaces_unauthorized(
     class FakeCdp:
         def __init__(self, _socket: object) -> None:
             pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
 
         def close_browser(self) -> None:
             pass

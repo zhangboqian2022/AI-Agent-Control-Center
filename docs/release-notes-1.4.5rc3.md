@@ -29,6 +29,16 @@ visible in the log. It is a prerelease, not a claim of consumer Windows
   enable it only on machines that already use the daily-session copy flow,
   since it reads the daily Chrome profile. Visible logins, Windows, and
   machines without a daily Chrome `Default` profile are unaffected.
+- **Hidden refreshes leave no Dock trace.** The hidden refresh Chrome no
+  longer launches through `open -g -n`: each LaunchServices launch created
+  a second-instance Dock tile and a "recent items" entry that stayed in the
+  Dock after the refresh, and the fire-and-forget launcher forced every
+  shutdown into a SIGTERM/SIGKILL escalation. AACC now execs the Chrome
+  binary directly with `--no-startup-window`, opens the quota page in a
+  background window through `Target.createTarget`, and lets Chrome exit
+  cleanly via `Browser.close` — verified on Chrome 151: no focus steal, no
+  new Dock tile, no recent-items entry, no leftover processes, and a
+  ~6 s end-to-end refresh (down from ~29 s).
 - **Logged-out path no longer silent.** Detecting an expired Qwen session
   now logs a WARNING (previously the bar flipped back to "click to
   authorize" with no trace in the log), and refreshes skipped because the
@@ -63,6 +73,14 @@ covered by a manual verification checklist, not by automation.
   **默认关闭**：因为它会读取日常 Chrome profile，只建议已经在使用
   「日常会话复制」流程的机器启用。可见登录、Windows 以及没有日常
   Chrome `Default` profile 的机器均不受影响。
+- **隐藏刷新不再在程序坞留痕。** 隐藏刷新的 Chrome 不再通过
+  `open -g -n` 启动：此前每次 LaunchServices 启动都会生成一个新实例
+  Dock 磁贴，退出后还会留在程序坞「最近使用」里，且 fire-and-forget
+  启动器让每次收尾都退化为 SIGTERM/SIGKILL 强杀。现在 AACC 直接以
+  `--no-startup-window` 无窗方式启动 Chrome 二进制，经 CDP
+  `Target.createTarget` 在后台窗口打开额度页，收尾由 `Browser.close`
+  干净退出——Chrome 151 实测：不抢焦点、无新 Dock 磁贴、无最近使用
+  记录、无残留进程，端到端刷新约 6 秒（原约 29 秒）。
 - **未登录路径不再静默。** 检测到 Qwen 会话过期现在会打 WARNING 日志
   （此前额度栏悄悄翻回「点击授权」，日志毫无痕迹）；因未登录而被跳过
   的刷新也会留下 debug 日志。
