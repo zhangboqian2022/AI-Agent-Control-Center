@@ -1,5 +1,6 @@
 import json
 import re
+import sys
 from pathlib import Path
 from threading import Event
 
@@ -1370,7 +1371,9 @@ def test_recopy_daily_session_copies_minimal_set(tmp_path: Path) -> None:
     ]
     assert len(quarantines) == 1
     assert (quarantines[0] / "stale.txt").exists()
-    assert profile.stat().st_mode & 0o777 == 0o700
+    if sys.platform != "win32":
+        # Windows protection is a native DACL, which stat() cannot see.
+        assert profile.stat().st_mode & 0o777 == 0o700
 
 
 def test_recopy_daily_session_prunes_old_quarantines(tmp_path: Path) -> None:
