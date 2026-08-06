@@ -457,7 +457,7 @@ def test_managed_operation_returns_sanitized_quota_and_closes_process(
     }
 
 
-def test_managed_operation_hidden_unauthorized_is_bounded(
+def test_hidden_refresh_missing_page_never_triggers_recopy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import aacc.qwen_chrome_cdp as module
@@ -479,7 +479,12 @@ def test_managed_operation_hidden_unauthorized_is_bounded(
             pass
 
     monkeypatch.setattr(module, "CdpConnection", FakeCdp)
-    ticks = iter([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 61.0])
+    # A missing Bailian page is a startup race, not an expired session: the
+    # loop must burn the full startup deadline as a plain refresh failure and
+    # must never hand it to the recopy path (a recopy would overwrite a
+    # healthy profile with whatever the daily Chrome currently holds).
+    ticks = iter([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 91.0])
+    recopied: list[Path] = []
     operation = ManagedQwenChromeOperation(
         WORKSPACE_URL,
         config_dir=tmp_path / "config",
@@ -491,11 +496,13 @@ def test_managed_operation_hidden_unauthorized_is_bounded(
         socket_factory=lambda _url: object(),
         sleep=lambda _seconds: None,
         chrome_process_finder=lambda _profile: [],
-        monotonic=lambda: next(ticks, 61.0),
+        monotonic=lambda: next(ticks, 91.0),
+        session_recopy=lambda config_dir: recopied.append(config_dir),
     )
 
-    with pytest.raises(QwenChromeUnauthorizedError):
+    with pytest.raises(QwenChromeQuotaError):
         operation.run(visible=False, cancel=Event())
+    assert recopied == []
 
 
 def test_managed_operation_propagates_missing_chrome(
@@ -1443,11 +1450,10 @@ def test_hidden_refresh_recopies_and_retries_after_unauthorized(
 
     profile = _make_chrome_profile(tmp_path)
     attempts = {"count": 0}
+    evaluations = {"count": 0}
 
     def target_loader(_origin: str) -> list[object]:
         attempts["count"] += 1
-        if attempts["count"] == 1:
-            return []
         return [_quota_page_target()]
 
     class FakeCdp:
@@ -1458,6 +1464,12 @@ def test_hidden_refresh_recopies_and_retries_after_unauthorized(
             return {"result": {}}
 
         def evaluate(self, _expression: str) -> object:
+            # The rendered login banner is the only legitimate recopy
+            # trigger: the first attempt sees it, the retry after recopy
+            # reads the rebuilt session's quota normally.
+            evaluations["count"] += 1
+            if evaluations["count"] == 1:
+                return {"kind": "unauthorized"}
             return _quota_payload()
 
         def close_browser(self) -> None:
@@ -1491,6 +1503,7 @@ def test_hidden_refresh_recopies_and_retries_after_unauthorized(
     assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
     assert recopied == [tmp_path / "config"]
     assert attempts["count"] == 2
+    assert evaluations["count"] == 2
     assert any("recopy" in record.message.casefold() for record in caplog.records)
 
 
@@ -1501,10 +1514,11 @@ def test_hidden_refresh_recopy_failure_surfaces_unauthorized(
 
     profile = _make_chrome_profile(tmp_path)
     attempts = {"count": 0}
+    evaluations = {"count": 0}
 
     def target_loader(_origin: str) -> list[object]:
         attempts["count"] += 1
-        return []
+        return [_quota_page_target()]
 
     class FakeCdp:
         def __init__(self, _socket: object) -> None:
@@ -1512,6 +1526,10 @@ def test_hidden_refresh_recopy_failure_surfaces_unauthorized(
 
         def send_command(self, _method: str, _params: object) -> dict[str, object]:
             return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            evaluations["count"] += 1
+            return {"kind": "unauthorized"}
 
         def close_browser(self) -> None:
             pass
@@ -1534,6 +1552,7 @@ def test_hidden_refresh_recopy_failure_surfaces_unauthorized(
         process_factory=_fake_process_factory(profile, FakeProcess()),
         target_loader=target_loader,
         socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
         sleep=lambda _seconds: None,
         chrome_process_finder=lambda _profile: [],
         monotonic=lambda: next(clock, 61.0),
@@ -1543,6 +1562,7 @@ def test_hidden_refresh_recopy_failure_surfaces_unauthorized(
     with pytest.raises(QwenChromeUnauthorizedError):
         operation.run(visible=False, cancel=Event())
     assert attempts["count"] == 1
+    assert evaluations["count"] == 1
 
 
 def test_visible_login_never_triggers_session_recopy(
