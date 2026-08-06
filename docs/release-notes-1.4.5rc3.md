@@ -43,6 +43,14 @@ visible in the log. It is a prerelease, not a claim of consumer Windows
   now logs a WARNING (previously the bar flipped back to "click to
   authorize" with no trace in the log), and refreshes skipped because the
   session is logged out leave a debug line.
+- **Auto recopy only fires on the rendered login banner.** A hidden
+  refresh whose CDP target list has no Bailian page yet (a startup race,
+  or an interstitial on another origin) raised the same "unauthorized"
+  error as a genuine logout, so the fail-fast path could recopy the whole
+  profile over a healthy session seconds after a successful login. A
+  missing page is now treated as a retryable refresh failure bounded by
+  the startup deadline; only the page payload's explicit login-banner
+  marker triggers the recopy.
 
 Evidence boundary: local run passes the project's pytest / ruff /
 ruff-format / mypy suite; the recopy + retry flow is covered by unit tests
@@ -84,6 +92,12 @@ covered by a manual verification checklist, not by automation.
 - **未登录路径不再静默。** 检测到 Qwen 会话过期现在会打 WARNING 日志
   （此前额度栏悄悄翻回「点击授权」，日志毫无痕迹）；因未登录而被跳过
   的刷新也会留下 debug 日志。
+- **自动重复制只在渲染出登录横幅时触发。** 隐藏刷新时若 CDP 目标列表
+  里还没有百炼页面（启动竞态，或页面停留在其它来源的拦截页），此前
+  会抛出与真正退出登录相同的「未授权」错误，导致 fail-fast 路径在
+  登录成功几秒内就用日常会话副本覆盖掉健康的 profile。现在页面缺失
+  按可重试的刷新失败处理（受启动超时约束），只有页面载荷中明确的
+  登录横幅标记才会触发重复制。
 
 证据边界：本机运行通过项目的 pytest / ruff / ruff-format / mypy 全套；
 重复制 + 重试流程有单元测试覆盖，且诊断基于真实日志时间线与对真实
