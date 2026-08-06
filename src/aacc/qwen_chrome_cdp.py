@@ -362,7 +362,14 @@ def build_qwen_chrome_launch(
 
 
 def select_qwen_target(targets: object, *, expected_port: int) -> str:
-    """Select the Bailian page while rejecting externally supplied CDP URLs."""
+    """Select the Bailian page while rejecting externally supplied CDP URLs.
+
+    A CDP list without a Bailian page raises ``QwenChromeUnauthorizedError``
+    for historical reasons; callers must not treat that as session expiry —
+    only the page's rendered login banner (the payload marker) proves a
+    logout. The refresh loop remaps a missing page to a retryable
+    ``REFRESH_FAILED``.
+    """
 
     if not isinstance(targets, list):
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
@@ -818,7 +825,17 @@ class ManagedQwenChromeOperation:
                         )
                         target_requested = True
                     targets = self._target_loader(endpoint.http_origin)
-                    page_url = select_qwen_target(targets, expected_port=port)
+                    try:
+                        page_url = select_qwen_target(targets, expected_port=port)
+                    except QwenChromeUnauthorizedError:
+                        # A missing Bailian page is a startup race (the page
+                        # is still loading, or an interstitial sits on
+                        # another origin), never proof of an expired
+                        # session. Only the rendered login banner — the
+                        # payload's explicit unauthorized marker below — may
+                        # trigger the fail-fast recopy; recopying on a race
+                        # would overwrite a healthy profile.
+                        raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from None
                     page = CdpConnection(self._socket_factory(page_url))  # type: ignore[arg-type]
                     try:
                         if not visible:
