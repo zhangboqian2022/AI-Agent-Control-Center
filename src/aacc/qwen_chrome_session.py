@@ -99,13 +99,22 @@ class QwenChromeSession(QObject):
         self._start(visible=True)
 
     def refresh(self) -> None:
-        if self._closed or self._busy or not self.workspace_url or not self.login_state.may_reuse():
-            _logger.debug("Qwen Chrome refresh skipped (closed/busy/unconfigured/logged out)")
+        if self._closed or self._busy or not self.workspace_url:
+            _logger.debug("Qwen Chrome refresh skipped (closed/busy/unconfigured)")
             return
-        self._start(visible=False)
+        if self.login_state.may_reuse() or (
+            self.auto_session_recopy and not self.login_state.logged_out_by_user()
+        ):
+            # With recopy enabled a logged-out refresh still launches: the
+            # operation rebuilds the profile from the daily Chrome session
+            # and retries, so the bar self-heals once that session is live
+            # again. An explicit user logout is never auto-recovered.
+            self._start(visible=False)
+            return
+        _logger.debug("Qwen Chrome refresh skipped (logged out)")
 
     def logout(self) -> bool:
-        succeeded = self._persist_reuse(False)
+        succeeded = self._persist_reuse(False, logged_out_by_user=True)
         self.login_state_changed.emit(False)
         if not self._cancel_active(wait=True):
             self._cleanup_after_worker = True
@@ -177,7 +186,7 @@ class QwenChromeSession(QObject):
         self._thread = None
         self._cancel = None
         if isinstance(outcome, dict):
-            persisted = self._persist_reuse(True)
+            persisted = self._persist_reuse(True, logged_out_by_user=False)
             if not persisted:
                 self.error_occurred.emit("state_save_failed")
             self.login_state_changed.emit(True)
@@ -187,7 +196,7 @@ class QwenChromeSession(QObject):
             _logger.warning(
                 "Qwen Chrome session is logged out; quota refresh paused until re-login"
             )
-            self._persist_reuse(False)
+            self._persist_reuse(False, logged_out_by_user=False)
             self.login_state_changed.emit(False)
             return
         if isinstance(outcome, QwenChromeCancelledError):
@@ -225,9 +234,9 @@ class QwenChromeSession(QObject):
             return False
         return succeeded
 
-    def _persist_reuse(self, value: bool) -> bool:
+    def _persist_reuse(self, value: bool, *, logged_out_by_user: bool | None = None) -> bool:
         try:
-            self.login_state.set_may_reuse(value)
+            self.login_state.set_may_reuse(value, logged_out_by_user=logged_out_by_user)
         except Exception:
             _logger.error("Qwen Chrome session state update failed")
             return False
