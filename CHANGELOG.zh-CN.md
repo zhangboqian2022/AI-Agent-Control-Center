@@ -4,7 +4,7 @@
 
 [中英文发布说明](docs/release-notes-1.4.5rc3.md)
 
-- [新功能] Qwen 额度现在能扛过阿里云会话过期（会话副本约 5.5 小时后服务端失效）：在 `config.yaml` 中设置 `qwen_auto_session_recopy: true` 后，隐藏刷新一旦撞上控制台的「您当前处于未登录状态」内嵌横幅，会立即用日常 Chrome 的最小会话集（Cookies 在线备份、Local State、Preferences、Local/Session Storage——绝不复制 Login Data 密码库）重建 AACC 的 Chrome profile，并在同一轮刷新内重试，额度栏无需可见的重新登录即可继续显示。被替换的托管 profile 隔离为 `.qwen-chrome-profile.pre-dailycopy-*`（只保留最近 3 份）。该开关默认关闭：只建议已经在使用「日常会话复制」流程的机器启用。
+- [新功能] Qwen 额度现在能扛过阿里云会话过期（会话副本约 5.5 小时后服务端失效）：在 `config.yaml` 中设置 `qwen_auto_session_recopy: true` 后，隐藏刷新一旦撞上控制台的「您当前处于未登录状态」内嵌横幅，会立即用日常 Chrome 的最小会话集（Cookies 在线备份、Local State、Preferences、Local/Session Storage——绝不复制 Login Data 密码库）重建 AACC 的 Chrome profile，并在同一轮刷新内重试，额度栏无需可见的重新登录即可继续显示。处于「点击授权」状态时（例如重启后会话已经过期）也会继续尝试恢复，一旦日常 Chrome 的会话重新活跃即可无点击自愈；用户主动退出登录会被尊重，绝不被自动恢复。被替换的托管 profile 隔离为 `.qwen-chrome-profile.pre-dailycopy-*`（只保留最近 3 份）。该开关默认关闭：只建议已经在使用「日常会话复制」流程的机器启用。
 - [修复] Qwen 未登录路径不再静默：检测到会话过期现在会打 WARNING 日志（此前额度栏悄悄翻回「点击授权」，日志毫无痕迹），被跳过的刷新也会留下 debug 日志。
 
 ## 1.4.5-rc.2 — 2026-08-04

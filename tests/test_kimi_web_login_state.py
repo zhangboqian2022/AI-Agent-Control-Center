@@ -52,6 +52,25 @@ def test_symlink_gate_fails_closed_and_is_never_replaced(tmp_path):
     assert target.read_text(encoding="utf-8") == '{"version":1,"reuse_native_session":true}'
 
 
+def test_logout_marker_defaults_false_and_round_trips(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path)
+    assert store.logged_out_by_user() is False
+
+    store.set_may_reuse(False, logged_out_by_user=True)
+    assert KimiWebLoginStateStore(tmp_path).logged_out_by_user() is True
+    assert store.may_reuse() is False
+
+    store.set_may_reuse(True, logged_out_by_user=False)
+    assert store.logged_out_by_user() is False
+
+
+def test_logout_marker_preserved_when_unspecified(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path)
+    store.set_may_reuse(False, logged_out_by_user=True)
+    store.set_may_reuse(False)
+    assert store.logged_out_by_user() is True
+
+
 def test_opencode_state_file_is_isolated_from_kimi_state(tmp_path):
     store = KimiWebLoginStateStore(
         tmp_path,

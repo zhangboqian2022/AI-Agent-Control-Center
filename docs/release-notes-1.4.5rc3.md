@@ -18,7 +18,11 @@ visible in the log. It is a prerelease, not a claim of consumer Windows
   (saved passwords) is never copied — and retries the extraction within the
   same tick. Because the daily browser keeps its session alive through real
   use, the bar keeps showing quota indefinitely without any visible
-  re-login. The replaced managed profile is quarantined as
+  re-login. Recovery also runs while the bar shows "click to authorize"
+  (for example after restarting into an already-expired session), so it
+  self-heals without any click once the daily Chrome session is live
+  again; an explicit logout is respected and never auto-recovered. The
+  replaced managed profile is quarantined as
   `.qwen-chrome-profile.pre-dailycopy-*` next to the config directory
   (pruned to the 3 newest). If the recopy or the retry fails, the bar falls
   back to "click to authorize" as before. The flag defaults to **off**:
@@ -50,7 +54,10 @@ covered by a manual verification checklist, not by automation.
   `Local State`、`Preferences`、`Secure Preferences`、`Local Storage` 与
   `Session Storage`；绝不复制 `Login Data` 密码库——并在同一轮刷新内
   重试提取。由于日常浏览器通过真实使用保持会话活跃，额度栏可以长期
-  保持显示，无需任何可见的重新登录。被替换的托管 profile 隔离为配置
+  保持显示，无需任何可见的重新登录。处于「点击授权」状态时（例如
+  重启后会话已经过期）也会继续尝试恢复，一旦日常 Chrome 的会话重新
+  活跃即可无点击自愈；用户主动退出登录会被尊重，绝不被自动恢复。
+  被替换的托管 profile 隔离为配置
   目录旁的 `.qwen-chrome-profile.pre-dailycopy-*`（只保留最近 3 份）。
   重复制或其后的重试失败时，额度栏照旧回退到「点击授权」。该开关
   **默认关闭**：因为它会读取日常 Chrome profile，只建议已经在使用

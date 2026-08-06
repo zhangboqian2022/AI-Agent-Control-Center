@@ -48,11 +48,33 @@ class KimiWebLoginStateStore:
             and isinstance(raw.get("reuse_native_session"), bool)
         ) and raw["reuse_native_session"]
 
-    def set_may_reuse(self, value: bool) -> None:
-        """Atomically persist a reuse decision using AACC's file protections."""
+    def logged_out_by_user(self) -> bool:
+        """Return whether the last logout was an explicit user action.
+
+        Expiry also persists ``reuse_native_session=false``; recovery
+        heuristics must not treat that the same as a deliberate logout.
+        Missing or unreadable state fails closed to ``False``.
+        """
+
+        path = self._path()
+        try:
+            self._reject_unsafe_path(path)
+            raw: Any = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        return isinstance(raw, dict) and raw.get("logged_out_by_user") is True
+
+    def set_may_reuse(self, value: bool, *, logged_out_by_user: bool | None = None) -> None:
+        """Atomically persist a reuse decision using AACC's file protections.
+
+        ``logged_out_by_user`` records whether the logged-out state is an
+        explicit user logout; when omitted the previously persisted marker
+        is preserved.
+        """
 
         if not isinstance(value, bool):
             raise ValueError("Kimi web session reuse value must be boolean")
+        marker = self.logged_out_by_user() if logged_out_by_user is None else logged_out_by_user
         path = self._path()
         self._reject_unsafe_path(path)
         if self._config_dir.is_symlink():
@@ -81,6 +103,7 @@ class KimiWebLoginStateStore:
                     {
                         "version": _STATE_VERSION,
                         "reuse_native_session": value,
+                        "logged_out_by_user": marker,
                     },
                     handle,
                     separators=(",", ":"),

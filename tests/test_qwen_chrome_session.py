@@ -94,6 +94,7 @@ def make_session(tmp_path: Path, operation: FakeOperation, **kwargs: object):
         login_state=KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json"),
         thread_factory=kwargs.pop("thread_factory", ImmediateThread),
         profile_cleaner=kwargs.pop("profile_cleaner", lambda *_args: None),
+        auto_session_recopy=kwargs.pop("auto_session_recopy", False),
     )
     assert not kwargs
     session.set_workspace_url(WORKSPACE_URL)
@@ -353,3 +354,40 @@ def test_auto_session_recopy_flag_wires_operation(qapp, tmp_path, monkeypatch):
     disabled.set_workspace_url(WORKSPACE_URL)
     disabled.open_login()
     assert constructed == [None]
+
+
+def test_refresh_recovers_from_expiry_when_auto_recopy_enabled(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation(QwenChromeUnauthorizedError())
+    session = make_session(tmp_path, operation, auto_session_recopy=True)
+    assert session.login_state.may_reuse() is False
+    assert session.login_state.logged_out_by_user() is False
+
+    session.refresh()
+
+    assert operation.calls == [False]
+
+
+def test_refresh_respects_explicit_logout_with_auto_recopy(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n1%", "weeklyText": None})
+    session = make_session(tmp_path, operation, auto_session_recopy=True)
+    session.login_state.set_may_reuse(True)
+
+    assert session.logout() is True
+    assert session.login_state.logged_out_by_user() is True
+    session.refresh()
+
+    assert operation.calls == []
+
+
+def test_unauthorized_outcome_marked_as_expiry_not_user_logout(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation(QwenChromeUnauthorizedError())
+    session = make_session(tmp_path, operation, auto_session_recopy=True)
+    session.login_state.set_may_reuse(True)
+
+    session.refresh()
+
+    assert session.login_state.may_reuse() is False
+    assert session.login_state.logged_out_by_user() is False
