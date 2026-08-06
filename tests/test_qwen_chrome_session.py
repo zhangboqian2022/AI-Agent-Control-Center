@@ -146,6 +146,20 @@ def test_unauthorized_refresh_revokes_permission(qapp, tmp_path):
     assert states == [False]
 
 
+def test_unauthorized_refresh_logs_visible_warning(qapp, tmp_path, caplog):
+    import logging
+
+    del qapp
+    operation = FakeOperation(QwenChromeUnauthorizedError())
+    session = make_session(tmp_path, operation)
+    session.login_state.set_may_reuse(True)
+
+    with caplog.at_level(logging.WARNING, logger="aacc.qwen_chrome_session"):
+        session.refresh()
+
+    assert any("logged out" in record.message for record in caplog.records)
+
+
 def test_transient_refresh_error_preserves_permission_and_emits_category(qapp, tmp_path):
     del qapp
     operation = FakeOperation(QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_TIMEOUT))
@@ -308,3 +322,34 @@ def test_session_ignores_late_or_closed_operation_results(qapp, tmp_path):
     session._on_operation_finished(0, {"fiveHourText": "5 小时\n1%", "weeklyText": None})
     assert quotas == []
     assert isinstance(session, QwenChromeSession)
+
+
+def test_auto_session_recopy_flag_wires_operation(qapp, tmp_path, monkeypatch):
+    del qapp
+    import aacc.qwen_chrome_session as module
+    from aacc.qwen_chrome_cdp import recopy_qwen_daily_chrome_session
+    from aacc.qwen_chrome_session import QwenChromeSession
+
+    constructed: list[object] = []
+
+    class RecorderOperation:
+        def __init__(self, workspace_url, *, config_dir, session_recopy=None):
+            del workspace_url, config_dir
+            constructed.append(session_recopy)
+
+        def run(self, *, visible, cancel):
+            del visible, cancel
+            return {}
+
+    monkeypatch.setattr(module, "ManagedQwenChromeOperation", RecorderOperation)
+
+    enabled = QwenChromeSession(tmp_path, thread_factory=ManualThread, auto_session_recopy=True)
+    enabled.set_workspace_url(WORKSPACE_URL)
+    enabled.open_login()
+    assert constructed == [recopy_qwen_daily_chrome_session]
+
+    constructed.clear()
+    disabled = QwenChromeSession(tmp_path, thread_factory=ManualThread)
+    disabled.set_workspace_url(WORKSPACE_URL)
+    disabled.open_login()
+    assert constructed == [None]

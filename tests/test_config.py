@@ -510,6 +510,14 @@ def test_qwen_workspace_url_rejects_http_scheme() -> None:
         AppConfig(qwen_workspace_url="http://bailian.console.aliyun.com/cn-beijing#/efm")
 
 
+def test_qwen_auto_session_recopy_defaults_off() -> None:
+    assert AppConfig().qwen_auto_session_recopy is False
+
+
+def test_qwen_auto_session_recopy_accepts_enablement() -> None:
+    assert AppConfig(qwen_auto_session_recopy=True).qwen_auto_session_recopy is True
+
+
 def test_qwen_workspace_url_rejects_unparsable_url() -> None:
     with pytest.raises(ValidationError):
         AppConfig(qwen_workspace_url="https://[::1")

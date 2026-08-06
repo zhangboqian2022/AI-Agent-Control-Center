@@ -296,3 +296,50 @@ def test_logout_returns_false_when_session_logout_raises(qapp, tmp_path: Path) -
 
     service = QwenWebQuotaService(tmp_path, session=ExplodingSession())
     assert service.logout() is False
+
+
+def test_service_passes_auto_recopy_flag_to_session_factory(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    import aacc.qwen_web_quota_service as module
+
+    seen: dict[str, object] = {}
+
+    def factory(config_dir, parent, *, language_manager, auto_session_recopy):
+        del config_dir, parent, language_manager
+        seen["flag"] = auto_session_recopy
+        return FakeSession()
+
+    monkeypatch.setattr(module, "_create_platform_web_session", factory)
+    service = QwenWebQuotaService(tmp_path)
+    service.set_workspace_url(_default_url())
+    service.set_auto_session_recopy(True)
+    service.start()
+    assert seen["flag"] is True
+    service.stop()
+
+
+def test_chrome_session_factory_threads_auto_recopy(qapp, tmp_path: Path) -> None:
+    del qapp
+    import aacc.qwen_web_quota_service as module
+
+    session = module._create_chrome_web_session(
+        tmp_path,
+        None,
+        language_manager=module.LanguageManager(module.ZH_CN),
+        auto_session_recopy=True,
+    )
+    assert session.auto_session_recopy is True
+    session.close()
+
+
+def test_app_factory_threads_auto_recopy_from_config(tmp_path: Path) -> None:
+    from aacc.app import _default_qwen_web_quota_service_factory
+    from aacc.models import AppConfig
+
+    config = AppConfig()
+    config.qwen_auto_session_recopy = True
+    service = _default_qwen_web_quota_service_factory(tmp_path, config)
+    assert service is not None
+    assert service.auto_session_recopy is True
+    assert service.timer.isActive() is False

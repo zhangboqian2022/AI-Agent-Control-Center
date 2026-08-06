@@ -20,6 +20,7 @@ from aacc.qwen_chrome_cdp import (
     QwenChromeUnauthorizedError,
     clear_owned_qwen_chrome_profile,
     qwen_chrome_profile_path,
+    recopy_qwen_daily_chrome_session,
 )
 from aacc.qwen_web_error import QwenQuotaErrorCategory
 
@@ -60,11 +61,13 @@ class QwenChromeSession(QObject):
         login_state: KimiWebLoginStateStore | None = None,
         thread_factory: Callable[[Callable[[], None]], _ThreadLike] = _make_thread,
         profile_cleaner: Callable[[Path, Path], None] = clear_owned_qwen_chrome_profile,
+        auto_session_recopy: bool = False,
     ) -> None:
         super().__init__(parent)
         del language_manager
         self.config_dir = config_dir
         self.profile = qwen_chrome_profile_path(config_dir)
+        self.auto_session_recopy = auto_session_recopy
         self.login_state = login_state or KimiWebLoginStateStore(
             config_dir,
             state_file_name="qwen-web-session-state.json",
@@ -97,6 +100,7 @@ class QwenChromeSession(QObject):
 
     def refresh(self) -> None:
         if self._closed or self._busy or not self.workspace_url or not self.login_state.may_reuse():
+            _logger.debug("Qwen Chrome refresh skipped (closed/busy/unconfigured/logged out)")
             return
         self._start(visible=False)
 
@@ -129,6 +133,9 @@ class QwenChromeSession(QObject):
                 operation = ManagedQwenChromeOperation(
                     self.workspace_url,
                     config_dir=self.config_dir,
+                    session_recopy=(
+                        recopy_qwen_daily_chrome_session if self.auto_session_recopy else None
+                    ),
                 )
             except Exception:
                 self._busy = False
@@ -177,6 +184,9 @@ class QwenChromeSession(QObject):
             self.quota_received.emit(outcome)
             return
         if isinstance(outcome, QwenChromeUnauthorizedError):
+            _logger.warning(
+                "Qwen Chrome session is logged out; quota refresh paused until re-login"
+            )
             self._persist_reuse(False)
             self.login_state_changed.emit(False)
             return

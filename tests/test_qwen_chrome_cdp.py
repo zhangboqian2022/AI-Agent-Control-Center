@@ -16,12 +16,14 @@ from aacc.qwen_chrome_cdp import (
     _find_qwen_chrome_processes_for_profile,
     build_qwen_chrome_launch,
     clear_owned_qwen_chrome_profile,
+    daily_chrome_session_source,
     find_qwen_chrome_executable,
     install_qwen_hidden_page_stealth,
     parse_qwen_chrome_payload,
     qwen_chrome_profile_path,
     qwen_dom_extract_expression,
     qwen_hidden_page_stealth_script,
+    recopy_qwen_daily_chrome_session,
     select_qwen_target,
     terminate_qwen_chrome_profile_processes,
     validate_owned_qwen_chrome_profile,
@@ -1342,3 +1344,274 @@ def test_hidden_refresh_falls_back_to_terminator_when_chrome_outlives_close(
 
     assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
     assert terminated == [777]
+
+
+def _make_daily_chrome_source(root: Path) -> Path:
+    default = root / "Default"
+    default.mkdir(parents=True)
+    (root / "Local State").write_text('{"os_crypt":{"encrypted_key":"k"}}', encoding="utf-8")
+    import sqlite3
+
+    connection = sqlite3.connect(default / "Cookies")
+    with connection:
+        connection.execute("CREATE TABLE cookies (host_key TEXT, name TEXT)")
+        connection.execute("INSERT INTO cookies VALUES ('.aliyun.com', 'cna')")
+    connection.close()
+    (default / "Preferences").write_text("{}", encoding="utf-8")
+    (default / "Secure Preferences").write_text("{}", encoding="utf-8")
+    (default / "Local Storage" / "leveldb").mkdir(parents=True)
+    (default / "Local Storage" / "leveldb" / "000001.log").write_text("ls", encoding="utf-8")
+    (default / "Session Storage").mkdir()
+    (default / "Session Storage" / "CURRENT").write_text("ss", encoding="utf-8")
+    (default / "Login Data").write_text("secret", encoding="utf-8")
+    return root
+
+
+def test_daily_chrome_session_source_requires_default_profile(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    assert daily_chrome_session_source(platform_name="darwin", home=home) is None
+    root = home / "Library" / "Application Support" / "Google" / "Chrome"
+    (root / "Default").mkdir(parents=True)
+    assert daily_chrome_session_source(platform_name="darwin", home=home) == root
+    assert daily_chrome_session_source(platform_name="win32", home=home) is None
+
+
+def test_recopy_daily_session_copies_minimal_set(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    profile = config_dir / "qwen-chrome-profile"
+    profile.mkdir()
+    (profile / "stale.txt").write_text("old", encoding="utf-8")
+    source = _make_daily_chrome_source(tmp_path / "daily")
+
+    recopy_qwen_daily_chrome_session(config_dir, source_root=source)
+
+    default = profile / "Default"
+    assert not (profile / "stale.txt").exists()
+    assert (profile / "Local State").read_text(encoding="utf-8") == (
+        '{"os_crypt":{"encrypted_key":"k"}}'
+    )
+    assert (default / "Preferences").exists()
+    assert (default / "Secure Preferences").exists()
+    assert (default / "Local Storage" / "leveldb" / "000001.log").exists()
+    assert (default / "Session Storage" / "CURRENT").exists()
+    assert not (default / "Login Data").exists()
+    import sqlite3
+
+    connection = sqlite3.connect(default / "Cookies")
+    rows = connection.execute("SELECT host_key, name FROM cookies").fetchall()
+    connection.close()
+    assert rows == [(".aliyun.com", "cna")]
+    quarantines = [
+        entry
+        for entry in config_dir.iterdir()
+        if entry.name.startswith(".qwen-chrome-profile.pre-dailycopy-")
+    ]
+    assert len(quarantines) == 1
+    assert (quarantines[0] / "stale.txt").exists()
+    assert profile.stat().st_mode & 0o777 == 0o700
+
+
+def test_recopy_daily_session_prunes_old_quarantines(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    profile = config_dir / "qwen-chrome-profile"
+    profile.mkdir()
+    stamps = ("20260801-000000", "20260802-000000", "20260803-000000", "20260804-000000")
+    for stamp in stamps:
+        (config_dir / f".qwen-chrome-profile.pre-dailycopy-{stamp}").mkdir()
+    source = _make_daily_chrome_source(tmp_path / "daily")
+
+    recopy_qwen_daily_chrome_session(config_dir, source_root=source)
+
+    remaining = sorted(
+        entry.name
+        for entry in config_dir.iterdir()
+        if entry.name.startswith(".qwen-chrome-profile.pre-dailycopy-")
+    )
+    assert len(remaining) == 3
+    assert ".qwen-chrome-profile.pre-dailycopy-20260801-000000" not in remaining
+    assert ".qwen-chrome-profile.pre-dailycopy-20260802-000000" not in remaining
+
+
+def test_recopy_daily_session_missing_source_raises(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    with pytest.raises(QwenChromeQuotaError):
+        recopy_qwen_daily_chrome_session(
+            config_dir, platform_name="darwin", home=tmp_path / "empty-home"
+        )
+
+
+def test_recopy_daily_session_missing_required_files_raises(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    source = _make_daily_chrome_source(tmp_path / "daily")
+    (source / "Local State").unlink()
+    with pytest.raises(QwenChromeQuotaError):
+        recopy_qwen_daily_chrome_session(config_dir, source_root=source)
+
+
+def test_recopy_daily_session_rejects_symlink_source(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    real = _make_daily_chrome_source(tmp_path / "daily")
+    link = tmp_path / "daily-link"
+    link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(QwenChromeQuotaError):
+        recopy_qwen_daily_chrome_session(config_dir, source_root=link)
+
+
+def _quota_page_target() -> dict[str, str]:
+    return {
+        "type": "page",
+        "url": WORKSPACE_URL,
+        "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/page-id",
+    }
+
+
+def test_hidden_refresh_recopies_and_retries_after_unauthorized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    attempts = {"count": 0}
+
+    def target_loader(_origin: str) -> list[object]:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return []
+        return [_quota_page_target()]
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def evaluate(self, _expression: str) -> object:
+            return _quota_payload()
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    recopied: list[Path] = []
+    clock = iter([0.0] * 16)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, FakeProcess()),
+        target_loader=target_loader,
+        socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(clock, 61.0),
+        session_recopy=lambda config_dir: recopied.append(config_dir),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aacc.qwen_chrome_cdp"):
+        result = operation.run(visible=False, cancel=Event())
+
+    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
+    assert recopied == [tmp_path / "config"]
+    assert attempts["count"] == 2
+    assert any("recopy" in record.message.casefold() for record in caplog.records)
+
+
+def test_hidden_refresh_recopy_failure_surfaces_unauthorized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    attempts = {"count": 0}
+
+    def target_loader(_origin: str) -> list[object]:
+        attempts["count"] += 1
+        return []
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+
+    def broken_recopy(_config_dir: Path) -> None:
+        raise OSError("daily profile unreadable")
+
+    clock = iter([0.0] * 16)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, FakeProcess()),
+        target_loader=target_loader,
+        socket_factory=lambda _url: object(),
+        sleep=lambda _seconds: None,
+        chrome_process_finder=lambda _profile: [],
+        monotonic=lambda: next(clock, 61.0),
+        session_recopy=broken_recopy,
+    )
+
+    with pytest.raises(QwenChromeUnauthorizedError):
+        operation.run(visible=False, cancel=Event())
+    assert attempts["count"] == 1
+
+
+def test_visible_login_never_triggers_session_recopy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    recopied: list[Path] = []
+    # Keep every deadline computation at t=0, then jump far past the visible
+    # login deadline so the bounded unauthorized loop terminates.
+    clock = iter([0.0] * 6)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, FakeProcess()),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        sleep=lambda _seconds: None,
+        chrome_process_finder=lambda _profile: [],
+        monotonic=lambda: next(clock, 999_999.0),
+        session_recopy=lambda config_dir: recopied.append(config_dir),
+    )
+
+    with pytest.raises(QwenChromeQuotaError):
+        operation.run(visible=True, cancel=Event())
+    assert recopied == []
