@@ -944,7 +944,7 @@ def test_release_docs_explain_codex_weekly_privacy_and_safe_gatekeeper_flow() ->
         assert "10080" in content
         assert "300-minute" not in content
         assert "300 分钟" not in content
-        assert "shasum -a 256 AACC-1.4.4-rc.1.dmg" in content
+        assert "shasum -a 256 AACC-1.4.5-rc.2.dmg" in content
         assert "xattr -cr /Applications/AACC.app" in content
 
 

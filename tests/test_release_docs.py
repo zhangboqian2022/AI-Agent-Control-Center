@@ -91,8 +91,8 @@ def test_readmes_caption_the_demo_immediately_and_make_setup_primary() -> None:
             r"!\[[^\]]+\]\(" + re.escape(image) + r"\)\n\n" + re.escape(caption),
             text,
         )
-        assert "AACC-1.4.4rc1-Setup.exe" in text
-        assert "AACC-1.4.4rc1-windows-x64.zip" not in text
+        assert "AACC-1.4.5rc2-Setup.exe" in text
+        assert "AACC-1.4.5rc2-windows-x64.zip" not in text
         for term in required_terms:
             assert term in text
 
@@ -103,14 +103,14 @@ def test_each_bilingual_product_document_keeps_the_live_language_contract() -> N
         "immediately",
         "Compact mode remains in Settings and the tray menu",
         "does not refresh quotas or change monitored tasks or login state",
-        "1.4.4-rc.1",
+        "1.4.5-rc.2",
     )
     chinese_terms = (
         "中英文",
         "即时切换",
         "紧凑模式保留在设置和托盘菜单",
         "不会刷新额度，也不会改变监控任务或登录状态",
-        "1.4.4-rc.1",
+        "1.4.5-rc.2",
     )
 
     for name in ("README.md", "docs/user-guide.en.md", "CHANGELOG.md"):
@@ -173,11 +173,11 @@ def test_bilingual_guides_describe_setup_lifecycle_and_preserved_appdata() -> No
     cases = (
         (
             "docs/user-guide.en.md",
-            ("AACC-1.4.4rc1-Setup.exe", "per-user", "%LocalAppData%", "%APPDATA%"),
+            ("AACC-1.4.5rc2-Setup.exe", "per-user", "%LocalAppData%", "%APPDATA%"),
         ),
         (
             "docs/user-guide.md",
-            ("AACC-1.4.4rc1-Setup.exe", "当前用户", "%LocalAppData%", "%APPDATA%"),
+            ("AACC-1.4.5rc2-Setup.exe", "当前用户", "%LocalAppData%", "%APPDATA%"),
         ),
         (
             "docs/windows-verification-checklist.en.md",
