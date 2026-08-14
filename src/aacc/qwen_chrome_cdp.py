@@ -83,6 +83,10 @@ _MAX_SNIPPET_CHARS = 20_000
 _QWEN_HIDDEN_WINDOW_OFFSET = -32000
 _QWEN_HIDDEN_WINDOW_WIDTH = 1100
 _QWEN_HIDDEN_WINDOW_HEIGHT = 700
+# A visible login whose Bailian page stays missing across this many 2 s
+# polls means the user closed the login window; shut Chrome down as a user
+# cancel instead of holding a windowless instance until the login deadline.
+_QWEN_LOGIN_WINDOW_MISSING_POLLS = 3
 _logger = logging.getLogger("aacc.qwen_chrome_cdp")
 
 
@@ -100,6 +104,15 @@ class QwenChromeUnauthorizedError(RuntimeError):
 
 class QwenChromeCancelledError(RuntimeError):
     """The owning Qt session cancelled the Chrome operation."""
+
+
+class QwenChromeLoginCancelledError(QwenChromeCancelledError):
+    """The user closed the visible login window, abandoning the login.
+
+    Distinct from ``QwenChromeUnauthorizedError``: a closed window is a user
+    cancel, not proof of an expired session, so it must never trigger the
+    daily-session recopy.
+    """
 
 
 class QwenChromeMissingError(RuntimeError):
@@ -368,7 +381,8 @@ def select_qwen_target(targets: object, *, expected_port: int) -> str:
     for historical reasons; callers must not treat that as session expiry —
     only the page's rendered login banner (the payload marker) proves a
     logout. The refresh loop remaps a missing page to a retryable
-    ``REFRESH_FAILED``.
+    ``REFRESH_FAILED``; the visible login path instead remaps a sustained
+    absence to a user cancel (the user closed the login window).
     """
 
     if not isinstance(targets, list):
@@ -802,6 +816,7 @@ class ManagedQwenChromeOperation:
             login_deadline = self._monotonic() + EDGE_LOGIN_TIMEOUT_SECONDS
             refresh_auth_deadline = self._monotonic() + _QWEN_REFRESH_AUTH_GRACE_SECONDS
             target_requested = visible
+            missing_target_polls = 0
             while True:
                 if cancel.is_set():
                     raise QwenChromeCancelledError
@@ -828,6 +843,27 @@ class ManagedQwenChromeOperation:
                     try:
                         page_url = select_qwen_target(targets, expected_port=port)
                     except QwenChromeUnauthorizedError:
+                        if visible:
+                            # In the visible login the user abandons the flow
+                            # by closing the Bailian window, after which the
+                            # target never comes back. Treat a sustained
+                            # absence as a user cancel — a clean Browser.close
+                            # shutdown, never a recopy trigger — instead of
+                            # holding a windowless Chrome in the Dock until
+                            # the login deadline. The absence can also be
+                            # brief: cross-origin login redirects (the baxia
+                            # verification page, etc.) temporarily leave no
+                            # Bailian target, so the 3×2 s threshold is a
+                            # compromise between prompt shutdown and false
+                            # cancels during such hops.
+                            missing_target_polls += 1
+                            if missing_target_polls >= _QWEN_LOGIN_WINDOW_MISSING_POLLS:
+                                _logger.info(
+                                    "Qwen login window closed by the user; shutting Chrome down"
+                                )
+                                raise QwenChromeLoginCancelledError from None
+                            self._sleep(2.0)
+                            continue
                         # A missing Bailian page is a startup race (the page
                         # is still loading, or an interstitial sits on
                         # another origin), never proof of an expired
@@ -836,6 +872,7 @@ class ManagedQwenChromeOperation:
                         # trigger the fail-fast recopy; recopying on a race
                         # would overwrite a healthy profile.
                         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from None
+                    missing_target_polls = 0
                     page = CdpConnection(self._socket_factory(page_url))  # type: ignore[arg-type]
                     try:
                         if not visible:

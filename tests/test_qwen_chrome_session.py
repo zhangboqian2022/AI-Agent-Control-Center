@@ -7,6 +7,7 @@ from threading import Event
 from aacc.kimi_web_login_state import KimiWebLoginStateStore
 from aacc.qwen_chrome_cdp import (
     QwenChromeCancelledError,
+    QwenChromeLoginCancelledError,
     QwenChromeQuotaError,
     QwenChromeUnauthorizedError,
 )
@@ -94,6 +95,7 @@ def make_session(tmp_path: Path, operation: FakeOperation, **kwargs: object):
         login_state=KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json"),
         thread_factory=kwargs.pop("thread_factory", ImmediateThread),
         profile_cleaner=kwargs.pop("profile_cleaner", lambda *_args: None),
+        orphan_cleaner=kwargs.pop("orphan_cleaner", lambda _profile: None),
         auto_session_recopy=kwargs.pop("auto_session_recopy", False),
     )
     assert not kwargs
@@ -391,3 +393,98 @@ def test_unauthorized_outcome_marked_as_expiry_not_user_logout(qapp, tmp_path):
 
     assert session.login_state.may_reuse() is False
     assert session.login_state.logged_out_by_user() is False
+
+
+def test_login_window_closed_outcome_is_silent_cancel(qapp, tmp_path, caplog):
+    import logging
+
+    del qapp
+    operation = FakeOperation(QwenChromeLoginCancelledError())
+    session = make_session(tmp_path, operation)
+    errors: list[str] = []
+    states: list[bool] = []
+    session.error_occurred.connect(errors.append)
+    session.login_state_changed.connect(states.append)
+
+    with caplog.at_level(logging.INFO, logger="aacc.qwen_chrome_session"):
+        session.open_login()
+
+    # A user closing the login window abandons the login: no error, no login
+    # state change, and never the unauthorized outcome that triggers recopy.
+    assert errors == []
+    assert states == []
+    assert session.login_state.may_reuse() is False
+    assert session.login_state.logged_out_by_user() is False
+    assert any("closed" in record.message for record in caplog.records)
+
+
+def test_logged_out_refresh_cleans_orphaned_chrome_once(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n1%", "weeklyText": None})
+    cleaned: list[Path] = []
+    session = make_session(
+        tmp_path,
+        operation,
+        orphan_cleaner=lambda profile: cleaned.append(profile),
+    )
+
+    # Refresh is skipped while logged out, so the per-launch cleanup inside
+    # the operation never runs; the session itself must reap orphaned Chrome
+    # instances left behind by a killed or crashed AACC — exactly once.
+    session.refresh()
+    session.refresh()
+
+    assert cleaned == [tmp_path / "qwen-chrome-profile"]
+    assert operation.calls == []
+
+
+def test_orphan_cleanup_failure_does_not_break_refresh(qapp, tmp_path, caplog):
+    import logging
+
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n1%", "weeklyText": None})
+
+    def broken_cleaner(_profile: Path) -> None:
+        raise OSError("psutil unavailable")
+
+    session = make_session(tmp_path, operation, orphan_cleaner=broken_cleaner)
+    errors: list[str] = []
+    session.error_occurred.connect(errors.append)
+
+    with caplog.at_level(logging.WARNING, logger="aacc.qwen_chrome_session"):
+        session.refresh()
+        session.refresh()
+
+    assert errors == []
+    assert any("orphan" in record.message for record in caplog.records)
+
+
+def test_orphan_cleanup_aborted_when_operation_started_before_worker_runs(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n1%", "weeklyText": None})
+    threads: list[ManualThread] = []
+
+    def manual_factory(target: Callable[[], None]) -> ManualThread:
+        thread = ManualThread(target)
+        threads.append(thread)
+        return thread
+
+    cleaned: list[Path] = []
+    session = make_session(
+        tmp_path,
+        operation,
+        thread_factory=manual_factory,
+        orphan_cleaner=lambda profile: cleaned.append(profile),
+    )
+
+    # The cleanup worker runs off-thread; a login started before its psutil
+    # scan launches a new Chrome on the same --user-data-dir, and the scan
+    # would terminate that live instance. The worker must re-check and abort.
+    session.refresh()
+    session.open_login()
+    assert len(threads) == 2
+    cleanup_thread, operation_thread = threads
+    cleanup_thread.finish()
+
+    assert cleaned == []
+    operation_thread.finish()

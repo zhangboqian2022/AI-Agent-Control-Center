@@ -16,11 +16,13 @@ from aacc.kimi_web_login_state import KimiWebLoginStateStore
 from aacc.qwen_chrome_cdp import (
     ManagedQwenChromeOperation,
     QwenChromeCancelledError,
+    QwenChromeLoginCancelledError,
     QwenChromeQuotaError,
     QwenChromeUnauthorizedError,
     clear_owned_qwen_chrome_profile,
     qwen_chrome_profile_path,
     recopy_qwen_daily_chrome_session,
+    terminate_qwen_chrome_profile_processes,
 )
 from aacc.qwen_web_error import QwenQuotaErrorCategory
 
@@ -61,6 +63,7 @@ class QwenChromeSession(QObject):
         login_state: KimiWebLoginStateStore | None = None,
         thread_factory: Callable[[Callable[[], None]], _ThreadLike] = _make_thread,
         profile_cleaner: Callable[[Path, Path], None] = clear_owned_qwen_chrome_profile,
+        orphan_cleaner: Callable[[Path], None] = terminate_qwen_chrome_profile_processes,
         auto_session_recopy: bool = False,
     ) -> None:
         super().__init__(parent)
@@ -76,6 +79,8 @@ class QwenChromeSession(QObject):
         self._operation = operation
         self._thread_factory = thread_factory
         self._profile_cleaner = profile_cleaner
+        self._orphan_cleaner = orphan_cleaner
+        self._orphan_cleanup_done = False
         self._thread: _ThreadLike | None = None
         self._cancel: Event | None = None
         self._generation = 0
@@ -111,7 +116,44 @@ class QwenChromeSession(QObject):
             # again. An explicit user logout is never auto-recovered.
             self._start(visible=False)
             return
+        # No operation launches on this path, so the per-launch cleanup
+        # inside the operation never runs; reap orphaned Chrome instances
+        # (left behind by a killed or crashed AACC) here instead.
+        self._cleanup_orphaned_processes()
         _logger.debug("Qwen Chrome refresh skipped (logged out)")
+
+    def _cleanup_orphaned_processes(self) -> None:
+        """Reap leftover owned-profile Chrome instances once, off the Qt thread.
+
+        A killed or crashed AACC strands the windowless hidden-refresh Chrome,
+        which never exits by itself and pins a Dock icon. The operation's
+        pre-launch cleanup only runs when an operation launches, so a session
+        whose refreshes stay skipped (logged out, recopy off) still needs one
+        cleanup pass. The psutil scan plus terminate/wait can block for
+        seconds, so it runs in a worker thread; the worker aborts when an
+        operation has become active in the meantime, since terminating by
+        profile path would kill that operation's just-launched Chrome.
+        """
+
+        if self._closed or self._orphan_cleanup_done:
+            return
+        self._orphan_cleanup_done = True
+
+        def run() -> None:
+            # Re-check right before the psutil scan: a login/refresh started
+            # after this cleanup was scheduled launches a new Chrome on the
+            # same --user-data-dir, and the scan would terminate that live
+            # instance. The unsynchronized read still races, but it shrinks
+            # the window from seconds (scan + terminate) to instructions.
+            if self._busy or self._thread is not None:
+                _logger.debug("Qwen Chrome orphan cleanup skipped (operation active)")
+                return
+            try:
+                self._orphan_cleaner(self.profile)
+            except Exception:
+                _logger.warning("Qwen Chrome orphan cleanup failed", exc_info=True)
+
+        self._thread_factory(run).start()
 
     def logout(self) -> bool:
         succeeded = self._persist_reuse(False, logged_out_by_user=True)
@@ -158,6 +200,8 @@ class QwenChromeSession(QObject):
             outcome: object
             try:
                 outcome = operation.run(visible=visible, cancel=cancel)
+            except QwenChromeLoginCancelledError:
+                outcome = QwenChromeLoginCancelledError()
             except QwenChromeCancelledError:
                 outcome = QwenChromeCancelledError()
             except QwenChromeUnauthorizedError:
@@ -198,6 +242,9 @@ class QwenChromeSession(QObject):
             )
             self._persist_reuse(False, logged_out_by_user=False)
             self.login_state_changed.emit(False)
+            return
+        if isinstance(outcome, QwenChromeLoginCancelledError):
+            _logger.info("Qwen Chrome login window closed by the user; login abandoned")
             return
         if isinstance(outcome, QwenChromeCancelledError):
             return
