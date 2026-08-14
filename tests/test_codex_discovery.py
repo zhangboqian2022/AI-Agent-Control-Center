@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -58,6 +59,7 @@ def test_discovers_active_and_recent_codex_tasks_without_reading_session_content
     discovery = CodexLocalDiscovery(
         index,
         processes,
+        session_directory=tmp_path / "sessions",
         pid_exists=lambda pid: pid == 321,
         now=lambda: datetime(2026, 7, 17, 3, tzinfo=UTC),
     )
@@ -212,7 +214,9 @@ def test_discovers_missing_title_with_safe_short_identifier(tmp_path: Path) -> N
     processes = tmp_path / "chat_processes.json"
     processes.write_text("[]", encoding="utf-8")
 
-    tasks = CodexLocalDiscovery(index, processes).discover()
+    tasks = CodexLocalDiscovery(
+        index, processes, session_directory=tmp_path / "sessions"
+    ).discover()
 
     assert tasks[0].config.name == "Codex 任务 12345678"
 
@@ -473,7 +477,9 @@ def test_discovery_only_returns_explicitly_selected_tasks(tmp_path: Path) -> Non
     processes = tmp_path / "chat_processes.json"
     processes.write_text("[]", encoding="utf-8")
 
-    tasks = CodexLocalDiscovery(index, processes).discover({"chosen"})
+    tasks = CodexLocalDiscovery(index, processes, session_directory=tmp_path / "sessions").discover(
+        {"chosen"}
+    )
 
     assert [task.state.session_id for task in tasks] == ["chosen"]
 
@@ -504,7 +510,9 @@ def test_catalog_deduplicates_index_rows_by_most_recent_update(tmp_path: Path) -
     processes = tmp_path / "chat_processes.json"
     processes.write_text("[]", encoding="utf-8")
 
-    catalog = CodexLocalDiscovery(index, processes).catalog()
+    catalog = CodexLocalDiscovery(
+        index, processes, session_directory=tmp_path / "sessions"
+    ).catalog()
 
     assert [(session.conversation_id, session.title) for session in catalog] == [
         ("same-task", "新标题")
@@ -1130,7 +1138,11 @@ def test_existing_unreadable_session_index_raises_discovery_error(tmp_path: Path
 
 
 def test_missing_session_index_is_empty_first_run(tmp_path: Path) -> None:
-    discovery = CodexLocalDiscovery(tmp_path / "missing-index.jsonl", tmp_path / "processes.json")
+    discovery = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "processes.json",
+        session_directory=tmp_path / "sessions",
+    )
     assert discovery.catalog() == []
     assert CODEX_METADATA_COMPATIBILITY == "2026-07"
 
@@ -1324,3 +1336,221 @@ def test_discover_omits_usage_key_when_no_token_count(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 8, 5, 10, 0, 30, tzinfo=UTC),
     ).discover()
     assert "usage" not in tasks[0].state.metadata
+
+
+CLI_SESSION_ID = "12345678-9abc-def0-1234-56789abcdef0"
+
+
+def _write_cli_rollout(path: Path, session_id: str, cwd: str, started_at: datetime) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": session_id,
+                            "timestamp": started_at.isoformat(),
+                            "cwd": cwd,
+                            "originator": "codex-tui",
+                            "source": "cli",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": started_at.isoformat(),
+                        "type": "event_msg",
+                        "payload": {"type": "task_started"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _backdate(path: Path, modified_at: datetime) -> None:
+    os.utime(path, (modified_at.timestamp(), modified_at.timestamp()))
+
+
+def test_discover_enumerates_cli_rollout_missing_from_index(tmp_path: Path) -> None:
+    # codex-tui 从不写 session_index.jsonl；CLI 会话只以
+    # sessions/**/rollout-<时间戳>-<uuid>.jsonl 存在，也必须被发现。
+    now = datetime.now(UTC)
+    sessions = tmp_path / "sessions"
+    rollout = (
+        sessions / "2026" / "08" / "14" / f"rollout-2026-08-14T01-30-00-{CLI_SESSION_ID}.jsonl"
+    )
+    _write_cli_rollout(rollout, CLI_SESSION_ID, "/work/cli-task", now - timedelta(seconds=5))
+    _backdate(rollout, now - timedelta(seconds=2))
+
+    tasks = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+    ).discover()
+
+    assert [task.config.id for task in tasks] == [f"codex:{CLI_SESSION_ID}"]
+    assert tasks[0].state.status is TaskStatus.RUNNING
+    assert tasks[0].config.name == f"Codex 任务 {CLI_SESSION_ID[:8]}"
+    assert tasks[0].state.metadata["work_dir"] == "/work/cli-task"
+
+
+def test_discover_prefers_index_entry_when_session_also_on_disk(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    sessions = tmp_path / "sessions"
+    rollout = sessions / f"rollout-2026-08-14T01-30-00-{CLI_SESSION_ID}.jsonl"
+    _write_cli_rollout(rollout, CLI_SESSION_ID, "/work/cli-task", now - timedelta(seconds=5))
+    _backdate(rollout, now - timedelta(seconds=2))
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        json.dumps(
+            {
+                "id": CLI_SESSION_ID,
+                "thread_name": "索引里的标题",
+                "updated_at": (now - timedelta(minutes=10)).isoformat(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    tasks = CodexLocalDiscovery(
+        index,
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+    ).discover()
+
+    assert [task.config.id for task in tasks] == [f"codex:{CLI_SESSION_ID}"]
+    assert tasks[0].config.name == "索引里的标题"
+
+
+def test_catalog_lists_filesystem_only_cli_session_with_fallback_title(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    sessions = tmp_path / "sessions"
+    modified_at = now - timedelta(seconds=2)
+    rollout = sessions / f"rollout-2026-08-14T01-30-00-{CLI_SESSION_ID}.jsonl"
+    _write_cli_rollout(rollout, CLI_SESSION_ID, "/work/cli-task", now - timedelta(seconds=5))
+    _backdate(rollout, modified_at)
+
+    catalog = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+    ).catalog()
+
+    assert [(item.conversation_id, item.title) for item in catalog] == [
+        (CLI_SESSION_ID, f"Codex 任务 {CLI_SESSION_ID[:8]}")
+    ]
+    assert catalog[0].updated_at == datetime.fromtimestamp(modified_at.timestamp(), UTC)
+
+
+def test_stale_filesystem_only_cli_session_reports_unknown(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    sessions = tmp_path / "sessions"
+    rollout = sessions / f"rollout-2026-08-14T01-30-00-{CLI_SESSION_ID}.jsonl"
+    _write_cli_rollout(rollout, CLI_SESSION_ID, "/work/cli-task", now - timedelta(minutes=10))
+    _backdate(rollout, now - timedelta(minutes=10))
+
+    tasks = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+    ).discover()
+
+    assert [task.config.id for task in tasks] == [f"codex:{CLI_SESSION_ID}"]
+    assert tasks[0].state.status is TaskStatus.UNKNOWN
+
+
+def test_filesystem_scan_ignores_files_without_uuid_suffix(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "notes.jsonl").write_text("{}\n", encoding="utf-8")
+    (sessions / "rollout-not-a-uuid.jsonl").write_text("{}\n", encoding="utf-8")
+
+    discovery = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+    )
+
+    assert discovery.discover() == []
+    assert discovery.catalog() == []
+
+
+def test_filesystem_only_subagent_rollout_stays_excluded(tmp_path: Path) -> None:
+    # 文件扫描补入的会话同样走 _without_subagent_threads：
+    # source 为 dict 且含 subagent 键的内部线程不得成为独立卡片。
+    now = datetime.now(UTC)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    subagent_id = "abcdefab-1234-5678-9abc-def012345678"
+    rollout = sessions / f"rollout-2026-08-14T02-00-00-{subagent_id}.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": subagent_id,
+                    "source": {"subagent": {"thread_spawn": {"parent_thread_id": "p"}}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _backdate(rollout, now - timedelta(seconds=2))
+
+    discovery = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        now=lambda: now,
+    )
+
+    assert discovery.discover() == []
+    assert discovery.catalog() == []
+
+
+def test_filesystem_scan_skips_rollout_when_stat_fails(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    rollout = sessions / f"rollout-2026-08-14T01-30-00-{CLI_SESSION_ID}.jsonl"
+    _write_cli_rollout(rollout, CLI_SESSION_ID, "/work/cli-task", datetime.now(UTC))
+
+    def _broken_stat(path: Path) -> datetime:
+        if path == rollout:
+            raise OSError("gone")
+        return CodexLocalDiscovery._session_modified_at(path)
+
+    discovery = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=sessions,
+        session_modified_at=_broken_stat,
+    )
+
+    assert discovery.catalog() == []
+
+
+def test_filesystem_scan_fails_open_when_directory_iteration_raises(tmp_path: Path) -> None:
+    # Python 3.13 的 pathlib rglob 会吞掉 scandir 的 OSError，真实文件系统
+    # 无法稳定触发外层 fail-open 分支；改用 rglob 抛错的 Path 子类模拟
+    # 目录损坏/扫描竞态删除，覆盖 _filesystem_sessions 外层 except OSError。
+    class _BrokenSessionsPath(type(Path())):
+        def rglob(self, pattern: str) -> Iterator[Path]:
+            raise OSError("sessions 目录在扫描时被删除")
+
+    discovery = CodexLocalDiscovery(
+        tmp_path / "missing-index.jsonl",
+        tmp_path / "missing-processes.json",
+        session_directory=_BrokenSessionsPath(tmp_path / "sessions"),
+    )
+
+    assert discovery.catalog() == []
