@@ -10,6 +10,7 @@ import pytest
 from aacc.qwen_chrome_cdp import (
     ManagedQwenChromeOperation,
     QwenChromeCancelledError,
+    QwenChromeLoginCancelledError,
     QwenChromeMissingError,
     QwenChromeQuotaError,
     QwenChromeUnauthorizedError,
@@ -1585,7 +1586,9 @@ def test_visible_login_never_triggers_session_recopy(
     monkeypatch.setattr(module, "CdpConnection", FakeCdp)
     recopied: list[Path] = []
     # Keep every deadline computation at t=0, then jump far past the visible
-    # login deadline so the bounded unauthorized loop terminates.
+    # login deadline so the bounded unauthorized loop terminates. A Bailian
+    # target that never appears means the user closed the login window, which
+    # ends the operation as a user cancel long before that deadline.
     clock = iter([0.0] * 6)
     operation = ManagedQwenChromeOperation(
         WORKSPACE_URL,
@@ -1602,6 +1605,215 @@ def test_visible_login_never_triggers_session_recopy(
         session_recopy=lambda config_dir: recopied.append(config_dir),
     )
 
-    with pytest.raises(QwenChromeQuotaError):
+    with pytest.raises(QwenChromeLoginCancelledError):
         operation.run(visible=True, cancel=Event())
     assert recopied == []
+
+
+def test_visible_login_window_close_cancels_cleanly_without_recopy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Closing the login window is the user's way to abandon the flow: the
+    # Bailian target disappears for good. The loop must detect a sustained
+    # absence (3 consecutive 2 s polls) and end as a user cancel — a clean
+    # Browser.close shutdown with no recopy and no unauthorized outcome —
+    # instead of holding a windowless Chrome in the Dock until the 15-minute
+    # login deadline.
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    process = FakeProcess()
+    browser_closes: list[str] = []
+    sleeps: list[float] = []
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def close_browser(self) -> None:
+            browser_closes.append("close_browser")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    recopied: list[Path] = []
+    # Advance the fake clock well past every deadline so the previous
+    # behaviour (retry until the login deadline) terminates this test as a
+    # plain quota error instead of hanging.
+    clock = iter(float(tick) for tick in range(0, 100_000, 10))
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, process),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        sleep=sleeps.append,
+        chrome_process_finder=lambda _profile: [],
+        monotonic=lambda: next(clock, 100_000.0),
+        session_recopy=lambda config_dir: recopied.append(config_dir),
+    )
+
+    with pytest.raises(QwenChromeLoginCancelledError):
+        operation.run(visible=True, cancel=Event())
+
+    assert sleeps == [2.0, 2.0]
+    assert recopied == []
+    assert browser_closes == ["close_browser"]
+    assert process.waits >= 1
+
+
+def test_login_window_cancel_is_a_cancel_outcome() -> None:
+    # The session layer must treat a closed login window like a user cancel
+    # (silent, no recopy, no logout state change), never as an expired
+    # session.
+    assert issubclass(QwenChromeLoginCancelledError, QwenChromeCancelledError)
+    assert not issubclass(QwenChromeLoginCancelledError, QwenChromeUnauthorizedError)
+
+
+def test_refresh_teardown_closes_browser_and_process_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    process = FakeProcess()
+    browser_closes: list[str] = []
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            return _quota_payload()
+
+        def close_browser(self) -> None:
+            browser_closes.append("close_browser")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    monkeypatch.setattr(module, "install_qwen_hidden_page_stealth", lambda _page: None)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, process),
+        target_loader=lambda _origin: [_quota_page_target()],
+        socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        monotonic=lambda: 0.0,
+    )
+
+    operation.run(visible=False, cancel=Event())
+
+    assert browser_closes == ["close_browser"]
+    assert process.waits >= 1
+
+
+def test_refresh_teardown_closes_browser_and_process_on_deadline_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    process = FakeProcess()
+    browser_closes: list[str] = []
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def close_browser(self) -> None:
+            browser_closes.append("close_browser")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    # The Bailian page never appears; the loop burns the startup deadline and
+    # fails — the teardown must still close the browser and reap the process.
+    ticks = iter([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 91.0])
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, process),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        sleep=lambda _seconds: None,
+        chrome_process_finder=lambda _profile: [],
+        monotonic=lambda: next(ticks, 91.0),
+    )
+
+    with pytest.raises(QwenChromeQuotaError):
+        operation.run(visible=False, cancel=Event())
+
+    assert browser_closes == ["close_browser"]
+    assert process.waits >= 1
+
+
+def test_refresh_teardown_closes_browser_and_process_on_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    process = FakeProcess()
+    browser_closes: list[str] = []
+    cancel = Event()
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def close_browser(self) -> None:
+            browser_closes.append("close_browser")
+
+        def close(self) -> None:
+            pass
+
+    def cancel_on_sleep(_seconds: float) -> None:
+        cancel.set()
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, process),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        sleep=cancel_on_sleep,
+        chrome_process_finder=lambda _profile: [],
+        monotonic=lambda: 0.0,
+    )
+
+    with pytest.raises(QwenChromeCancelledError):
+        operation.run(visible=False, cancel=cancel)
+
+    assert browser_closes == ["close_browser"]
+    assert process.waits >= 1

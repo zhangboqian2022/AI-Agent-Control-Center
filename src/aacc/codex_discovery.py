@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 from collections import deque
 from collections.abc import Callable, Iterator
@@ -24,6 +25,7 @@ CODEX_METADATA_COMPATIBILITY = "2026-07"
 MAX_SESSION_METADATA_LINE_BYTES = 65_536
 SESSION_SCAN_CHUNK_BYTES = 65_536
 SESSION_START_CACHE_LIMIT = 512
+ROLLOUT_FILENAME_ID = re.compile(r"-([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\.jsonl$")
 
 
 class CodexDiscoveryError(RuntimeError):
@@ -388,7 +390,7 @@ class CodexLocalDiscovery:
         try:
             lines = self.session_index_path.read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
-            return []
+            lines = []
         except OSError as error:
             raise CodexDiscoveryError("Codex session index is unreadable") from error
         sessions_by_id: dict[str, dict[str, Any]] = {}
@@ -416,7 +418,42 @@ class CodexLocalDiscovery:
             previous = sessions_by_id.get(conversation_id)
             if previous is None or session["updated_at"] >= previous["updated_at"]:
                 sessions_by_id[conversation_id] = session
+        for conversation_id, updated_at in self._filesystem_sessions().items():
+            if conversation_id in sessions_by_id:
+                continue
+            sessions_by_id[conversation_id] = {
+                "id": conversation_id,
+                "title": "",
+                "updated_at": updated_at,
+            }
         return list(sessions_by_id.values())
+
+    def _filesystem_sessions(self) -> dict[str, datetime]:
+        """Enumerate rollout files for sessions missing from the index.
+
+        The Codex CLI (codex-tui) never writes ``session_index.jsonl``; its
+        sessions exist only as ``sessions/**/rollout-<timestamp>-<uuid>.jsonl``.
+        The session id comes from the filename and ``updated_at`` from the
+        file mtime — contents are never read here. Index entries win over
+        filesystem entries for the same id (they carry real titles).
+        """
+        updated_by_id: dict[str, datetime] = {}
+        try:
+            for path in self.session_directory.rglob("*.jsonl"):
+                match = ROLLOUT_FILENAME_ID.search(path.name)
+                if match is None:
+                    continue
+                conversation_id = match.group(1)
+                try:
+                    modified_at = self.session_modified_at(path)
+                except OSError:
+                    continue
+                previous = updated_by_id.get(conversation_id)
+                if previous is None or modified_at > previous:
+                    updated_by_id[conversation_id] = modified_at
+        except OSError:
+            pass
+        return updated_by_id
 
     def _session_signals(
         self,
