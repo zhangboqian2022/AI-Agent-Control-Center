@@ -90,8 +90,20 @@ ruff/mypy/pytest（`QT_QPA_PLATFORM=offscreen`）；mac 腿另跑 diff-cover
 - 证据边界：托管 Windows Server CI ≠ 消费级 Windows 10/11 真机验证，**不得宣称
   真机验证**（KNOWN_LIMITATIONS 双语有此声明，`test_packaging.py` 校验条目数对齐）。
 
-## 当前进度（2026-08-06）
+## 当前进度（2026-08-14）
 
+- **分支 `fix/codex-cli-discovery-qwen-dock`**（待合并）两块改动：
+  1. **Codex CLI 任务发现**：`_sessions()` 不再只读 `session_index.jsonl`
+     （CLI 从不写、桌面 app 迁移 sqlite 后索引停更），补充扫描
+     `~/.codex/sessions/**/*.jsonl` 文件系统枚举取并集（索引优先，只读
+     文件名+stat）；下游 subagent 过滤/信号判定/pid 兜底零改动，CLI rollout
+     直接走通现有活跃判定。顺带治好 8/10 后桌面新任务不显示。
+  2. **Qwen Chrome Dock 常驻图标**：可见登录流用户关窗后 3×2s 轮询判定
+     取消（`QwenChromeLoginCancelledError` 继承 Cancelled 而非
+     Unauthorized，绝不触发 recopy），立即 `Browser.close` 退出（此前空挂
+     15 分钟超时）；孤儿 Chrome 清理从"仅刷新启动前"扩展到登出/跳过刷新
+     时服务每 tick 触发一次（worker 线程跑、cleaner 执行前重查
+     `_busy`/`_thread` 防误杀新实例）；三路径 teardown 测试钉死"用完必退"。
 - **1.4.5-rc.3 已合并 main**（含 hidden 刷新 Dock 修复与 auto recopy 开关
   `qwen_auto_session_recopy`，默认关）。机制要点（真机实测）：headless UA 被
   阿里云 baxia 风控按指纹作废同一票据 → 定时刷新改为「有头但完全隐藏」的
