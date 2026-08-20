@@ -2,6 +2,12 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.5-rc.4 — 2026-08-20
+
+[Bilingual release notes](docs/release-notes-1.4.5rc4.md)
+
+- [Fix] Qwen's macOS hidden Chrome refresh now starts the isolated headed browser with LaunchServices hidden-instance mode (`open -j -g -n`) instead of directly executing Chrome as a foreground application. This prevents repeated refreshes from creating multiple Chrome Dock icons while keeping the real-browser fingerprint required by Bailian risk control. AACC tracks the short-lived `open` handoff separately and still terminates only Chrome processes carrying the AACC-owned profile.
+
 ## 1.4.5-rc.3 — 2026-08-06
 
 [Bilingual release notes](docs/release-notes-1.4.5rc3.md)

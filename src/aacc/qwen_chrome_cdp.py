@@ -6,15 +6,14 @@ Following the Windows Edge-CDP paradigm, this module drives a real Google
 Chrome instance through the DevTools Protocol: one visible window for the
 initial login, and background refreshes inside a headed-but-hidden window.
 Aliyun's risk control fingerprints headless browsers and voids session
-tickets presented by them, so refreshes launch a real headed Chrome binary
-directly with ``--no-startup-window`` and open the refresh page in a
-background window through ``Target.createTarget``, pushing it off-screen
-through CDP instead of passing ``--headless``. Bypassing LaunchServices
-(the ``open`` command) keeps the instance out of the Dock's recent items
-and avoids the second-instance Dock tile that ``open -n`` creates, so a
-finished refresh leaves neither an icon nor a process behind. Cookies stay
-in an AACC-owned Chrome profile directory; AACC never sees the account
-password.
+tickets presented by them, so refreshes launch a real headed Chrome through
+LaunchServices' hidden-instance mode (``open -j -g -n``) and open the refresh
+page in a background window through ``Target.createTarget``, pushing it
+off-screen through CDP instead of passing ``--headless``. The hidden app
+instance is not registered as a foreground Dock item, and its lifecycle is
+tracked by the AACC-owned profile so a finished refresh leaves neither an
+icon nor a process behind. Cookies stay in an AACC-owned Chrome profile
+directory; AACC never sees the account password.
 
 Chrome ships its own debugging endpoint files and accepts CDP commands the
 same way Edge does, so the transport primitives are reused from
@@ -80,6 +79,8 @@ _QWEN_RECOPY_QUARANTINE_PREFIX = f".{QWEN_CHROME_PROFILE_NAME}.pre-dailycopy-"
 _QWEN_RECOPY_KEEP = 3
 _PAGE_PATH = re.compile(r"^/devtools/page/[A-Za-z0-9_-]+$")
 _MAX_SNIPPET_CHARS = 20_000
+_QWEN_HIDDEN_OPEN_EXECUTABLE = Path("/usr/bin/open")
+_QWEN_CHROME_BUNDLE_ID = "com.google.Chrome"
 _QWEN_HIDDEN_WINDOW_OFFSET = -32000
 _QWEN_HIDDEN_WINDOW_WIDTH = 1100
 _QWEN_HIDDEN_WINDOW_HEIGHT = 700
@@ -320,10 +321,9 @@ def build_qwen_chrome_launch(
     """Build the launch specification for one owned Chrome run.
 
     Hidden refreshes need a real headed browser (Aliyun's risk control voids
-    tickets presented by headless fingerprints). The hidden path execs the
-    Chrome binary directly with ``--no-startup-window`` — bypassing
-    LaunchServices keeps the instance out of the Dock's recent items and
-    avoids the second-instance Dock tile ``open -n`` would create — and the
+    tickets presented by headless fingerprints). The hidden path uses
+    ``open -j -g -n`` so the isolated Chrome profile is registered as a
+    hidden LaunchServices instance rather than a foreground Dock item. The
     quota page is opened later in a background window through CDP, so the
     launch URL is deliberately absent from the arguments. Hidden mode is
     macOS-only and fails closed elsewhere instead of falling back to
@@ -348,9 +348,15 @@ def build_qwen_chrome_launch(
     if resolved_platform != "darwin":
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
     return QwenChromeLaunchSpec(
-        executable=executable,
+        executable=_QWEN_HIDDEN_OPEN_EXECUTABLE,
         profile=profile,
         arguments=(
+            "-j",
+            "-g",
+            "-n",
+            "-b",
+            _QWEN_CHROME_BUNDLE_ID,
+            "--args",
             f"--user-data-dir={profile}",
             "--remote-debugging-address=127.0.0.1",
             "--remote-debugging-port=0",
@@ -368,7 +374,7 @@ def build_qwen_chrome_launch(
             # Start windowless: the refresh page is created through CDP
             # Target.createTarget in a background window, so the instance
             # never activates, never steals focus, and exits cleanly through
-            # Browser.close (A/B verified on Chrome 151).
+            # Browser.close.
             "--no-startup-window",
         ),
     )
@@ -700,6 +706,60 @@ def terminate_qwen_chrome_profile_processes(
             process.kill()
 
 
+class _DetachedQwenChromeHandle:
+    """Track Chrome after ``open`` hands the launch to LaunchServices.
+
+    ``open`` exits after submitting the request, so its successful exit is
+    not Chrome's liveness signal. The AACC-owned profile is the authoritative
+    hand-off signal: CDP startup proves the browser is ready, and profile
+    process enumeration makes shutdown deterministic without touching the
+    user's normal Chrome profile.
+    """
+
+    def __init__(
+        self,
+        opener: _ProcessLike,
+        *,
+        profile: Path,
+        process_finder: Callable[[Path], Iterable[Any]],
+        sleep: Callable[[float], None],
+        monotonic: Callable[[], float],
+    ) -> None:
+        self.pid = opener.pid
+        self._opener = opener
+        self._profile = profile
+        self._process_finder = process_finder
+        self._sleep = sleep
+        self._monotonic = monotonic
+
+    def poll(self) -> int | None:
+        code = self._opener.poll()
+        if code is None or code == 0:
+            return None
+        return code
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = None if timeout is None else self._monotonic() + timeout
+        while True:
+            code = self._opener.poll()
+            if code is not None and code != 0:
+                return code
+            if not list(self._process_finder(self._profile)):
+                # Reap the short-lived opener when possible. It is not the
+                # Chrome process, but retaining the wait keeps subprocess
+                # lifecycle behavior deterministic in tests and production.
+                try:
+                    return self._opener.wait(timeout=0)
+                except Exception:
+                    return 0
+            if deadline is not None and self._monotonic() >= deadline:
+                raise TimeoutError("Qwen Chrome outlived the shutdown window")
+            self._sleep(0.1)
+
+    def terminate(self) -> None:
+        terminate_qwen_chrome_profile_processes(self._profile, process_finder=self._process_finder)
+
+
 class ManagedQwenChromeOperation:
     """Run one visible login or hidden headed refresh against the owned profile."""
 
@@ -804,6 +864,14 @@ class ManagedQwenChromeOperation:
             raise
         except Exception as error:
             raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from error
+        if not visible:
+            process = _DetachedQwenChromeHandle(
+                process,
+                profile=self.profile,
+                process_finder=self._chrome_process_finder,
+                sleep=self._sleep,
+                monotonic=self._monotonic,
+            )
 
         browser: CdpConnection | None = None
         try:

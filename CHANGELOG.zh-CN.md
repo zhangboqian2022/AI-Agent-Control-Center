@@ -1,5 +1,11 @@
 # 更新日志
 
+## 1.4.5-rc.4 — 2026-08-20
+
+[中英文发布说明](docs/release-notes-1.4.5rc4.md)
+
+- [修复] macOS 上 Qwen 隐藏刷新改用 LaunchServices 的隐藏实例模式（`open -j -g -n`）启动隔离的有头 Chrome，不再直接把 Chrome 二进制注册成前台应用。重复刷新不会再创建多个 Chrome 程序坞图标，同时保留百炼风控所需的真实浏览器指纹。AACC 单独跟踪短生命周期的 `open` 启动交接，并且只终止带有 AACC 专属 profile 参数的 Chrome 进程。
+
 ## 1.4.5-rc.3 — 2026-08-06
 
 [中英文发布说明](docs/release-notes-1.4.5rc3.md)
