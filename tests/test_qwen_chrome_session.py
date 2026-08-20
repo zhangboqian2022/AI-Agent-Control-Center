@@ -258,6 +258,41 @@ def test_session_guards_busy_closed_and_missing_workspace(qapp, tmp_path):
     busy_session._cancel_active(wait=True)
 
 
+def test_close_reaps_owned_chrome_profile(qapp, tmp_path):
+    del qapp
+    cleaned: list[Path] = []
+    session = make_session(
+        tmp_path,
+        FakeOperation({"fiveHourText": "5 小时\n1%", "weeklyText": None}),
+        orphan_cleaner=lambda profile: cleaned.append(profile),
+    )
+
+    session.close()
+
+    assert cleaned == [tmp_path / "qwen-chrome-profile"]
+
+
+def test_close_drains_pending_launch_before_profile_scan(qapp, tmp_path, monkeypatch):
+    del qapp
+    import aacc.qwen_chrome_session as module
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        module,
+        "cancel_pending_qwen_chrome_launches",
+        lambda _profile: events.append("pending-launch"),
+    )
+    session = make_session(
+        tmp_path,
+        FakeOperation({"fiveHourText": "5 小时\n1%", "weeklyText": None}),
+        orphan_cleaner=lambda _profile: events.append("profile-scan"),
+    )
+
+    session.close()
+
+    assert events == ["pending-launch", "profile-scan"]
+
+
 def test_session_handles_operation_creation_and_state_persistence_failures(
     qapp, tmp_path, monkeypatch
 ):

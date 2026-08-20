@@ -100,6 +100,7 @@ def test_app_build_sets_release_version_and_excludes_development_tools() -> None
     assert 'CFBundleVersion -string "$AACC_BUNDLE_VERSION"' in script
     assert 'CFBundleVersion -string "3"' not in script
     assert "--exclude-module mypy" in script
+    assert "--hidden-import AppKit" in script
     assert "--hidden-import Quartz" in script
     assert "--hidden-import PySide6.QtWebView" in script
     assert "--hidden-import aacc.kimi_web_session" in script

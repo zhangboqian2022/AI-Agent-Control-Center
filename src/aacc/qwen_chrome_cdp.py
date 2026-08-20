@@ -7,13 +7,13 @@ Chrome instance through the DevTools Protocol: one visible window for the
 initial login, and background refreshes inside a headed-but-hidden window.
 Aliyun's risk control fingerprints headless browsers and voids session
 tickets presented by them, so refreshes launch a real headed Chrome through
-LaunchServices' hidden-instance mode (``open -j -g -n``) and open the refresh
-page in a background window through ``Target.createTarget``, pushing it
-off-screen through CDP instead of passing ``--headless``. The hidden app
-instance is not registered as a foreground Dock item, and its lifecycle is
-tracked by the AACC-owned profile so a finished refresh leaves neither an
-icon nor a process behind. Cookies stay in an AACC-owned Chrome profile
-directory; AACC never sees the account password.
+LaunchServices' hidden-instance mode and open the refresh page in a
+background window through ``Target.createTarget``, pushing it off-screen
+through CDP instead of passing ``--headless``. The hidden app instance is
+not registered as a foreground Dock item, and its lifecycle is tracked by
+the AACC-owned profile so a finished refresh leaves neither an icon nor a
+process behind. Cookies stay in an AACC-owned Chrome profile directory;
+AACC never sees the account password.
 
 Chrome ships its own debugging endpoint files and accepts CDP commands the
 same way Edge does, so the transport primitives are reused from
@@ -35,7 +35,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -79,11 +79,10 @@ _QWEN_RECOPY_QUARANTINE_PREFIX = f".{QWEN_CHROME_PROFILE_NAME}.pre-dailycopy-"
 _QWEN_RECOPY_KEEP = 3
 _PAGE_PATH = re.compile(r"^/devtools/page/[A-Za-z0-9_-]+$")
 _MAX_SNIPPET_CHARS = 20_000
-_QWEN_HIDDEN_OPEN_EXECUTABLE = Path("/usr/bin/open")
-_QWEN_CHROME_BUNDLE_ID = "com.google.Chrome"
 _QWEN_HIDDEN_WINDOW_OFFSET = -32000
 _QWEN_HIDDEN_WINDOW_WIDTH = 1100
 _QWEN_HIDDEN_WINDOW_HEIGHT = 700
+_QWEN_HIDDEN_STARTUP_MARKER = "--no-startup-window"
 # A visible login whose Bailian page stays missing across this many 2 s
 # polls means the user closed the login window; shut Chrome down as a user
 # cancel instead of holding a windowless instance until the login deadline.
@@ -125,6 +124,253 @@ class QwenChromeLaunchSpec:
     executable: Path
     arguments: tuple[str, ...]
     profile: Path
+
+
+class _QwenLaunchServicesProcess:
+    """Process-shaped handle for an asynchronous NSWorkspace launch.
+
+    ``openApplicationAtURL:configuration:completionHandler:`` cannot be
+    cancelled at the API boundary. Keep the callback state alive after the
+    caller gives up, and make a late completion honour ``terminate``. This is
+    the important ownership edge: otherwise AACC can close successfully and
+    LaunchServices can start an untracked Chrome a moment later.
+    """
+
+    def __init__(self, *, completion_timeout_seconds: float = 30.0) -> None:
+        self._lock = Lock()
+        self._completed = Event()
+        self._running_application: Any | None = None
+        self._launch_error: Any | None = None
+        self._cancel_requested = False
+        self._completion_callback: Callable[[], None] | None = None
+        self._completion_timeout_seconds = max(0.0, completion_timeout_seconds)
+        self.pid = -1
+
+    def complete(self, running_application: Any, launch_error: Any) -> None:
+        """Record the LaunchServices result and terminate it if cancelled."""
+
+        with self._lock:
+            if self._completed.is_set():
+                return
+            self._running_application = running_application
+            self._launch_error = launch_error
+            if running_application is not None:
+                with suppress(Exception):
+                    self.pid = int(running_application.processIdentifier())
+            cancel_requested = self._cancel_requested
+            completion_callback = self._completion_callback
+            self._completed.set()
+
+        if cancel_requested and running_application is not None:
+            with suppress(Exception):
+                running_application.terminate()
+        if completion_callback is not None:
+            with suppress(Exception):
+                completion_callback()
+
+    def set_completion_callback(self, callback: Callable[[], None]) -> None:
+        """Register cleanup for the pending-launch registry.
+
+        The completion can be synchronous in tests or on a fast machine, so
+        invoke the callback immediately when the result already arrived.
+        """
+
+        with self._lock:
+            self._completion_callback = callback
+            completed = self._completed.is_set()
+        if completed:
+            with suppress(Exception):
+                callback()
+
+    def cancel_pending(self) -> None:
+        """Cancel the request and terminate a result that already arrived."""
+
+        with self._lock:
+            self._cancel_requested = True
+            running_application = self._running_application
+        if running_application is not None:
+            with suppress(Exception):
+                running_application.terminate()
+
+    def wait_for_completion(self, timeout: float | None = None) -> None:
+        """Wait only for LaunchServices to invoke its completion callback."""
+
+        if timeout is None:
+            timeout = self._completion_timeout_seconds
+        if not self._completed.wait(timeout=max(0.0, timeout)):
+            raise TimeoutError("Qwen Chrome LaunchServices completion is still pending")
+
+    def is_completion_pending(self) -> bool:
+        return not self._completed.is_set()
+
+    def poll(self) -> int | None:
+        if not self._completed.is_set():
+            return None
+        with self._lock:
+            running_application = self._running_application
+        if running_application is None:
+            return 1
+        try:
+            return 0 if bool(running_application.isTerminated()) else None
+        except Exception:
+            # Keep the handle alive when LaunchServices temporarily cannot
+            # answer; the profile finder remains the authoritative ownership
+            # boundary for cleanup.
+            return None
+
+    def wait(self, timeout: float | None = None) -> int:
+        # A wait is used by shutdown after the operation has been cancelled;
+        # propagate that cancellation to a still-pending LaunchServices call
+        # before waiting for its callback.
+        if self.is_completion_pending():
+            self.cancel_pending()
+            self.wait_for_completion(timeout)
+        if self.poll() == 1:
+            return 1
+
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("Qwen Chrome LaunchServices process is still running")
+            time.sleep(0.05)
+        return 0
+
+    def terminate(self) -> None:
+        self.cancel_pending()
+
+
+_pending_qwen_launches: dict[Path, set[_QwenLaunchServicesProcess]] = {}
+_pending_qwen_launches_lock = Lock()
+
+
+def _register_pending_qwen_launch(profile: Path, process: _QwenLaunchServicesProcess) -> None:
+    if not process.is_completion_pending():
+        return
+    with _pending_qwen_launches_lock:
+        _pending_qwen_launches.setdefault(profile, set()).add(process)
+
+
+def _unregister_pending_qwen_launch(profile: Path, process: _QwenLaunchServicesProcess) -> None:
+    with _pending_qwen_launches_lock:
+        launches = _pending_qwen_launches.get(profile)
+        if launches is None:
+            return
+        launches.discard(process)
+        if not launches:
+            _pending_qwen_launches.pop(profile, None)
+
+
+def cancel_pending_qwen_chrome_launches(profile: Path, *, timeout: float = 30.0) -> None:
+    """Cancel and drain pending LaunchServices requests for one owned profile."""
+
+    with _pending_qwen_launches_lock:
+        launches = list(_pending_qwen_launches.get(profile, ()))
+    for process in launches:
+        process.cancel_pending()
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    for process in launches:
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            process.wait_for_completion(remaining)
+        except TimeoutError:
+            _logger.warning("Qwen Chrome LaunchServices cancellation timed out")
+
+
+def _chrome_application_bundle(executable: Path) -> Path:
+    """Return the enclosing ``.app`` bundle for an installed Chrome binary."""
+
+    for candidate in (executable, *executable.parents):
+        if candidate.name.endswith(".app"):
+            return candidate
+    raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
+
+
+def _launch_hidden_qwen_chrome_with_workspace(
+    command: Sequence[str],
+    *,
+    workspace: Any,
+    url_type: Any,
+    array_type: Any,
+    configuration_type: Any,
+    launch_timeout_seconds: float = 30.0,
+) -> _QwenLaunchServicesProcess:
+    """Launch Chrome with OpenConfiguration flags that suppress Dock recents.
+
+    This small seam keeps the OS boundary unit-testable without starting a
+    browser. The modern ``NSWorkspaceOpenConfiguration`` API carries the
+    ``addsToRecentItems`` property explicitly; the deprecated LaunchServices
+    option path still allowed Chrome app entries to reach Dock's
+    ``recent-apps`` list on this macOS build.
+    """
+
+    if not command:
+        raise OSError("Qwen Chrome launch command is empty")
+    bundle = _chrome_application_bundle(Path(command[0]))
+    arguments = array_type.arrayWithArray_(list(command[1:]))
+    configuration = configuration_type.configuration()
+    configuration.setAddsToRecentItems_(False)
+    configuration.setActivates_(False)
+    configuration.setCreatesNewApplicationInstance_(True)
+    configuration.setHides_(True)
+    configuration.setArguments_(arguments)
+    process = _QwenLaunchServicesProcess(
+        completion_timeout_seconds=launch_timeout_seconds,
+    )
+
+    def completion(running_application: Any, launch_error: Any) -> None:
+        process.complete(running_application, launch_error)
+
+    try:
+        workspace.openApplicationAtURL_configuration_completionHandler_(
+            url_type.fileURLWithPath_(str(bundle)), configuration, completion
+        )
+    except Exception:
+        # No completion callback can arrive after a synchronous API failure;
+        # leave the process in a completed failure state for deterministic
+        # cleanup and re-raise the original boundary error.
+        process.complete(None, "LaunchServices call failed")
+        raise
+    return process
+
+
+def _start_hidden_qwen_chrome(command: list[str]) -> _QwenLaunchServicesProcess:
+    """Start a real headed, hidden Chrome instance without Dock recents."""
+
+    from AppKit import (  # type: ignore  # import-untyped with pyobjc
+        NSWorkspace,
+        NSWorkspaceOpenConfiguration,
+    )
+    from Foundation import NSURL, NSArray  # type: ignore  # import-untyped with pyobjc
+
+    profile_argument = next(
+        (argument for argument in command if argument.startswith("--user-data-dir=")),
+        None,
+    )
+    if profile_argument is None:
+        raise OSError("Qwen Chrome launch command has no owned profile")
+    profile = Path(profile_argument.split("=", 1)[1])
+    process = _launch_hidden_qwen_chrome_with_workspace(
+        command,
+        workspace=NSWorkspace.sharedWorkspace(),
+        url_type=NSURL,
+        array_type=NSArray,
+        configuration_type=NSWorkspaceOpenConfiguration,
+    )
+    process_holder = [process]
+    process.set_completion_callback(
+        lambda: _unregister_pending_qwen_launch(profile, process_holder[0])
+    )
+    _register_pending_qwen_launch(profile, process)
+    return process
+
+
+def _start_qwen_process(command: list[str]) -> _ProcessLike:
+    """Use LaunchServices only for the macOS hidden Qwen path."""
+
+    if sys.platform == "darwin" and _QWEN_HIDDEN_STARTUP_MARKER in command:
+        return _start_hidden_qwen_chrome(command)
+    return _start_process(command)
 
 
 def qwen_chrome_profile_path(config_dir: Path) -> Path:
@@ -321,13 +567,12 @@ def build_qwen_chrome_launch(
     """Build the launch specification for one owned Chrome run.
 
     Hidden refreshes need a real headed browser (Aliyun's risk control voids
-    tickets presented by headless fingerprints). The hidden path uses
-    ``open -j -g -n`` so the isolated Chrome profile is registered as a
-    hidden LaunchServices instance rather than a foreground Dock item. The
-    quota page is opened later in a background window through CDP, so the
-    launch URL is deliberately absent from the arguments. Hidden mode is
-    macOS-only and fails closed elsewhere instead of falling back to
-    headless.
+    tickets presented by headless fingerprints). The hidden path is handed to
+    ``NSWorkspaceOpenConfiguration`` with a new, hidden, non-activating
+    instance and ``addsToRecentItems=False``. The quota page is opened later
+    in a background window through CDP, so the launch URL is deliberately
+    absent from the arguments. Hidden mode is macOS-only and fails closed
+    elsewhere instead of falling back to headless.
     """
 
     _validate_workspace_url(workspace_url)
@@ -348,15 +593,9 @@ def build_qwen_chrome_launch(
     if resolved_platform != "darwin":
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
     return QwenChromeLaunchSpec(
-        executable=_QWEN_HIDDEN_OPEN_EXECUTABLE,
+        executable=executable,
         profile=profile,
         arguments=(
-            "-j",
-            "-g",
-            "-n",
-            "-b",
-            _QWEN_CHROME_BUNDLE_ID,
-            "--args",
             f"--user-data-dir={profile}",
             "--remote-debugging-address=127.0.0.1",
             "--remote-debugging-port=0",
@@ -375,7 +614,7 @@ def build_qwen_chrome_launch(
             # Target.createTarget in a background window, so the instance
             # never activates, never steals focus, and exits cleanly through
             # Browser.close.
-            "--no-startup-window",
+            _QWEN_HIDDEN_STARTUP_MARKER,
         ),
     )
 
@@ -707,13 +946,13 @@ def terminate_qwen_chrome_profile_processes(
 
 
 class _DetachedQwenChromeHandle:
-    """Track Chrome after ``open`` hands the launch to LaunchServices.
+    """Track Chrome after the launcher hands the launch to LaunchServices.
 
-    ``open`` exits after submitting the request, so its successful exit is
-    not Chrome's liveness signal. The AACC-owned profile is the authoritative
-    hand-off signal: CDP startup proves the browser is ready, and profile
-    process enumeration makes shutdown deterministic without touching the
-    user's normal Chrome profile.
+    A launcher may return before the Chrome process exists, so its successful
+    exit is not Chrome's liveness signal. The AACC-owned profile is the
+    authoritative hand-off signal: CDP startup proves the browser is ready,
+    and profile process enumeration makes shutdown deterministic without
+    touching the user's normal Chrome profile.
     """
 
     def __init__(
@@ -724,17 +963,26 @@ class _DetachedQwenChromeHandle:
         process_finder: Callable[[Path], Iterable[Any]],
         sleep: Callable[[float], None],
         monotonic: Callable[[], float],
+        launcher_handoff: bool = True,
     ) -> None:
-        self.pid = opener.pid
         self._opener = opener
         self._profile = profile
         self._process_finder = process_finder
         self._sleep = sleep
         self._monotonic = monotonic
+        self._launcher_handoff = launcher_handoff
+
+    @property
+    def pid(self) -> int:
+        return self._opener.pid
+
+    @pid.setter
+    def pid(self, value: int) -> None:
+        self._opener.pid = value
 
     def poll(self) -> int | None:
         code = self._opener.poll()
-        if code is None or code == 0:
+        if code is None or (code == 0 and self._launcher_handoff):
             return None
         return code
 
@@ -745,11 +993,15 @@ class _DetachedQwenChromeHandle:
             if code is not None and code != 0:
                 return code
             if not list(self._process_finder(self._profile)):
-                # Reap the short-lived opener when possible. It is not the
-                # Chrome process, but retaining the wait keeps subprocess
-                # lifecycle behavior deterministic in tests and production.
+                # A LaunchServices callback can still be pending here. Mark
+                # it cancelled before waiting so a late callback terminates
+                # the newly returned NSRunningApplication instead of leaving
+                # an untracked Chrome behind after AACC closes.
+                cancel_pending = getattr(self._opener, "cancel_pending", None)
+                if callable(cancel_pending):
+                    cancel_pending()
                 try:
-                    return self._opener.wait(timeout=0)
+                    return self._opener.wait(timeout=timeout)
                 except Exception:
                     return 0
             if deadline is not None and self._monotonic() >= deadline:
@@ -771,7 +1023,7 @@ class ManagedQwenChromeOperation:
         executable: Path | None = None,
         platform_name: str | None = None,
         protector: Callable[[Path], None] = _protect_profile,
-        process_factory: Callable[[list[str]], _ProcessLike] = _start_process,
+        process_factory: Callable[[list[str]], _ProcessLike] = _start_qwen_process,
         target_loader: Callable[[str], object] = _load_targets,
         socket_factory: Callable[[str], object] = _open_qwen_page_socket,
         process_tree_terminator: Callable[[_ProcessLike], None] = _terminate_process_tree,
@@ -871,6 +1123,7 @@ class ManagedQwenChromeOperation:
                 process_finder=self._chrome_process_finder,
                 sleep=self._sleep,
                 monotonic=self._monotonic,
+                launcher_handoff=False,
             )
 
         browser: CdpConnection | None = None

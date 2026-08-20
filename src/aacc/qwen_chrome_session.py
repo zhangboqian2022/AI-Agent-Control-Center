@@ -19,6 +19,7 @@ from aacc.qwen_chrome_cdp import (
     QwenChromeLoginCancelledError,
     QwenChromeQuotaError,
     QwenChromeUnauthorizedError,
+    cancel_pending_qwen_chrome_launches,
     clear_owned_qwen_chrome_profile,
     qwen_chrome_profile_path,
     recopy_qwen_daily_chrome_session,
@@ -168,6 +169,21 @@ class QwenChromeSession(QObject):
             return
         self._closed = True
         self._cancel_active(wait=True)
+        # LaunchServices completion is asynchronous and cannot be cancelled
+        # by AppKit. Drain this session's pending request before the final
+        # profile scan so a late callback cannot create a new orphan Chrome
+        # after AACC has already closed.
+        try:
+            cancel_pending_qwen_chrome_launches(self.profile)
+        except Exception:
+            _logger.warning("Qwen Chrome pending-launch cleanup failed", exc_info=True)
+        # A page evaluation can outlive the bounded worker join during app
+        # shutdown. Reap only this session's exact profile synchronously so
+        # the Qt process cannot exit while a hidden Chrome keeps running.
+        try:
+            self._orphan_cleaner(self.profile)
+        except Exception:
+            _logger.warning("Qwen Chrome close cleanup failed", exc_info=True)
 
     def retranslate_ui(self) -> None:
         """Chrome owns the visible login UI; no Qt widget needs translation."""

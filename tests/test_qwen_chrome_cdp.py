@@ -16,6 +16,7 @@ from aacc.qwen_chrome_cdp import (
     QwenChromeUnauthorizedError,
     _DetachedQwenChromeHandle,
     _find_qwen_chrome_processes_for_profile,
+    _launch_hidden_qwen_chrome_with_workspace,
     build_qwen_chrome_launch,
     clear_owned_qwen_chrome_profile,
     daily_chrome_session_source,
@@ -72,17 +73,16 @@ def test_find_chrome_executable_no_candidates_on_windows() -> None:
 
 def test_hidden_launch_spec_uses_hidden_launchservices_instance(tmp_path: Path) -> None:
     # Aliyun's baxia risk control voids session tickets shown by headless
-    # browsers, so the hidden refresh must launch a real headed Chrome. On
-    # macOS `open -j` makes the separate profile instance hidden to Dock;
-    # direct execution registers it as a foreground application and creates
-    # the residual Chrome icons this path is meant to prevent.
+    # browsers, so the hidden refresh must launch a real headed Chrome. The
+    # macOS process boundary uses NSWorkspace below; the spec itself remains
+    # a normal Chrome argv list so the LaunchServices call can pass the exact
+    # isolated profile and stealth flags without invoking `/usr/bin/open`.
     spec = build_qwen_chrome_launch(
         Path("chrome"), tmp_path, WORKSPACE_URL, visible=False, platform_name="darwin"
     )
 
-    assert spec.executable == Path("/usr/bin/open")
-    assert spec.arguments[:6] == ("-j", "-g", "-n", "-b", "com.google.Chrome", "--args")
-    chrome_flags = spec.arguments[6:]
+    assert spec.executable == Path("chrome")
+    chrome_flags = spec.arguments
     assert "--headless=new" not in spec.arguments
     assert "--disable-gpu" not in spec.arguments
     assert "--headless=new" not in chrome_flags
@@ -98,6 +98,163 @@ def test_hidden_launch_spec_uses_hidden_launchservices_instance(tmp_path: Path) 
     # The quota page is opened through CDP Target.createTarget, not a launch
     # URL, so the hidden instance never activates at startup.
     assert WORKSPACE_URL not in chrome_flags
+
+
+def test_hidden_launchservices_options_do_not_add_chrome_to_recents() -> None:
+    launched: dict[str, object] = {}
+
+    class FakeURL:
+        @staticmethod
+        def fileURLWithPath_(path: str) -> tuple[str, str]:
+            return ("url", path)
+
+    class FakeArray:
+        @staticmethod
+        def arrayWithArray_(values: list[str]) -> tuple[str, list[str]]:
+            return ("array", values)
+
+    class FakeConfiguration:
+        def __init__(self) -> None:
+            self.values: dict[str, object] = {}
+
+        def setAddsToRecentItems_(self, value: bool) -> None:
+            self.values["addsToRecentItems"] = value
+
+        def setActivates_(self, value: bool) -> None:
+            self.values["activates"] = value
+
+        def setCreatesNewApplicationInstance_(self, value: bool) -> None:
+            self.values["createsNewApplicationInstance"] = value
+
+        def setHides_(self, value: bool) -> None:
+            self.values["hides"] = value
+
+        def setArguments_(self, value: object) -> None:
+            self.values["arguments"] = value
+
+    class FakeConfigurationType:
+        configuration_instance = FakeConfiguration()
+
+        @classmethod
+        def configuration(cls) -> FakeConfiguration:
+            return cls.configuration_instance
+
+    class FakeRunningApplication:
+        def processIdentifier(self) -> int:
+            return 4321
+
+        def isTerminated(self) -> bool:
+            return False
+
+        def terminate(self) -> bool:
+            return True
+
+    class FakeWorkspace:
+        def openApplicationAtURL_configuration_completionHandler_(
+            self, url: object, configuration: FakeConfiguration, completion: object
+        ) -> None:
+            launched.update(url=url, configuration=configuration)
+            completion(FakeRunningApplication(), None)  # type: ignore[operator]
+
+    process = _launch_hidden_qwen_chrome_with_workspace(
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "--user-data-dir=/tmp/aacc-qwen-profile",
+            "--no-startup-window",
+        ],
+        workspace=FakeWorkspace(),
+        url_type=FakeURL,
+        array_type=FakeArray,
+        configuration_type=FakeConfigurationType,
+    )
+
+    assert process.pid == 4321
+    assert launched["url"] == ("url", "/Applications/Google Chrome.app")
+    assert FakeConfigurationType.configuration_instance.values == {
+        "addsToRecentItems": False,
+        "activates": False,
+        "createsNewApplicationInstance": True,
+        "hides": True,
+        "arguments": (
+            "array",
+            ["--user-data-dir=/tmp/aacc-qwen-profile", "--no-startup-window"],
+        ),
+    }
+
+
+def test_hidden_launchservices_late_completion_after_cancel_is_terminated() -> None:
+    completion_holder: dict[str, object] = {}
+
+    class FakeURL:
+        @staticmethod
+        def fileURLWithPath_(path: str) -> tuple[str, str]:
+            return ("url", path)
+
+    class FakeArray:
+        @staticmethod
+        def arrayWithArray_(values: list[str]) -> tuple[str, list[str]]:
+            return ("array", values)
+
+    class FakeConfiguration:
+        @classmethod
+        def configuration(cls) -> "FakeConfiguration":
+            return cls()
+
+        def setAddsToRecentItems_(self, _value: bool) -> None:
+            pass
+
+        def setActivates_(self, _value: bool) -> None:
+            pass
+
+        def setCreatesNewApplicationInstance_(self, _value: bool) -> None:
+            pass
+
+        def setHides_(self, _value: bool) -> None:
+            pass
+
+        def setArguments_(self, _value: object) -> None:
+            pass
+
+    class FakeRunningApplication:
+        def __init__(self) -> None:
+            self.terminated = False
+
+        def processIdentifier(self) -> int:
+            return 9876
+
+        def isTerminated(self) -> bool:
+            return self.terminated
+
+        def terminate(self) -> bool:
+            self.terminated = True
+            return True
+
+    class DelayedWorkspace:
+        def openApplicationAtURL_configuration_completionHandler_(
+            self, _url: object, _configuration: object, completion: object
+        ) -> None:
+            completion_holder["completion"] = completion
+
+    process = _launch_hidden_qwen_chrome_with_workspace(
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "--user-data-dir=/tmp/aacc-qwen-profile",
+            "--no-startup-window",
+        ],
+        workspace=DelayedWorkspace(),
+        url_type=FakeURL,
+        array_type=FakeArray,
+        configuration_type=FakeConfiguration,
+    )
+
+    assert process.is_completion_pending()
+    process.cancel_pending()
+    application = FakeRunningApplication()
+    completion_holder["completion"](application, None)  # type: ignore[operator]
+
+    assert application.terminated
+    assert process.pid == 9876
+    assert process.poll() == 0
 
 
 @pytest.mark.parametrize("platform_name", ["win32", "linux"])
@@ -413,6 +570,19 @@ def test_detached_handle_surfaces_open_failure(tmp_path: Path) -> None:
 
     assert handle.poll() == 3
     assert handle.wait(timeout=5.0) == 3
+
+
+def test_detached_handle_surfaces_real_launchservices_exit(tmp_path: Path) -> None:
+    handle = _DetachedQwenChromeHandle(
+        ImmediateExitOpener(0),
+        profile=tmp_path,
+        process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 0.0,
+        launcher_handoff=False,
+    )
+
+    assert handle.poll() == 0
 
 
 def _make_chrome_profile(tmp_path: Path) -> Path:
@@ -1116,15 +1286,7 @@ def test_hidden_refresh_opens_quota_page_in_background_window(
     # The hidden path uses LaunchServices' hidden-instance mode and starts
     # windowless; the page is opened in a background window through CDP so
     # the instance never activates or leaves a Dock tile behind.
-    assert launched[0][:6] == [
-        "/usr/bin/open",
-        "-j",
-        "-g",
-        "-n",
-        "-b",
-        "com.google.Chrome",
-    ]
-    assert "--args" in launched[0]
+    assert launched[0][0] == "chrome"
     assert "--no-startup-window" in launched[0]
     create_target = [params for method, params in cdp_commands if method == "Target.createTarget"]
     assert create_target == [{"url": WORKSPACE_URL, "newWindow": True, "background": True}]

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aacc-control-center"
-version = "1.4.5rc4"
+version = "1.4.5rc5"
 description = "AI Agent Control Center: menu-bar/tray panel to monitor local agent CLI tasks (macOS & Windows)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,6 +15,7 @@ dependencies = [
   "psutil>=7,<8",
   "pydantic>=2.11,<3",
   "pyside6>=6.9,<7",
+  "pyobjc-framework-cocoa>=11,<13; sys_platform == 'darwin'",
   "pyobjc-framework-quartz>=11,<13; sys_platform == 'darwin'",
   "pywin32==312; sys_platform == 'win32'",
   "pyyaml>=6,<7",

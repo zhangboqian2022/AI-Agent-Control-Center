@@ -1,5 +1,14 @@
 # 更新日志
 
+## 1.4.5-rc.5 — 2026-08-20
+
+[中英文发布说明](docs/release-notes-1.4.5rc5.md)
+
+- [修复] macOS 上 Qwen 隐藏 Chrome 刷新改用现代 `NSWorkspaceOpenConfiguration`，设置 `addsToRecentItems=False`、`activates=False`、`createsNewApplicationInstance=True` 和 `hides=True`。修复 rc4 虽然隐藏实例、但 `open -j -g -n` 仍会在每次刷新后把 Chrome 写入 Dock `recent-apps`，导致手动关闭后又重新出现多个图标的问题。
+- [修复] Qwen 关闭流程在慢速页面评估超过有界 worker 等待时，会同步回收 AACC 专属 Chrome profile，避免关闭 AACC 后遗留隐藏浏览器。
+- [修复] macOS LaunchServices 尚未返回时，关闭流程现在会按专属 profile 取消并排空待处理请求；即使回调延迟到达，也会终止刚创建的 `NSRunningApplication`，不会在 AACC 退出后重新留下孤儿 Chrome。
+- [构建] 增加 LaunchServices 边界所需的 Cocoa/AppKit 运行时依赖及 PyInstaller 隐式导入。
+
 ## 1.4.5-rc.4 — 2026-08-20
 
 [中英文发布说明](docs/release-notes-1.4.5rc4.md)

@@ -2,6 +2,15 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.5-rc.5 — 2026-08-20
+
+[Bilingual release notes](docs/release-notes-1.4.5rc5.md)
+
+- [Fix] Qwen's macOS hidden Chrome refresh now uses modern `NSWorkspaceOpenConfiguration` with `addsToRecentItems=False`, `activates=False`, `createsNewApplicationInstance=True`, and `hides=True`. This closes the rc.4 gap where `open -j -g -n` hid the instance but still recreated Chrome entries in Dock's `recent-apps` list after each refresh.
+- [Fix] Qwen shutdown now synchronously reaps the AACC-owned Chrome profile when a slow page evaluation outlives the bounded worker join, so closing AACC cannot strand a hidden browser.
+- [Fix] A pending macOS LaunchServices completion is now cancelled and drained per owned profile; a late callback terminates the just-created `NSRunningApplication` instead of recreating an orphan Chrome after AACC exits.
+- [Packaging] Add the Cocoa/AppKit runtime dependency and PyInstaller hidden import required by the LaunchServices boundary.
+
 ## 1.4.5-rc.4 — 2026-08-20
 
 [Bilingual release notes](docs/release-notes-1.4.5rc4.md)

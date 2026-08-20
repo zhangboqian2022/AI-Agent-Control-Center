@@ -34,6 +34,7 @@ uv run pyinstaller \
   --osx-bundle-identifier com.aacc.controlcenter \
   --paths "$project_root/src" \
   --additional-hooks-dir "$project_root/hooks" \
+  --hidden-import AppKit \
   --hidden-import Quartz \
   --hidden-import aacc.adapters \
   --hidden-import PySide6.QtWebView \
