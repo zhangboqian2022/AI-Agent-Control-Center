@@ -123,6 +123,53 @@ def test_dom_extract_script_retry_uses_independent_attempt_counter() -> None:
     assert "DOM_TIMEOUT" in script
 
 
+def test_dom_extract_script_matches_decimal_percentages_and_current_labels() -> None:
+    script = opencode_dom_extract_script(WORKSPACE_URL, 7)
+    # opencode.ai now renders decimal usage ("82.6%") and renamed the
+    # sections ("5-hour Usage" / "Weekly Usage" / "Monthly Usage"); the
+    # bare "NN%"-only regex of the previous extractor never matched again.
+    assert "(?:\\.\\d+)?" in script
+    assert "5" in script and "hour" in script
+    assert "weekly" in script
+    assert "monthly" in script
+    assert "usagePercent: percent" in script
+
+
+def test_auth_redirect_outside_login_dialog_emits_unauthorized(qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    login_states: list[bool] = []
+    errors: list[str] = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    session.view._url = QUrl("https://auth.opencode.ai/authorize?client_id=app")
+    session._on_loading_changed(FakeLoadingInfo())
+    assert login_states == [False]
+    assert errors == ["unauthorized"]
+    assert session.view.scripts == []
+
+
+def test_auth_redirect_during_login_dialog_is_not_unauthorized(
+    monkeypatch, qapp, tmp_path: Path
+) -> None:
+    del qapp
+    import aacc.opencode_web_session as module
+
+    monkeypatch.setattr(module.QWidget, "createWindowContainer", lambda view, parent: QWidget())
+    session = make_session(tmp_path)
+    login_states: list[bool] = []
+    errors: list[str] = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+    session.view._url = QUrl("https://auth.opencode.ai/authorize?client_id=app")
+    session._on_loading_changed(FakeLoadingInfo())
+    assert login_states == []
+    assert errors == []
+    session.close()
+
+
 def test_session_refresh_runs_fetch_script(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)
@@ -266,6 +313,23 @@ def test_loading_changed_ignores_foreign_origin(qapp, tmp_path: Path) -> None:
     session = make_session(tmp_path)
     session.view._url = QUrl("https://example.com/other")
     session._on_loading_changed(FakeLoadingInfo())
+    assert session.view.scripts == []
+
+
+def test_refreshing_on_other_foreign_origin_does_not_emit_unauthorized(
+    qapp, tmp_path: Path
+) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    login_states: list[bool] = []
+    errors: list[str] = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    session.view._url = QUrl("https://example.com/other")
+    session._on_loading_changed(FakeLoadingInfo())
+    assert login_states == []
+    assert errors == []
     assert session.view.scripts == []
 
 

@@ -619,29 +619,33 @@ def build_qwen_chrome_launch(
     )
 
 
-def select_qwen_target(targets: object, *, expected_port: int) -> str:
-    """Select the Bailian page while rejecting externally supplied CDP URLs.
+def select_qwen_page_sockets(targets: object, *, expected_port: int) -> list[str]:
+    """Return every debuggable Bailian page target's CDP socket URL.
 
-    A CDP list without a Bailian page raises ``QwenChromeUnauthorizedError``
-    for historical reasons; callers must not treat that as session expiry —
-    only the page's rendered login banner (the payload marker) proves a
-    logout. The refresh loop remaps a missing page to a retryable
-    ``REFRESH_FAILED``; the visible login path instead remaps a sustained
-    absence to a user cancel (the user closed the login window).
+    The console can hold several Bailian tabs at once (a stale logged-out
+    view left behind by a login redirect next to the live one), and the
+    ``/json`` listing does not guarantee which comes first. Callers must
+    evaluate every returned socket instead of betting on the first entry.
+
+    Raises ``QwenChromeUnauthorizedError`` when no Bailian page exists
+    (for historical reasons; callers must not treat that as session expiry
+    — only the page's rendered login banner proves a logout), and
+    ``QwenChromeQuotaError`` for malformed or unsafe listings.
     """
 
     if not isinstance(targets, list):
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
+    sockets: list[str] = []
     for candidate in targets:
         if not isinstance(candidate, dict):
             continue
         page_url = candidate.get("url")
-        websocket_url = candidate.get("webSocketDebuggerUrl")
         parsed_page = urlparse(page_url) if isinstance(page_url, str) else None
         if candidate.get("type") != "page" or parsed_page is None:
             continue
         if parsed_page.scheme != "https" or parsed_page.netloc != "bailian.console.aliyun.com":
             continue
+        websocket_url = candidate.get("webSocketDebuggerUrl")
         if not isinstance(websocket_url, str):
             raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
         parsed_socket = urlparse(websocket_url)
@@ -657,9 +661,23 @@ def select_qwen_target(targets: object, *, expected_port: int) -> str:
             and not parsed_socket.query
             and not parsed_socket.fragment
         ):
-            return websocket_url
+            sockets.append(websocket_url)
+            continue
         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
-    raise QwenChromeUnauthorizedError
+    if not sockets:
+        raise QwenChromeUnauthorizedError
+    return sockets
+
+
+def select_qwen_target(targets: object, *, expected_port: int) -> str:
+    """Return the first valid Bailian page socket.
+
+    Prefer ``select_qwen_page_sockets`` and evaluate every candidate: the
+    first listing entry can be a stale logged-out view while the live tab
+    renders the quota.
+    """
+
+    return select_qwen_page_sockets(targets, expected_port=expected_port)[0]
 
 
 def qwen_dom_extract_expression() -> str:
@@ -1162,7 +1180,7 @@ class ManagedQwenChromeOperation:
                         target_requested = True
                     targets = self._target_loader(endpoint.http_origin)
                     try:
-                        page_url = select_qwen_target(targets, expected_port=port)
+                        page_sockets = select_qwen_page_sockets(targets, expected_port=port)
                     except QwenChromeUnauthorizedError:
                         if visible:
                             # In the visible login the user abandons the flow
@@ -1194,14 +1212,7 @@ class ManagedQwenChromeOperation:
                         # would overwrite a healthy profile.
                         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from None
                     missing_target_polls = 0
-                    page = CdpConnection(self._socket_factory(page_url))  # type: ignore[arg-type]
-                    try:
-                        if not visible:
-                            install_qwen_hidden_page_stealth(page)
-                        payload = page.evaluate(self._expression_factory())
-                    finally:
-                        page.close()
-                    return parse_qwen_chrome_payload(payload)
+                    return self._evaluate_page_candidates(page_sockets, visible=visible)
                 except QwenChromeUnauthorizedError:
                     if visible:
                         if self._monotonic() >= login_deadline:
@@ -1233,6 +1244,43 @@ class ManagedQwenChromeOperation:
                 browser.close()
             if not self._shutdown_process(process):
                 _logger.error("Qwen Chrome process did not stop cleanly")
+
+    def _evaluate_page_candidates(
+        self, page_sockets: Sequence[str], *, visible: bool
+    ) -> dict[str, object]:
+        """Evaluate every Bailian target until one renders the quota.
+
+        Returns the parsed payload dict, or raises the error the poll loop
+        should apply: ``QwenChromeUnauthorizedError`` when at least one
+        candidate rendered the login banner (deadline and recopy semantics
+        stay with the caller), and ``QwenChromeQuotaError`` when every
+        candidate failed for other reasons.
+        """
+
+        saw_unauthorized = False
+        for page_url in page_sockets:
+            page: CdpConnection | None = None
+            payload: object = None
+            try:
+                page = CdpConnection(self._socket_factory(page_url))  # type: ignore[arg-type]
+                if not visible:
+                    install_qwen_hidden_page_stealth(page)
+                payload = page.evaluate(self._expression_factory())
+            except Exception:
+                continue
+            finally:
+                if page is not None:
+                    with suppress(Exception):
+                        page.close()
+            try:
+                return parse_qwen_chrome_payload(payload)
+            except QwenChromeUnauthorizedError:
+                saw_unauthorized = True
+            except QwenChromeQuotaError:
+                continue
+        if saw_unauthorized:
+            raise QwenChromeUnauthorizedError
+        raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
 
     def _wait_for_endpoint(
         self,

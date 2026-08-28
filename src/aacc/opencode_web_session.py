@@ -50,10 +50,13 @@ def workspace_id_from_url(url: str) -> str | None:
 def opencode_dom_extract_script(url: str, generation: int) -> str:
     """Return a script that extracts rendered usage data from the workspace DOM.
 
-    The workspace /go page renders the Go-plan usage bars (rolling / weekly /
-    monthly) with percentages and reset countdowns directly in the DOM. This
-    script reads the rendered text, extracts the three percentage values and
-    reset countdowns, and bridges them up via document.title.
+    The workspace /go page renders the Go-plan usage sections ("5-hour
+    Usage" / "Weekly Usage" / "Monthly Usage"), each followed by a
+    percentage line (integers or one decimal, e.g. ``82.6%``) and a
+    "Resets in ..." countdown. This script anchors on the section labels,
+    reads the first percentage and countdown after each, and bridges them
+    up via document.title. The earlier bare ``NN%`` positional matcher
+    stopped matching when the site began rendering decimal percentages.
     """
 
     if workspace_id_from_url(url) is None:
@@ -77,29 +80,47 @@ def opencode_dom_extract_script(url: str, generation: int) -> str:
     if (m) s += parseInt(m[1]) * 60;
     return s > 0 ? s : null;
   };
+  const PERCENT = /^\d{1,3}(?:\.\d+)?\s*%$/;
+  const RESETS = /resets?\s+in\s+(.+)/i;
+  const SECTIONS = [
+    { pattern: /^5[-\s]?hour\s+usage$/i, key: 'rollingUsage' },
+    { pattern: /^weekly\s+usage$/i, key: 'weeklyUsage' },
+    { pattern: /^monthly\s+usage$/i, key: 'monthlyUsage' }
+  ];
   const extract = () => {
     const text = document.body ? document.body.innerText : '';
     if (!text) { setTimeout(extract, 1000); return; }
     const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-    const pcts = [];
-    const resets = [];
-    for (const line of lines) {
-      const pct = line.match(/^(\d{1,3})\s*%$/);
-      if (pct) pcts.push(parseInt(pct[1]));
-      if (/重置|reset|Resets/i.test(line)) resets.push(parseResetSeconds(line));
+    const usage = {};
+    for (const section of SECTIONS) {
+      const idx = lines.findIndex((line) => section.pattern.test(line));
+      if (idx < 0) { usage[section.key] = null; continue; }
+      let percent = null;
+      let resetInSec = null;
+      for (let i = idx + 1; i < lines.length; i++) {
+        if (SECTIONS.some((s) => s.pattern.test(lines[i]))) break;
+        if (percent === null && PERCENT.test(lines[i])) percent = parseFloat(lines[i]);
+        else if (resetInSec === null && RESETS.test(lines[i])) {
+          const seconds = parseResetSeconds(lines[i]);
+          if (seconds !== null) resetInSec = seconds;
+        }
+        if (percent !== null && resetInSec !== null) break;
+      }
+      usage[section.key] = percent === null
+        ? null
+        : { usagePercent: percent, resetInSec: resetInSec === null ? 0 : resetInSec };
     }
-    if (pcts.length < 3) {
+    if (usage.rollingUsage === null && usage.weeklyUsage === null && usage.monthlyUsage === null) {
       if (++attempts < 50) setTimeout(extract, 1000);
       else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
       return;
     }
-    const take = (arr, i) => i < arr.length ? arr[i] : null;
     emit({
       kind: 'quota', generation, raw: {
         subscription: {
-          rollingUsage: {usagePercent: pcts[0], resetInSec: take(resets, 0) || 0},
-          weeklyUsage: {usagePercent: pcts[1], resetInSec: take(resets, 1) || 0},
-          monthlyUsage: {usagePercent: pcts[2], resetInSec: take(resets, 2) || 0}
+          rollingUsage: usage.rollingUsage,
+          weeklyUsage: usage.weeklyUsage,
+          monthlyUsage: usage.monthlyUsage
         }
       }
     });
@@ -310,8 +331,29 @@ class OpenCodeWebSession(QObject):
             self._run_logout_cleanup()
             return
         if not self._is_opencode_origin():
+            self._finish_unauthorized_on_auth_redirect()
             return
         self._run_fetch_script()
+
+    def _finish_unauthorized_on_auth_redirect(self) -> None:
+        """Report logged out when a background refresh lands on the auth host.
+
+        An expired session bounces the workspace to auth.opencode.ai, where
+        the extract script can never run; the refresh would otherwise burn
+        its whole watchdog and surface a generic timeout. During a visible
+        login the redirect is the OAuth flow itself, so it must not count.
+        """
+
+        if self._login_dialog_open or not self._refreshing:
+            return
+        if QUrl(self.view.url()).host() != "auth.opencode.ai":
+            return
+        self._refreshing = False
+        self._refresh_watchdog.stop()
+        self._active_refresh_generation = None
+        _logger.warning("OpenCode session redirected to the auth host; treating as logged out")
+        self.login_state_changed.emit(False)
+        self.error_occurred.emit("unauthorized")
 
     def _on_title_changed(self, title: str) -> None:
         if not title.startswith(BRIDGE_PREFIX):

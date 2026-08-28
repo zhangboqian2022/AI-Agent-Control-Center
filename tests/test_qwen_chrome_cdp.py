@@ -27,6 +27,7 @@ from aacc.qwen_chrome_cdp import (
     qwen_dom_extract_expression,
     qwen_hidden_page_stealth_script,
     recopy_qwen_daily_chrome_session,
+    select_qwen_page_sockets,
     select_qwen_target,
     terminate_qwen_chrome_profile_processes,
     validate_owned_qwen_chrome_profile,
@@ -665,6 +666,189 @@ def test_managed_operation_returns_sanitized_quota_and_closes_process(
         "personalWeeklyText": "7天限额\n65%已用",
         "teamTotalText": None,
     }
+
+
+def test_login_evaluates_every_bailian_target_until_quota(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    process = FakeProcess()
+    quota_payload = {
+        "kind": "quota",
+        "raw": {
+            "personalFiveHourText": "5小时限额\n12.5%已用",
+            "personalWeeklyText": "7天限额\n65%已用",
+            "teamTotalText": None,
+        },
+    }
+    stale_payload = {"kind": "unauthorized"}
+    payloads: dict[str, object] = {
+        "ws://127.0.0.1:9222/devtools/page/A": stale_payload,
+        "ws://127.0.0.1:9222/devtools/page/B": quota_payload,
+    }
+    evaluated: list[str] = []
+
+    class FakeCdp:
+        def __init__(self, socket: object) -> None:
+            self._socket = socket
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            evaluated.append(str(self._socket))
+            return payloads[str(self._socket)]
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    # The console can hold a stale logged-out Bailian tab next to the live
+    # one (a redirect left it behind during login), and /json ordering does
+    # not promise which comes first. A visible login that only evaluates
+    # the first target starves on the stale tab until the deadline even
+    # though the live tab renders the quota.
+    ticks = iter([0.0] * 60 + [2000.0])
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, process),
+        target_loader=lambda _origin: [
+            {
+                "type": "page",
+                "url": WORKSPACE_URL,
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/A",
+            },
+            {
+                "type": "page",
+                "url": WORKSPACE_URL,
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/B",
+            },
+        ],
+        socket_factory=lambda url: url,
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(ticks, 2000.0),
+    )
+
+    result = operation.run(visible=True, cancel=Event())
+
+    assert "ws://127.0.0.1:9222/devtools/page/A" in evaluated
+    assert "ws://127.0.0.1:9222/devtools/page/B" in evaluated
+    assert result == {
+        "personalFiveHourText": "5小时限额\n12.5%已用",
+        "personalWeeklyText": "7天限额\n65%已用",
+        "teamTotalText": None,
+    }
+
+
+def test_hidden_refresh_all_candidates_failing_raises_refresh_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    process = FakeProcess()
+
+    class FakeCdp:
+        def __init__(self, socket: object) -> None:
+            self._socket = socket
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            if str(self._socket).endswith("/A"):
+                raise RuntimeError("page transport died")
+            return {"kind": "error", "generation": 1, "message": "DOM_TIMEOUT"}
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    ticks = iter([0.0] * 80 + [200.0])
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, process),
+        target_loader=lambda _origin: [
+            {
+                "type": "page",
+                "url": WORKSPACE_URL,
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/A",
+            },
+            {
+                "type": "page",
+                "url": WORKSPACE_URL,
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/B",
+            },
+        ],
+        socket_factory=lambda url: url,
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(ticks, 200.0),
+    )
+
+    with pytest.raises(QwenChromeQuotaError):
+        operation.run(visible=False, cancel=Event())
+
+
+def test_select_page_sockets_returns_every_valid_bailian_target() -> None:
+    sockets = select_qwen_page_sockets(
+        [
+            {
+                "type": "page",
+                "url": "https://www.google.com/",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/foreign",
+            },
+            {
+                "type": "page",
+                "url": WORKSPACE_URL,
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/A",
+            },
+            {
+                "type": "page",
+                "url": WORKSPACE_URL + "-extra",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/B",
+            },
+        ],
+        expected_port=9222,
+    )
+
+    assert sockets == [
+        "ws://127.0.0.1:9222/devtools/page/A",
+        "ws://127.0.0.1:9222/devtools/page/B",
+    ]
+
+
+def test_select_page_sockets_without_bailian_page_is_unauthorized() -> None:
+    with pytest.raises(QwenChromeUnauthorizedError):
+        select_qwen_page_sockets(
+            [
+                {
+                    "type": "page",
+                    "url": "https://www.google.com/",
+                    "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/x",
+                }
+            ],
+            expected_port=9222,
+        )
 
 
 def test_hidden_refresh_missing_page_never_triggers_recopy(
