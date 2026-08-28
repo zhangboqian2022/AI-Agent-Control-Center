@@ -1200,6 +1200,24 @@ def test_open_kimi_login_dialog_retranslates_live(qapp, monkeypatch, tmp_path):
     assert widgets["repair"].text == "修复 Microsoft Edge WebView2"
 
 
+def test_macos_startup_diagnostic_keeps_login_container_visible(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    session.open_login()
+
+    session._show_login_diagnostic()
+
+    # A slow system proxy can keep the native web view loading past the
+    # startup watchdog; hiding the container makes the whole login page
+    # vanish even though the load is still in flight. Only Windows hides
+    # the container (WebView2 repair flow); macOS keeps it visible.
+    assert web_session.sys.platform == "darwin"
+    assert widgets["container"].visible is True
+    assert widgets["status"].visible is True
+    assert widgets["repair"].visible is True
+
+
 def test_repeated_language_switch_and_session_close_do_not_duplicate_callbacks(
     qapp, monkeypatch, tmp_path
 ):
@@ -1418,7 +1436,10 @@ def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(qapp, mon
 
     assert session._webview_startup_watchdog.isActive() is False
     assert session._active_refresh_generation is None
-    assert widgets["container"].visible is False
+    # macOS keeps the native web view visible (a slow proxy may simply still
+    # be loading); only the Windows WebView2 repair flow hides the container.
+    assert web_session.sys.platform == "darwin"
+    assert widgets["container"].visible is True
     assert widgets["status"].visible is True
     assert "WebView2" in widgets["status"].text
     assert "网络" in widgets["status"].text
@@ -1459,7 +1480,7 @@ def test_login_dialog_loading_failure_shows_sanitized_webview_diagnostic(
         session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Failed))
 
     assert session._webview_startup_watchdog.isActive() is False
-    assert widgets["container"].visible is False
+    assert widgets["container"].visible is True
     assert widgets["status"].visible is True
     assert "WebView2" in widgets["status"].text
     assert "网络" in widgets["status"].text

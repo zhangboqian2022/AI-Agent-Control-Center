@@ -378,6 +378,33 @@ def test_bridge_unknown_kind_emits_refresh_failed(qapp, tmp_path: Path) -> None:
     assert errors == ["refresh_failed"]
 
 
+def test_dom_timeout_bridge_logs_page_snippet(caplog, qapp, tmp_path: Path) -> None:
+    del qapp
+    session = make_session(tmp_path)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    with caplog.at_level(logging.WARNING, logger="aacc.opencode_web_session"):
+        session._on_title_changed(
+            _bridge_title(
+                {
+                    "kind": "error",
+                    "generation": generation,
+                    "message": "DOM_TIMEOUT",
+                    "snippet": "Continue with GitHub | Continue with Google",
+                }
+            )
+        )
+    assert "DOM_TIMEOUT" in caplog.text
+    assert "Continue with GitHub" in caplog.text
+
+
+def test_dom_extract_script_carries_page_snippet_on_timeout() -> None:
+    script = opencode_dom_extract_script(WORKSPACE_URL, 7)
+    assert "snippet" in script
+    assert "DOM_TIMEOUT" in script
+
+
 def test_fetch_script_missing_workspace_id_emits_refresh_failed(qapp, tmp_path: Path) -> None:
     del qapp
     session = make_session(tmp_path)

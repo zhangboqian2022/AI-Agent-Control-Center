@@ -112,7 +112,10 @@ def opencode_dom_extract_script(url: str, generation: int) -> str:
     }
     if (usage.rollingUsage === null && usage.weeklyUsage === null && usage.monthlyUsage === null) {
       if (++attempts < 50) setTimeout(extract, 1000);
-      else emit({kind: 'error', generation, message: 'DOM_TIMEOUT'});
+      else emit({
+        kind: 'error', generation, message: 'DOM_TIMEOUT',
+        snippet: lines.slice(0, 10).join(' | ').slice(0, 240)
+      });
       return;
     }
     emit({
@@ -411,7 +414,11 @@ class OpenCodeWebSession(QObject):
             self.login_state_changed.emit(False)
             self.error_occurred.emit("unauthorized")
             return
-        _logger.warning("OpenCode bridge error message=%s", str(payload.get("message"))[:200])
+        _logger.warning(
+            "OpenCode bridge error message=%s snippet=%s",
+            str(payload.get("message"))[:200],
+            str(payload.get("snippet", ""))[:240],
+        )
         self._finish_refresh_with_error("refresh_failed")
 
     def _close_login_dialog(self) -> None:

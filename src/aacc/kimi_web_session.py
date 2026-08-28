@@ -231,6 +231,7 @@ class KimiWebSession(QObject):
         self._active_login_attempt = attempt
         self._login_dialog_open = True
         self._background_navigation_pending = False
+        _logger.info("Kimi login dialog opening attempt=%d", attempt)
         self._login_dialog.show()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
@@ -472,6 +473,7 @@ class KimiWebSession(QObject):
             return
         status = info.status()
         if status is QWebViewLoadingInfo.LoadStatus.Failed:
+            _logger.warning("Kimi webview page load failed host=%s", self.view.url().host())
             self._clear_webview_startup_watchdog()
             logout_generation = self._logout_cleanup_generation
             if logout_generation is not None:
@@ -490,6 +492,7 @@ class KimiWebSession(QObject):
         self._show_login_container()
         if status is not QWebViewLoadingInfo.LoadStatus.Succeeded:
             return
+        _logger.info("Kimi webview page load succeeded host=%s", self.view.url().host())
         if not self._is_kimi_origin():
             return
         if self._logout_after_load:
@@ -609,7 +612,12 @@ class KimiWebSession(QObject):
         if not self._login_dialog_open:
             return
         self._login_status_key = "kimi.web_diagnostic"
-        if self._login_container is not None:
+        if sys.platform == "win32" and self._login_container is not None:
+            # WebView2's unrecoverable failure renders an unusable white box,
+            # so Windows hides the container behind the repair flow. The
+            # native macOS web view can simply still be loading behind a
+            # slow system proxy; hiding it would make the whole login page
+            # vanish while the load is still in flight.
             self._login_container.setVisible(False)
         if self._login_status_label is not None:
             self._login_status_label.setText(self.language_manager.text(self._login_status_key))
