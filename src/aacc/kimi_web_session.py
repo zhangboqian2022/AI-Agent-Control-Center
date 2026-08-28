@@ -25,6 +25,13 @@ BRIDGE_PREFIX = "AACC_KIMI_QUOTA:"
 BRIDGE_PAYLOAD_KEY = "__AACC_KIMI_QUOTA_PAYLOAD__"
 LOGOUT_CLEANUP_TIMEOUT_MS = 10_000
 WEBVIEW_STARTUP_TIMEOUT_MS = 15_000
+# Kimi's SPA rotates a short-lived access_token in localStorage; a background
+# fetch on a stale page (or one racing the page bootstrap) reports unauthorized
+# even though the session cookies are still valid. Recover in-process before
+# declaring a logout: re-fetch after the page settles, then reload once, then
+# re-fetch again — only a still-unauthorized fresh page fails closed.
+UNAUTHORIZED_RECOVERY_DELAY_MS = 4_000
+UNAUTHORIZED_RECOVERY_ATTEMPTS = 3
 WEBVIEW2_HELP_URL = "https://developer.microsoft.com/en-us/microsoft-edge/webview2/"
 _webview_initialized = False
 _logger = logging.getLogger("aacc.kimi_web_session")
@@ -161,6 +168,10 @@ class KimiWebSession(QObject):
         self._refresh_watchdog = QTimer(self)
         self._refresh_watchdog.setSingleShot(True)
         self._refresh_watchdog.timeout.connect(self._refresh_watchdog_timeout)
+        self._unauthorized_recovery_attempts = 0
+        self._recovery_timer = QTimer(self)
+        self._recovery_timer.setSingleShot(True)
+        self._recovery_timer.timeout.connect(self._recovery_timeout)
         self._webview_startup_watchdog = QTimer(self)
         self._webview_startup_watchdog.setSingleShot(True)
         self._webview_startup_watchdog_attempt: int | None = None
@@ -191,6 +202,8 @@ class KimiWebSession(QObject):
     def open_login(self, parent: QWidget | None = None) -> None:
         if self._closed:
             return
+        self._recovery_timer.stop()
+        self._unauthorized_recovery_attempts = 0
         if self._login_dialog is None:
             dialog = QDialog(parent)
             dialog.resize(960, 720)
@@ -295,6 +308,41 @@ class KimiWebSession(QObject):
         self._refreshing = False
         self._refresh_after_load = False
         self._refresh_watchdog.stop()
+        self._recovery_timer.stop()
+        self._unauthorized_recovery_attempts = 0
+
+    def _recover_unauthorized(self) -> bool:
+        """Retry an unauthorized background refresh before failing closed."""
+
+        if self._closed or self._login_dialog_open:
+            return False
+        self._unauthorized_recovery_attempts += 1
+        if self._unauthorized_recovery_attempts > UNAUTHORIZED_RECOVERY_ATTEMPTS:
+            return False
+        self._begin_refresh()
+        if self._unauthorized_recovery_attempts % 2 == 1:
+            _logger.info(
+                "Kimi web quota unauthorized; retrying after page settles attempt=%d",
+                self._unauthorized_recovery_attempts,
+            )
+            self._recovery_timer.start(UNAUTHORIZED_RECOVERY_DELAY_MS)
+            return True
+        _logger.info(
+            "Kimi web quota unauthorized; reloading membership page attempt=%d",
+            self._unauthorized_recovery_attempts,
+        )
+        self._refresh_after_load = True
+        self._background_navigation_pending = True
+        self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
+        return True
+
+    def _recovery_timeout(self) -> None:
+        if self._closed:
+            return
+        generation = self._active_refresh_generation
+        if generation is None:
+            return
+        self._run_fetch(generation)
 
     def _run_fetch(self, generation: int) -> None:
         if self._closed:
@@ -515,6 +563,8 @@ class KimiWebSession(QObject):
             if not self._persist_reuse_state(True):
                 return
             self._reuse_blocked = False
+            self._recovery_timer.stop()
+            self._unauthorized_recovery_attempts = 0
             _logger.info("Kimi web quota refresh completed")
             self.login_state_changed.emit(True)
             self.quota_received.emit(stats, subscription)
@@ -523,7 +573,11 @@ class KimiWebSession(QObject):
                 self._login_dialog.accept()
             return
         if kind == "unauthorized":
-            _logger.warning("Kimi web quota refresh unauthorized")
+            message = payload.get("message", "")
+            _logger.warning("Kimi web quota refresh unauthorized message=%s", message)
+            if self._recover_unauthorized():
+                return
+            _logger.warning("Kimi web quota refresh failed closed as logged out")
             self._reuse_blocked = True
             self._persist_reuse_state(False)
             self.login_state_changed.emit(False)

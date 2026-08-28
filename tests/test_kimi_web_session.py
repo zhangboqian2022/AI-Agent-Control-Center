@@ -381,6 +381,20 @@ def test_web_session_refresh_bridge_logout_and_close(qapp, monkeypatch, tmp_path
     generation = session._active_refresh_generation
     assert generation is not None
     session._handle_bridge({"kind": "unauthorized", "generation": generation})
+    assert session.login_state.may_reuse() is True
+    session._recovery_timeout()
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    session._recovery_timeout()
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
     assert session.login_state.may_reuse() is False
     session._login_dialog = ExistingFakeDialog()  # type: ignore[assignment]
     session.open_login()
@@ -752,6 +766,7 @@ def test_unauthorized_fails_closed_when_reuse_gate_write_fails(caplog, qapp, mon
         raise FileProtectionError("C:\\private\\state.json token=gate-secret")
 
     monkeypatch.setattr(session.login_state, "set_may_reuse", fail_gate_write)
+    session._unauthorized_recovery_attempts = web_session.UNAUTHORIZED_RECOVERY_ATTEMPTS
     with caplog.at_level(logging.ERROR, logger="aacc.kimi_web_session"):
         session._handle_bridge({"kind": "unauthorized", "generation": generation})
 
@@ -765,6 +780,112 @@ def test_unauthorized_fails_closed_when_reuse_gate_write_fails(caplog, qapp, mon
     assert len(session.view.scripts) == script_count
     assert "state.json" not in caplog.text
     assert "gate-secret" not in caplog.text
+
+
+def test_background_unauthorized_retries_after_page_settles(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    login_states = []
+    quotas = []
+    errors = []
+    session.login_state_changed.connect(login_states.append)
+    session.quota_received.connect(lambda stats, subscription: quotas.append((stats, subscription)))
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    generation = session._active_refresh_generation
+    assert generation is not None
+    script_count = len(session.view.scripts)
+
+    session._handle_bridge(
+        {
+            "kind": "unauthorized",
+            "generation": generation,
+            "message": "UNAUTHORIZED:401",
+        }
+    )
+
+    assert session.login_state.may_reuse() is True
+    assert login_states == []
+    assert errors == []
+    recovering = session._active_refresh_generation
+    assert recovering is not None and recovering > generation
+    assert len(session.view.scripts) == script_count
+
+    session._recovery_timeout()
+
+    assert len(session.view.scripts) == script_count + 1
+    payload = {"kind": "quota", "generation": recovering, "stats": {}, "subscription": {}}
+    session.view.script_result = json.dumps(payload)
+    session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{recovering}:ready:result")
+    assert quotas == [({}, {})]
+    assert login_states == [True]
+    assert session.login_state.may_reuse() is True
+
+
+def test_background_unauthorized_reloads_then_fails_closed(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    login_states = []
+    errors = []
+    session.login_state_changed.connect(login_states.append)
+    session.error_occurred.connect(errors.append)
+    session.refresh()
+    assert session._active_refresh_generation is not None
+
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    session._recovery_timeout()
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
+    assert session._refresh_after_load is True
+    assert session._background_navigation_pending is True
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    session._recovery_timeout()
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+
+    assert session.login_state.may_reuse() is False
+    assert login_states == [False]
+    assert errors == []
+    assert session._active_refresh_generation is None
+
+
+def test_unauthorized_recovery_is_cancelled_by_close(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    session.refresh()
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    assert session._active_refresh_generation is not None
+    session.close()
+    script_count = len(session.view.scripts)
+
+    session._recovery_timeout()
+
+    assert len(session.view.scripts) == script_count
+
+
+def test_recovery_timeout_without_active_generation_is_noop(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+
+    session._recovery_timeout()
+
+    assert session.view.scripts == []
 
 
 def test_logout_gate_write_failure_still_invalidates_and_cleans_up(
