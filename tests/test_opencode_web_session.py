@@ -123,16 +123,18 @@ def test_dom_extract_script_retry_uses_independent_attempt_counter() -> None:
     assert "DOM_TIMEOUT" in script
 
 
-def test_dom_extract_script_matches_decimal_percentages_and_current_labels() -> None:
+def test_dom_extract_script_matches_decimal_percentages_locale_free() -> None:
     script = opencode_dom_extract_script(WORKSPACE_URL, 7)
-    # opencode.ai now renders decimal usage ("82.6%") and renamed the
-    # sections ("5-hour Usage" / "Weekly Usage" / "Monthly Usage"); the
-    # bare "NN%"-only regex of the previous extractor never matched again.
+    # opencode.ai now renders decimal usage ("82.6%") and localizes the
+    # section labels per app locale (the zh-CN web view shows 使用量, the
+    # en app shows "Usage"), so the extractor must not anchor on label
+    # text: it takes the first three bare percentage lines in DOM order,
+    # with optional decimals, and pairs each with a reset line.
     assert "(?:\\.\\d+)?" in script
-    assert "5" in script and "hour" in script
-    assert "weekly" in script
-    assert "monthly" in script
-    assert "usagePercent: percent" in script
+    assert "usagePercent: pcts[0]" in script
+    assert "usagePercent: pcts[1]" in script
+    assert "usagePercent: pcts[2]" in script
+    assert "/重置|resets?\\s+in/i" in script
 
 
 def test_auth_redirect_outside_login_dialog_emits_unauthorized(qapp, tmp_path: Path) -> None:

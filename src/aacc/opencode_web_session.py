@@ -50,13 +50,14 @@ def workspace_id_from_url(url: str) -> str | None:
 def opencode_dom_extract_script(url: str, generation: int) -> str:
     """Return a script that extracts rendered usage data from the workspace DOM.
 
-    The workspace /go page renders the Go-plan usage sections ("5-hour
-    Usage" / "Weekly Usage" / "Monthly Usage"), each followed by a
-    percentage line (integers or one decimal, e.g. ``82.6%``) and a
-    "Resets in ..." countdown. This script anchors on the section labels,
-    reads the first percentage and countdown after each, and bridges them
-    up via document.title. The earlier bare ``NN%`` positional matcher
-    stopped matching when the site began rendering decimal percentages.
+    The workspace /go page renders three Go-plan usage blocks in DOM order
+    (5-hour / weekly / monthly), each with a percentage line and a reset
+    countdown. Percentages may carry one decimal (``82.6%``) since the site
+    redesign of 2026-08-25, which the previous ``NN%``-only matcher never
+    accepted. Section labels are localized per app locale (zh-CN web views
+    render 使用量), so extraction stays locale-free: it takes the first
+    three bare percentage lines in DOM order and pairs each with the first
+    following reset line. Results bridge up via document.title.
     """
 
     if workspace_id_from_url(url) is None:
@@ -81,36 +82,26 @@ def opencode_dom_extract_script(url: str, generation: int) -> str:
     return s > 0 ? s : null;
   };
   const PERCENT = /^\d{1,3}(?:\.\d+)?\s*%$/;
-  const RESETS = /resets?\s+in\s+(.+)/i;
-  const SECTIONS = [
-    { pattern: /^5[-\s]?hour\s+usage$/i, key: 'rollingUsage' },
-    { pattern: /^weekly\s+usage$/i, key: 'weeklyUsage' },
-    { pattern: /^monthly\s+usage$/i, key: 'monthlyUsage' }
-  ];
+  const RESETS = /重置|resets?\s+in/i;
   const extract = () => {
     const text = document.body ? document.body.innerText : '';
     if (!text) { setTimeout(extract, 1000); return; }
     const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-    const usage = {};
-    for (const section of SECTIONS) {
-      const idx = lines.findIndex((line) => section.pattern.test(line));
-      if (idx < 0) { usage[section.key] = null; continue; }
-      let percent = null;
-      let resetInSec = null;
-      for (let i = idx + 1; i < lines.length; i++) {
-        if (SECTIONS.some((s) => s.pattern.test(lines[i]))) break;
-        if (percent === null && PERCENT.test(lines[i])) percent = parseFloat(lines[i]);
-        else if (resetInSec === null && RESETS.test(lines[i])) {
-          const seconds = parseResetSeconds(lines[i]);
-          if (seconds !== null) resetInSec = seconds;
+    const pcts = [];
+    const resets = [];
+    for (let i = 0; i < lines.length && pcts.length < 3; i++) {
+      if (PERCENT.test(lines[i])) {
+        pcts.push(parseFloat(lines[i]));
+        for (let j = i + 1; j < lines.length && j <= i + 3; j++) {
+          if (RESETS.test(lines[j])) {
+            const seconds = parseResetSeconds(lines[j]);
+            if (seconds !== null) resets.push(seconds);
+            break;
+          }
         }
-        if (percent !== null && resetInSec !== null) break;
       }
-      usage[section.key] = percent === null
-        ? null
-        : { usagePercent: percent, resetInSec: resetInSec === null ? 0 : resetInSec };
     }
-    if (usage.rollingUsage === null && usage.weeklyUsage === null && usage.monthlyUsage === null) {
+    if (pcts.length < 3) {
       if (++attempts < 50) setTimeout(extract, 1000);
       else emit({
         kind: 'error', generation, message: 'DOM_TIMEOUT',
@@ -118,12 +109,13 @@ def opencode_dom_extract_script(url: str, generation: int) -> str:
       });
       return;
     }
+    const take = (arr, i) => i < arr.length ? arr[i] : null;
     emit({
       kind: 'quota', generation, raw: {
         subscription: {
-          rollingUsage: usage.rollingUsage,
-          weeklyUsage: usage.weeklyUsage,
-          monthlyUsage: usage.monthlyUsage
+          rollingUsage: {usagePercent: pcts[0], resetInSec: take(resets, 0) || 0},
+          weeklyUsage: {usagePercent: pcts[1], resetInSec: take(resets, 1) || 0},
+          monthlyUsage: {usagePercent: pcts[2], resetInSec: take(resets, 2) || 0}
         }
       }
     });
