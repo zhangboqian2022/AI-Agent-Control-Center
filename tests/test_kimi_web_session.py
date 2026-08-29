@@ -1270,6 +1270,7 @@ def test_open_kimi_login_dialog_retranslates_live(qapp, monkeypatch, tmp_path):
 
 def test_macos_startup_diagnostic_keeps_login_container_visible(qapp, monkeypatch, tmp_path):
     del qapp
+    monkeypatch.setattr(web_session, "sys", SimpleNamespace(platform="darwin"), raising=False)
     session = make_session(monkeypatch, tmp_path)
     widgets = _install_login_dialog_fakes(monkeypatch)
     session.open_login()
@@ -1485,6 +1486,7 @@ def test_logout_navigation_completion_ignores_late_loading_events(qapp, monkeypa
 
 def test_macos_startup_watchdog_is_inert_while_page_keeps_loading(qapp, monkeypatch, tmp_path):
     del qapp
+    monkeypatch.setattr(web_session, "sys", SimpleNamespace(platform="darwin"), raising=False)
     session = make_session(monkeypatch, tmp_path)
     widgets = _install_login_dialog_fakes(monkeypatch)
     errors = []
@@ -1496,7 +1498,6 @@ def test_macos_startup_watchdog_is_inert_while_page_keeps_loading(qapp, monkeypa
     # kimi.com keeps a connection open and never fires load-finished, so the
     # macOS startup watchdog must not kill the in-flight refresh generation
     # nor show the WebView2 repair flow; the refresh watchdog bounds the wait.
-    assert web_session.sys.platform == "darwin"
     assert errors == []
     assert session._active_refresh_generation is not None
     assert widgets["container"].visible is True
@@ -1553,6 +1554,7 @@ def test_login_dialog_loading_failure_shows_sanitized_webview_diagnostic(
     caplog, qapp, monkeypatch, tmp_path
 ):
     del qapp
+    monkeypatch.setattr(web_session, "sys", SimpleNamespace(platform="darwin"), raising=False)
     session = make_session(monkeypatch, tmp_path)
     widgets = _install_login_dialog_fakes(monkeypatch)
     errors = []

@@ -170,7 +170,10 @@ def test_hidden_launchservices_options_do_not_add_chrome_to_recents() -> None:
     )
 
     assert process.pid == 4321
-    assert launched["url"] == ("url", "/Applications/Google Chrome.app")
+    assert launched["url"] == (
+        "url",
+        str(Path("/Applications/Google Chrome.app")),
+    )
     assert FakeConfigurationType.configuration_instance.values == {
         "addsToRecentItems": False,
         "activates": False,
