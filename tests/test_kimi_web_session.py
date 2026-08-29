@@ -153,8 +153,58 @@ def test_membership_script_aborts_both_requests_after_fifteen_seconds():
 
     assert "AbortController" in script
     assert "15000" in script
-    catch_block = script.split("}).catch((error) => {", 1)[1]
+    catch_block = script.split("} catch (error) {", 1)[1]
     assert catch_block.index("controller.abort();") < catch_block.index("emit({")
+
+
+def test_membership_script_polls_for_bootstrap_token_before_fetching():
+    script = membership_fetch_script()
+
+    # kimi.com keeps a connection open and never fires the load-finished
+    # event any more, so the fetch script is injected while the SPA is
+    # still booting; it must wait for the bootstrap to write the token
+    # instead of reporting NO_TOKEN immediately.
+    assert "25000" in script
+    assert "TOKEN_WAIT" in script or "waited" in script
+
+
+def test_navigation_started_schedules_delayed_fetch(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.refresh()  # URL empty -> navigation path, fetch after load
+
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Started))
+
+    assert session._navigation_fetch_timer.isSingleShot() is True
+    assert session._navigation_fetch_timer.interval() == web_session.NAVIGATION_FETCH_DELAY_MS
+    script_count = len(session.view.scripts)
+    session._navigation_fetch_timeout()
+
+    assert len(session.view.scripts) == script_count + 1
+    assert "GetSubscriptionStats" in session.view.scripts[-1]
+    generation = session._active_refresh_generation
+    assert generation is not None
+
+    # A completed refresh must not let a later timer fire again.
+    payload = {"kind": "quota", "generation": generation, "stats": {}, "subscription": {}}
+    session.view.script_result = json.dumps(payload)
+    session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{generation}:ready:result")
+    assert session._active_refresh_generation is None
+    settled_script_count = len(session.view.scripts)
+    session._navigation_fetch_timeout()
+    assert len(session.view.scripts) == settled_script_count
+
+
+def test_begin_refresh_watchdog_bounds_slow_page_bootstrap(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    session.login_state.set_may_reuse(True)
+    session.view._url = QUrl(KIMI_MEMBERSHIP_URL)
+    session.refresh()
+
+    assert web_session.REFRESH_WATCHDOG_MS == 60_000
+    assert session._refresh_watchdog.interval() == web_session.REFRESH_WATCHDOG_MS
 
 
 def test_web_session_uses_native_system_webview_without_import_time_initialization():
@@ -1415,7 +1465,27 @@ def test_logout_navigation_completion_ignores_late_loading_events(qapp, monkeypa
     assert errors == []
 
 
-def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(qapp, monkeypatch, tmp_path):
+def test_macos_startup_watchdog_is_inert_while_page_keeps_loading(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    errors = []
+    session.error_occurred.connect(errors.append)
+    session.open_login()
+
+    session._webview_startup_watchdog_timeout()
+
+    # kimi.com keeps a connection open and never fires load-finished, so the
+    # macOS startup watchdog must not kill the in-flight refresh generation
+    # nor show the WebView2 repair flow; the refresh watchdog bounds the wait.
+    assert web_session.sys.platform == "darwin"
+    assert errors == []
+    assert session._active_refresh_generation is not None
+    assert widgets["container"].visible is True
+    assert widgets["repair"].visible is False
+
+
+def test_windows_startup_timeout_shows_repair_and_reopens_cleanly(qapp, monkeypatch, tmp_path):
     del qapp
     session = make_session(monkeypatch, tmp_path)
     widgets = _install_login_dialog_fakes(monkeypatch)
@@ -1428,6 +1498,7 @@ def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(qapp, mon
             return True
 
     monkeypatch.setattr(web_session, "QDesktopServices", FakeDesktopServices)
+    monkeypatch.setattr(web_session, "sys", SimpleNamespace(platform="win32"), raising=False)
     errors = []
     session.error_occurred.connect(errors.append)
     session.open_login()
@@ -1436,10 +1507,7 @@ def test_login_dialog_startup_timeout_shows_repair_and_reopens_cleanly(qapp, mon
 
     assert session._webview_startup_watchdog.isActive() is False
     assert session._active_refresh_generation is None
-    # macOS keeps the native web view visible (a slow proxy may simply still
-    # be loading); only the Windows WebView2 repair flow hides the container.
-    assert web_session.sys.platform == "darwin"
-    assert widgets["container"].visible is True
+    assert widgets["container"].visible is False
     assert widgets["status"].visible is True
     assert "WebView2" in widgets["status"].text
     assert "网络" in widgets["status"].text

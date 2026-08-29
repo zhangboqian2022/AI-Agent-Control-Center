@@ -25,6 +25,12 @@ BRIDGE_PREFIX = "AACC_KIMI_QUOTA:"
 BRIDGE_PAYLOAD_KEY = "__AACC_KIMI_QUOTA_PAYLOAD__"
 LOGOUT_CLEANUP_TIMEOUT_MS = 10_000
 WEBVIEW_STARTUP_TIMEOUT_MS = 15_000
+# kimi.com keeps a connection open and no longer reports load-finished, so
+# waiting for Succeeded stalls forever. The fetch is injected shortly after
+# navigation start and the script itself waits for the SPA bootstrap token;
+# the refresh watchdog must span injection delay + token wait + fetch.
+NAVIGATION_FETCH_DELAY_MS = 10_000
+REFRESH_WATCHDOG_MS = 60_000
 # Kimi's SPA rotates a short-lived access_token in localStorage; a background
 # fetch on a stale page (or one racing the page bootstrap) reports unauthorized
 # even though the session cookies are still valid. Recover in-process before
@@ -68,7 +74,13 @@ def initialize_native_webview(config_dir: Path) -> None:
 
 
 def membership_fetch_script(generation: int = 0) -> str:
-    """Return the same-origin metadata request used by Kimi's native web view."""
+    """Return the same-origin metadata request used by Kimi's native web view.
+
+    The script may be injected while the SPA is still booting (kimi.com
+    keeps a connection open and no longer reports load-finished, so the
+    fetch is scheduled shortly after navigation start). It therefore polls
+    for the bootstrap-written ``access_token`` before requesting anything.
+    """
 
     base = "/apiv2/kimi.gateway.membership.v2.MembershipService/"
     return f"""
@@ -76,13 +88,12 @@ def membership_fetch_script(generation: int = 0) -> str:
   const prefix = {json.dumps(BRIDGE_PREFIX)};
   const payloadKey = {json.dumps(BRIDGE_PAYLOAD_KEY)};
   const generation = {generation};
-  const controller = new AbortController();
-  const deadline = setTimeout(() => controller.abort(), 15000);
+  const TOKEN_WAIT_MS = 25000;
   const emit = (payload) => {{
     window[payloadKey] = JSON.stringify(payload);
     document.title = prefix + generation + ':ready:' + Date.now() + ':' + Math.random();
   }};
-  const request = async (method) => {{
+  const readToken = () => {{
     let accessToken = localStorage.getItem('access_token');
     if (accessToken) {{
       try {{
@@ -90,9 +101,17 @@ def membership_fetch_script(generation: int = 0) -> str:
         if (typeof parsed === 'string') accessToken = parsed;
       }} catch (_) {{}}
     }}
-    if (!accessToken) {{
-      throw new Error('UNAUTHORIZED:NO_TOKEN');
+    return accessToken;
+  }};
+  const waitForToken = async () => {{
+    let accessToken = readToken();
+    for (let waited = 0; !accessToken && waited < TOKEN_WAIT_MS; waited += 500) {{
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      accessToken = readToken();
     }}
+    return accessToken;
+  }};
+  const request = async (method, accessToken, controller) => {{
     const response = await fetch({json.dumps(base)} + method, {{
       method: 'POST',
       headers: {{
@@ -112,20 +131,32 @@ def membership_fetch_script(generation: int = 0) -> str:
     }}
     return await response.json();
   }};
-  Promise.all([
-    request('GetSubscriptionStats'),
-    request('GetSubscription')
-  ]).then(([stats, subscription]) => {{
-    emit({{kind: 'quota', generation, stats, subscription}});
-  }}).catch((error) => {{
-    controller.abort();
-    const message = String(error && error.message || error);
-    emit({{
-      kind: message.startsWith('UNAUTHORIZED:') ? 'unauthorized' : 'error',
-      generation,
-      message: message.slice(0, 120)
-    }});
-  }}).finally(() => clearTimeout(deadline));
+  (async () => {{
+    const accessToken = await waitForToken();
+    if (!accessToken) {{
+      emit({{kind: 'unauthorized', generation, message: 'UNAUTHORIZED:NO_TOKEN'}});
+      return;
+    }}
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 15000);
+    try {{
+      const [stats, subscription] = await Promise.all([
+        request('GetSubscriptionStats', accessToken, controller),
+        request('GetSubscription', accessToken, controller)
+      ]);
+      emit({{kind: 'quota', generation, stats, subscription}});
+    }} catch (error) {{
+      controller.abort();
+      const message = String(error && error.message || error);
+      emit({{
+        kind: message.startsWith('UNAUTHORIZED:') ? 'unauthorized' : 'error',
+        generation,
+        message: message.slice(0, 120)
+      }});
+    }} finally {{
+      clearTimeout(deadline);
+    }}
+  }})();
 }})();
 """
 
@@ -172,6 +203,9 @@ class KimiWebSession(QObject):
         self._recovery_timer = QTimer(self)
         self._recovery_timer.setSingleShot(True)
         self._recovery_timer.timeout.connect(self._recovery_timeout)
+        self._navigation_fetch_timer = QTimer(self)
+        self._navigation_fetch_timer.setSingleShot(True)
+        self._navigation_fetch_timer.timeout.connect(self._navigation_fetch_timeout)
         self._webview_startup_watchdog = QTimer(self)
         self._webview_startup_watchdog.setSingleShot(True)
         self._webview_startup_watchdog_attempt: int | None = None
@@ -294,12 +328,13 @@ class KimiWebSession(QObject):
     def _begin_refresh(self) -> int:
         self._cancel_logout_cleanup()
         self._ignore_expired_logout_loads = False
+        self._navigation_fetch_timer.stop()
         self._refresh_generation += 1
         generation = self._refresh_generation
         self._active_refresh_generation = generation
         self._refresh_watchdog_generation = generation
         self._refreshing = True
-        self._refresh_watchdog.start(25_000)
+        self._refresh_watchdog.start(REFRESH_WATCHDOG_MS)
         return generation
 
     def _invalidate_refresh(self) -> None:
@@ -311,6 +346,20 @@ class KimiWebSession(QObject):
         self._refresh_watchdog.stop()
         self._recovery_timer.stop()
         self._unauthorized_recovery_attempts = 0
+        self._navigation_fetch_timer.stop()
+
+    def _navigation_fetch_timeout(self) -> None:
+        """Fetch on a timer because kimi.com never reports load-finished."""
+
+        if self._closed or not self._refresh_after_load:
+            return
+        generation = self._active_refresh_generation
+        if generation is None:
+            return
+        # The scheduled fetch owns this refresh; a late Succeeded must not
+        # start a duplicate run on top of it.
+        self._refresh_after_load = False
+        self._run_fetch(generation)
 
     def _recover_unauthorized(self) -> bool:
         """Retry an unauthorized background refresh before failing closed."""
@@ -424,6 +473,12 @@ class KimiWebSession(QObject):
         self._webview_startup_watchdog_attempt = None
 
     def _webview_startup_watchdog_timeout(self, attempt: int | None = None) -> None:
+        if sys.platform != "win32":
+            # WebView2's repair flow is a Windows concern. On macOS the load
+            # may simply be progressing without a load-finished event ever
+            # arriving; killing the refresh generation here would discard a
+            # result that is still on its way.
+            return
         if attempt is None:
             attempt = self._webview_startup_watchdog_attempt
         if (
@@ -491,6 +546,8 @@ class KimiWebSession(QObject):
         self._clear_webview_startup_watchdog()
         self._show_login_container()
         if status is not QWebViewLoadingInfo.LoadStatus.Succeeded:
+            if status is QWebViewLoadingInfo.LoadStatus.Started and self._refresh_after_load:
+                self._navigation_fetch_timer.start(NAVIGATION_FETCH_DELAY_MS)
             return
         _logger.info("Kimi webview page load succeeded host=%s", self.view.url().host())
         if not self._is_kimi_origin():
