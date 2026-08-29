@@ -732,60 +732,33 @@ def test_stale_generation_logging_never_formats_remote_value(caplog, monkeypatch
     assert "Authorization" not in caplog.text
 
 
-def test_login_dialog_recovers_from_unauthorized_and_still_retries(qapp, monkeypatch, tmp_path):
+def test_login_dialog_polls_for_signin_after_unauthorized(qapp, monkeypatch, tmp_path):
     del qapp
     session = make_session(monkeypatch, tmp_path)
     dialog = ExistingFakeDialog()
     session._login_dialog = dialog  # type: ignore[assignment]
 
     session.open_login()
-    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    # The view already sits on the membership origin, so open_login arms the
+    # fetch timer directly (no new navigation is required).
+    session._navigation_fetch_timeout()
     first_generation = session._active_refresh_generation
     assert first_generation is not None
-    first_script_count = len(session.view.scripts)
-    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
-    assert len(session.view.scripts) == first_script_count
-
-    # An expired bootstrap token (401) used to fail closed immediately in
-    # the dialog, but kimi.com no longer fires load-finished so the old
-    # reload-retry never ran: the user just stared at a dead dialog. The
-    # dialog now gets the same bounded recovery as background refreshes.
-    session._handle_bridge({"kind": "unauthorized", "generation": first_generation})
-    assert session.login_state.may_reuse() is False
-    recovering = session._active_refresh_generation
-    assert recovering is not None and recovering > first_generation
-
-    session._recovery_timeout()  # attempt 1: refetch on the stale page
-    session._handle_bridge(
-        {"kind": "unauthorized", "generation": session._active_refresh_generation}
-    )
-    # attempt 2: reload the membership page so the SPA renews the token
-    assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
-    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
-    session._handle_bridge(
-        {"kind": "unauthorized", "generation": session._active_refresh_generation}
-    )
-    session._recovery_timeout()  # attempt 3: refetch after the reload settles
-    session._handle_bridge(
-        {"kind": "unauthorized", "generation": session._active_refresh_generation}
-    )
-    assert session._active_refresh_generation is None
-    assert session.login_state.may_reuse() is False
-
-    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
-
-    retry_generation = session._active_refresh_generation
-    assert retry_generation is not None
-    assert retry_generation > recovering
     assert "GetSubscriptionStats" in session.view.scripts[-1]
-    session._handle_bridge(
-        {
-            "kind": "quota",
-            "generation": retry_generation,
-            "stats": {},
-            "subscription": {},
-        }
-    )
+
+    # An expired token (401) must not fail closed while the user watches the
+    # dialog: keep the rendered page stable and poll for the sign-in.
+    session._handle_bridge({"kind": "unauthorized", "generation": first_generation})
+    poll_generation = session._active_refresh_generation
+    assert poll_generation is not None and poll_generation > first_generation
+    assert session.login_state.may_reuse() is False
+
+    # The user signs in on the rendered page; the next scheduled fetch picks
+    # the fresh token up and closes the dialog with the quota.
+    session._navigation_fetch_timeout()
+    quota = {"kind": "quota", "generation": poll_generation, "stats": {}, "subscription": {}}
+    session.view.script_result = json.dumps(quota)
+    session._on_title_changed(f"{web_session.BRIDGE_PREFIX}{poll_generation}:ready:result")
     assert session.login_state.may_reuse() is True
     assert dialog.accepted is True
 

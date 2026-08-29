@@ -274,6 +274,10 @@ class KimiWebSession(QObject):
         self._begin_refresh()
         self._refresh_after_load = True
         self._start_webview_startup_watchdog(attempt)
+        # Arm the fetch even when the view already sits on the membership
+        # origin: re-opening the dialog must pick up a login that happened
+        # on the rendered page without waiting for a new navigation.
+        self._navigation_fetch_timer.start(NAVIGATION_FETCH_DELAY_MS)
         self.view.setUrl(QUrl(KIMI_MEMBERSHIP_URL))
 
     def refresh(self) -> None:
@@ -352,10 +356,16 @@ class KimiWebSession(QObject):
     def _navigation_fetch_timeout(self) -> None:
         """Fetch on a timer because kimi.com never reports load-finished."""
 
-        if self._closed or not self._refresh_after_load:
+        if self._closed:
             return
         generation = self._active_refresh_generation
         if generation is None:
+            return
+        if (
+            not self._refresh_after_load
+            and not self._background_navigation_pending
+            and not self._login_dialog_open
+        ):
             return
         # The scheduled fetch owns this refresh; a late Succeeded must not
         # start a duplicate run on top of it.
@@ -643,6 +653,14 @@ class KimiWebSession(QObject):
         if kind == "unauthorized":
             message = payload.get("message", "")
             _logger.warning("Kimi web quota refresh unauthorized message=%s", message)
+            if self._login_dialog_open:
+                # The rendered page is the login surface: keep it stable and
+                # poll for the user to (re)authenticate instead of churning
+                # reloads or failing closed while they watch.
+                _logger.info("Kimi login dialog unauthorized; polling for sign-in")
+                self._begin_refresh()
+                self._navigation_fetch_timer.start(NAVIGATION_FETCH_DELAY_MS)
+                return
             if self._recover_unauthorized():
                 return
             _logger.warning("Kimi web quota refresh failed closed as logged out")
