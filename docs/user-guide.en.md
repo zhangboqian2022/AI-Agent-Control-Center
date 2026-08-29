@@ -26,11 +26,11 @@ Kimi shows `5H`, `WEEK`, and `MONTH`. On Windows, the first sign-in opens Micros
 
 ## macOS DMG
 
-The current RC installer is `AACC-1.4.5-rc.2.dmg`. Open it and drag `AACC.app` to Applications. The community build is ad-hoc signed and not notarized. Compare `shasum -a 256 AACC-1.4.5-rc.2.dmg` with its matching `.sha256` before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.
+The current installer is `AACC-1.4.5.dmg`. Open it and drag `AACC.app` to Applications. The community build is ad-hoc signed and not notarized. Compare `shasum -a 256 AACC-1.4.5.dmg` with its matching `.sha256` before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.
 
 ## Windows Setup
 
-The primary Windows 1.4.5-rc.2 installer is `AACC-1.4.5rc2-Setup.exe`; ordinary users do not need Python or `uv`. Verify `AACC-1.4.5rc2-Setup.exe.sha256`, then run Setup. It is a per-user installation without administrator elevation and defaults to `%LocalAppData%\Programs\AACC`. Setup creates a Start Menu shortcut, offers an unchecked desktop shortcut, and does not add a startup entry.
+The primary Windows 1.4.5 installer is `AACC-1.4.5-Setup.exe` (built on a Windows machine and attached to the v1.4.5 release; if it is not uploaded yet in the first days, use the v1.4.4-rc.1 Windows assets), ordinary users do not need Python or `uv`. Verify `AACC-1.4.5-Setup.exe.sha256`, then run Setup. It is a per-user installation without administrator elevation and defaults to `%LocalAppData%\Programs\AACC`. Setup creates a Start Menu shortcut, offers an unchecked desktop shortcut, and does not add a startup entry.
 
 Running the same Setup upgrades the existing per-user copy after a bounded graceful shutdown. Uninstall removes the installed program, Start Menu entry, optional desktop shortcut, and uninstall registration. Upgrade and uninstall preserve AACC-owned configuration, task history, database, credentials, and the protected reuse decision under `%APPDATA%\AACC`.
 

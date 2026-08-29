@@ -2,7 +2,7 @@
 
 > A local-first desktop control center for the AI coding agents you choose to monitor, supporting macOS 13+ and Windows 10+.
 
-[中文文档](README.zh-CN.md) · [Download AACC 1.4.5-rc.2](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.5-rc.2) · [Release notes](docs/release-notes-1.4.5rc2.md) · [Product design](docs/product-design.md)
+[中文文档](README.zh-CN.md) · [Download AACC 1.4.5](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.5) · [Release notes](docs/release-notes-1.4.5.md) · [Product design](docs/product-design.md)
 
 AACC is a floating cross-platform panel for monitoring local AI coding-agent tasks. It discovers Codex tasks from local metadata, lets you choose exactly which tasks to monitor, and presents each selected task with a large, glanceable state light. It also supports configurable CLI agents, a localhost API, a command-line client, and conservative platform-specific focus/input automation.
 
@@ -37,12 +37,12 @@ _AACC 1.4.4-rc.1 illustrative UI with synthetic demo data; no real account or ta
 
 ### Recommended: download the RC DMG
 
-Download [AACC-1.4.5-rc.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.5-rc.2/AACC-1.4.5-rc.2.dmg), open it, and drag `AACC.app` to Applications.
+Download [AACC-1.4.5.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.5/AACC-1.4.5.dmg), open it, and drag `AACC.app` to Applications.
 
 This community build is not Developer ID-signed and is not notarized by Apple. Depending on the build keychain, the app may carry an ad-hoc signature or the local-development self-signature; neither establishes Apple distribution trust. First download the matching `.dmg.sha256` asset and compare it with:
 
 ```bash
-shasum -a 256 AACC-1.4.5-rc.2.dmg
+shasum -a 256 AACC-1.4.5.dmg
 ```
 
 Only after the checksum matches, use **System Settings → Privacy & Security → Open Anyway** if macOS blocks the first launch. If that documented path still fails, the last-resort local quarantine removal is:
@@ -71,9 +71,9 @@ To create a distributable image:
 ./scripts/build_dmg.sh
 ```
 
-### Windows 1.4.5-rc.2
+### Windows 1.4.5
 
-The primary Windows RC download is [`AACC-1.4.5rc2-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.5-rc.2/AACC-1.4.5rc2-Setup.exe), accompanied by `AACC-1.4.5rc2-Setup.exe.sha256`. The Windows 1.4.5-rc.2 Setup asset is still being built and will be attached to that release; until then use the Windows assets from the [v1.4.4-rc.1 release](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.4-rc.1).
+The primary Windows download is `AACC-1.4.5-Setup.exe` with its matching `AACC-1.4.5-Setup.exe.sha256`. The Windows 1.4.5 Setup asset is built on a Windows machine and will be attached to the v1.4.5 release shortly; until then use the Windows assets from the [v1.4.4-rc.1 release](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.4-rc.1).
 
 This per-user Setup installs for the current user without administrator elevation at `%LocalAppData%\Programs\AACC`. It always adds a Start Menu shortcut, offers an unchecked desktop shortcut, and adds no login item. Run the same Setup to upgrade in place; uninstall removes the program and shortcuts. Both upgrade and uninstall preserve AACC-owned data under `%APPDATA%\AACC`, including settings, history, database, credentials, and the protected Kimi reuse decision.
 

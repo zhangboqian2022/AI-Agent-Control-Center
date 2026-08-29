@@ -2,6 +2,31 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.5 — 2026-08-29
+
+[Bilingual release notes](docs/release-notes-1.4.5.md)
+
+- [Fix] Kimi's background quota refresh no longer dies on the first expired
+  token: a background 401 now runs a bounded recovery (re-fetch, one page
+  reload, re-fetch) before failing closed. The login dialog keeps its rendered
+  page stable and polls for the user to sign in instead of churning reloads.
+- [Fix] kimi.com no longer reports load-finished (a long-lived request keeps
+  every page load in flight), which stalled the whole Kimi pipeline: the quota
+  fetch is now scheduled 10 seconds after navigation starts and the in-page
+  script waits up to 25 seconds for the SPA bootstrap to write its token.
+- [Fix] The Kimi login dialog is flagged always-on-top so the menu-bar app's
+  window cannot stay buried under other windows, and the macOS startup
+  watchdog no longer kills an in-flight refresh whose load-finished event will
+  never arrive.
+- [Fix] OpenCode quota extraction is locale-free again and accepts one-decimal
+  percentages: the site redesign on 2026-08-25 broke the bare "NN%" matcher,
+  and zh-CN web views render localized section labels. A workspace redirect to
+  auth.opencode.ai is now reported as unauthorized instead of burning the
+  watchdog, and DOM timeouts carry the rendered page text into the log.
+- [Fix] Qwen's visible login evaluates every Bailian CDP target until one
+  renders the quota, so a stale logged-out tab left behind by a login redirect
+  can no longer starve the flow until its deadline.
+
 ## 1.4.5-rc.5 — 2026-08-20
 
 [Bilingual release notes](docs/release-notes-1.4.5rc5.md)

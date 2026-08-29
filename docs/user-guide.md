@@ -22,11 +22,11 @@ Kimi 按 `5H`、`WEEK`、`MONTH` 显示。Windows 首次登录会用隔离的 AA
 
 ## macOS DMG
 
-当前 RC 安装包为 `AACC-1.4.5-rc.2.dmg`。双击后将 `AACC.app` 拖入“应用程序”文件夹。此社区版本使用 ad-hoc 签名且未经过 Apple 公证；先用 `shasum -a 256 AACC-1.4.5-rc.2.dmg` 对比配套 `.sha256`，再选择“仍要打开”。若标准路径仍失败，最后才用 `xattr -cr /Applications/AACC.app` 在本机移除隔离属性。
+当前安装包为 `AACC-1.4.5.dmg`。双击后将 `AACC.app` 拖入“应用程序”文件夹。此社区版本使用 ad-hoc 签名且未经过 Apple 公证；先用 `shasum -a 256 AACC-1.4.5.dmg` 对比配套 `.sha256`，再选择“仍要打开”。若标准路径仍失败，最后才用 `xattr -cr /Applications/AACC.app` 在本机移除隔离属性。
 
 ## Windows Setup
 
-Windows 1.4.5-rc.2 主安装包是 `AACC-1.4.5rc2-Setup.exe`，普通用户无需安装 Python 或 `uv`。先核对 `AACC-1.4.5rc2-Setup.exe.sha256`，再运行 Setup。它只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器创建开始菜单快捷方式，提供默认不勾选的桌面快捷方式，并且不添加开机启动项。
+Windows 1.4.5 主安装包是 `AACC-1.4.5-Setup.exe`（在 Windows 机器上构建后上传到 v1.4.5 发布；发布初期若尚未上传，请暂用 v1.4.4-rc.1 的 Windows 资产），普通用户无需安装 Python 或 `uv`。先核对 `AACC-1.4.5-Setup.exe.sha256`，再运行 Setup。它只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器创建开始菜单快捷方式，提供默认不勾选的桌面快捷方式，并且不添加开机启动项。
 
 再次运行同一个 Setup 会在有界的优雅退出后原位升级。卸载会移除程序、开始菜单项、可选桌面快捷方式和卸载注册信息。升级和卸载都保留 `%APPDATA%\AACC` 下由 AACC 管理的配置、任务历史、数据库、凭据与受保护的复用决定。
 

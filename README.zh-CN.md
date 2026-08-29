@@ -2,7 +2,7 @@
 
 > 面向本机 AI Coding Agent 的桌面状态与控制中心，支持 macOS 13+ 与 Windows 10+。
 
-[English README](README.md) · [下载 AACC 1.4.5-rc.2](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.5-rc.2) · [发布说明](docs/release-notes-1.4.5rc2.md) · [产品设计](docs/product-design.zh-CN.md)
+[English README](README.md) · [下载 AACC 1.4.5](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.5) · [发布说明](docs/release-notes-1.4.5.md) · [产品设计](docs/product-design.zh-CN.md)
 
 AACC 是一个本机优先的跨平台悬浮面板，用于查看你选择监控的 AI 编程任务。它从本机 Codex 元数据自动发现对话，让你筛选需要展示的任务，并通过醒目的大状态灯快速显示运行、等待、完成、告警、错误或未知状态。它还提供本地 API、`aacc` 命令行、`aacc-run` 生命周期包装器和可配置的 Agent Adapter。
 
@@ -37,12 +37,12 @@ _AACC 1.4.4-rc.1 界面示意图，使用合成演示数据，不含真实账户
 
 ### 推荐：下载 RC DMG
 
-下载 [AACC-1.4.5-rc.2.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.5-rc.2/AACC-1.4.5-rc.2.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
+下载 [AACC-1.4.5.dmg](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.5/AACC-1.4.5.dmg)，打开后把 `AACC.app` 拖入“应用程序”文件夹。
 
 此社区版本没有 Developer ID 签名，也没有经过 Apple 公证。根据构建时的钥匙串环境，App 可能带有 ad-hoc 签名或本地开发自签名；这两者都不等于 Apple 分发信任。请先下载配套的 `.dmg.sha256` 资产，并对比：
 
 ```bash
-shasum -a 256 AACC-1.4.5-rc.2.dmg
+shasum -a 256 AACC-1.4.5.dmg
 ```
 
 仅在校验值一致后，若 macOS 拦截首次启动，再到“系统设置 → 隐私与安全性”选择“仍要打开”。如果该标准路径仍失败，最后才在本机移除隔离属性：
@@ -71,9 +71,9 @@ cd AI-Agent-Control-Center
 ./scripts/build_dmg.sh
 ```
 
-### Windows 1.4.5-rc.2
+### Windows 1.4.5
 
-Windows RC 主下载文件是 [`AACC-1.4.5rc2-Setup.exe`](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/download/v1.4.5-rc.2/AACC-1.4.5rc2-Setup.exe)，并配套 `AACC-1.4.5rc2-Setup.exe.sha256`。Windows 1.4.5-rc.2 的 Setup 资产仍在构建中，完成后补传到该发布；在此之前请使用 [v1.4.4-rc.1 发布](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.4-rc.1)的 Windows 资产。
+Windows 主下载文件是 `AACC-1.4.5-Setup.exe`，并配套 `AACC-1.4.5-Setup.exe.sha256`。Windows 1.4.5 的 Setup 资产需在 Windows 机器上构建后补传到该发布；在此之前请使用 [v1.4.4-rc.1 发布](https://github.com/zhangboqian2022/AI-Agent-Control-Center/releases/tag/v1.4.4-rc.1)的 Windows 资产。
 
 Setup 只安装给当前用户，无需管理员提权，默认路径为 `%LocalAppData%\Programs\AACC`。安装器始终创建开始菜单快捷方式，可选但默认不勾选桌面快捷方式，不添加开机启动项。再次运行同一个 Setup 可原位升级；卸载会移除程序与快捷方式。升级和卸载都会保留 `%APPDATA%\AACC` 下由 AACC 管理的设置、历史、数据库、凭据和 Kimi 复用决定。
 
