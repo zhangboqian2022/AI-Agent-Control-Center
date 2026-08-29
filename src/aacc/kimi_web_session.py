@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWebView import QtWebView, QWebView, QWebViewLoadingInfo
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout, QWidget
@@ -240,6 +240,7 @@ class KimiWebSession(QObject):
         self._unauthorized_recovery_attempts = 0
         if self._login_dialog is None:
             dialog = QDialog(parent)
+            dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
             dialog.resize(960, 720)
             layout = QVBoxLayout(dialog)
             explanation = QLabel("")
@@ -362,9 +363,16 @@ class KimiWebSession(QObject):
         self._run_fetch(generation)
 
     def _recover_unauthorized(self) -> bool:
-        """Retry an unauthorized background refresh before failing closed."""
+        """Retry an unauthorized refresh before failing closed.
 
-        if self._closed or self._login_dialog_open:
+        Runs for background refreshes and for the visible login dialog
+        alike: a dialog-side 401 (an expired bootstrap token while the
+        cached page still renders logged-in) used to fail closed with no
+        retry, and since kimi.com stopped reporting load-finished the old
+        in-dialog reload retry could never fire either.
+        """
+
+        if self._closed:
             return False
         self._unauthorized_recovery_attempts += 1
         if self._unauthorized_recovery_attempts > UNAUTHORIZED_RECOVERY_ATTEMPTS:

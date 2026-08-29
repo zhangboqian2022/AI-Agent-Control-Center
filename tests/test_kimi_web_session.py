@@ -111,6 +111,13 @@ class FakeLoadingInfo:
 class ExistingFakeDialog:
     def __init__(self):
         self.accepted = False
+        self.stay_on_top = False
+
+    def setWindowFlag(self, flag, on=True):
+        from PySide6.QtCore import Qt
+
+        if flag == Qt.WindowStaysOnTopHint:
+            self.stay_on_top = on
 
     def show(self):
         pass
@@ -725,7 +732,7 @@ def test_stale_generation_logging_never_formats_remote_value(caplog, monkeypatch
     assert "Authorization" not in caplog.text
 
 
-def test_login_dialog_retries_after_initial_unauthorized_page(qapp, monkeypatch, tmp_path):
+def test_login_dialog_recovers_from_unauthorized_and_still_retries(qapp, monkeypatch, tmp_path):
     del qapp
     session = make_session(monkeypatch, tmp_path)
     dialog = ExistingFakeDialog()
@@ -738,7 +745,30 @@ def test_login_dialog_retries_after_initial_unauthorized_page(qapp, monkeypatch,
     first_script_count = len(session.view.scripts)
     session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
     assert len(session.view.scripts) == first_script_count
+
+    # An expired bootstrap token (401) used to fail closed immediately in
+    # the dialog, but kimi.com no longer fires load-finished so the old
+    # reload-retry never ran: the user just stared at a dead dialog. The
+    # dialog now gets the same bounded recovery as background refreshes.
     session._handle_bridge({"kind": "unauthorized", "generation": first_generation})
+    assert session.login_state.may_reuse() is False
+    recovering = session._active_refresh_generation
+    assert recovering is not None and recovering > first_generation
+
+    session._recovery_timeout()  # attempt 1: refetch on the stale page
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    # attempt 2: reload the membership page so the SPA renews the token
+    assert session.view.url().toString() == KIMI_MEMBERSHIP_URL
+    session._on_loading_changed(FakeLoadingInfo(QWebViewLoadingInfo.LoadStatus.Succeeded))
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
+    session._recovery_timeout()  # attempt 3: refetch after the reload settles
+    session._handle_bridge(
+        {"kind": "unauthorized", "generation": session._active_refresh_generation}
+    )
     assert session._active_refresh_generation is None
     assert session.login_state.may_reuse() is False
 
@@ -746,7 +776,7 @@ def test_login_dialog_retries_after_initial_unauthorized_page(qapp, monkeypatch,
 
     retry_generation = session._active_refresh_generation
     assert retry_generation is not None
-    assert retry_generation > first_generation
+    assert retry_generation > recovering
     assert "GetSubscriptionStats" in session.view.scripts[-1]
     session._handle_bridge(
         {
@@ -758,6 +788,14 @@ def test_login_dialog_retries_after_initial_unauthorized_page(qapp, monkeypatch,
     )
     assert session.login_state.may_reuse() is True
     assert dialog.accepted is True
+
+
+def test_login_dialog_opens_on_top(qapp, monkeypatch, tmp_path):
+    del qapp
+    session = make_session(monkeypatch, tmp_path)
+    widgets = _install_login_dialog_fakes(monkeypatch)
+    session.open_login()
+    assert widgets["dialog"].stay_on_top is True
 
 
 def test_quota_success_fails_closed_when_reuse_gate_write_fails(
@@ -1116,6 +1154,13 @@ def test_web_session_loading_failure_and_login_dialog(qapp, monkeypatch, tmp_pat
             self.finished = FakeSignal()
             self.accepted = False
             self.closed = False
+            self.stay_on_top = False
+
+        def setWindowFlag(self, flag, on=True):
+            from PySide6.QtCore import Qt
+
+            if flag == Qt.WindowStaysOnTopHint:
+                self.stay_on_top = on
 
         def setWindowTitle(self, _title):
             pass
@@ -1567,7 +1612,14 @@ def _install_login_dialog_fakes(monkeypatch):
             self.finished = FakeSignal()
             self.title = ""
             self.titles = []
+            self.stay_on_top = False
             widgets["dialog"] = self
+
+        def setWindowFlag(self, flag, on=True):
+            from PySide6.QtCore import Qt
+
+            if flag == Qt.WindowStaysOnTopHint:
+                self.stay_on_top = on
 
         def setWindowTitle(self, title):
             self.title = title
