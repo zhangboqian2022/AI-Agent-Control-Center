@@ -78,6 +78,7 @@ class QwenChromeSession(QObject):
     quota_received = Signal(object)
     error_occurred = Signal(str)
     sync_started = Signal()
+    login_window_opening = Signal()
     auto_login_requested = Signal()
     _operation_finished = Signal(int, object)
 
@@ -110,6 +111,8 @@ class QwenChromeSession(QObject):
         self._success_clock = success_clock
         self._auto_login_clock = auto_login_clock
         self._last_auto_login_at: float | None = None
+        self._auto_login_in_flight = False
+        self._auto_login_disabled = False
         self._login_phase: str | None = None
         self._active_operation: object | None = None
         self.login_state = login_state or KimiWebLoginStateStore(
@@ -143,12 +146,15 @@ class QwenChromeSession(QObject):
             self.error_occurred.emit(QwenQuotaErrorCategory.REFRESH_FAILED.value)
             return
         if self.auto_session_recopy and self._daily_source_probe() is not None:
-            # Sync-first: silently recopy the daily Chrome session and fetch
-            # the quota hidden. Only a failure opens the visible login.
+            # Sync-first: fetch the quota hidden, reusing whatever is already in
+            # the owned profile. The origin-aware recovery inside the operation
+            # recopies the daily session only when that cache really is dead, so
+            # a possibly healthy manual-login cache is never overwritten blind.
+            # Only a terminal failure opens the visible login.
             self._login_phase = "sync"
             self.sync_started.emit()
             _logger.info("Qwen login attempting silent daily-session sync first")
-            self._start(visible=False, eager_recopy=True)
+            self._start(visible=False)
             return
         self._login_phase = "visible"
         self._start(visible=True)
@@ -206,6 +212,11 @@ class QwenChromeSession(QObject):
         self._thread_factory(run).start()
 
     def logout(self) -> bool:
+        # Drop any in-flight login phase so a worker that is cancelled (or a
+        # success that still arrives) can never persist a sync/visible origin
+        # for a session the user has just ended.
+        self._login_phase = None
+        self._auto_login_in_flight = False
         succeeded = self._persist_reuse(False, logged_out_by_user=True)
         self.login_state_changed.emit(False)
         if not self._cancel_active(wait=True):
@@ -237,7 +248,7 @@ class QwenChromeSession(QObject):
     def retranslate_ui(self) -> None:
         """Chrome owns the visible login UI; no Qt widget needs translation."""
 
-    def _start(self, *, visible: bool, eager_recopy: bool = False) -> None:
+    def _start(self, *, visible: bool) -> None:
         self._generation += 1
         generation = self._generation
         cancel = Event()
@@ -253,12 +264,12 @@ class QwenChromeSession(QObject):
                         recopy_qwen_daily_chrome_session if self.auto_session_recopy else None
                     ),
                     session_origin=self.login_state.session_origin(),
-                    eager_recopy=eager_recopy,
                     visible_window_bounds=(self._visible_bounds_provider() if visible else None),
                 )
             except Exception:
                 self._busy = False
                 self._cancel = None
+                self._login_phase = None
                 self.error_occurred.emit(QwenQuotaErrorCategory.REFRESH_FAILED.value)
                 return
         mode = "login" if visible else "refresh"
@@ -301,6 +312,7 @@ class QwenChromeSession(QObject):
         if isinstance(outcome, dict):
             self._persist_success_origin()
             self._login_phase = None
+            self._auto_login_in_flight = False
             self.login_state_changed.emit(True)
             self.quota_received.emit(outcome)
             return
@@ -310,10 +322,15 @@ class QwenChromeSession(QObject):
             # The silent sync attempt failed (dead daily session, missing
             # source files, or a failed hidden fetch): open the visible login.
             _logger.info("Qwen silent sync failed; falling back to the visible login window")
+            self.login_window_opening.emit()
             self._login_phase = "visible"
             self._start(visible=True)
             return
+        dismissal = self._auto_login_in_flight and isinstance(
+            outcome, QwenChromeLoginCancelledError
+        )
         self._login_phase = None
+        self._auto_login_in_flight = False
         if isinstance(outcome, QwenChromeUnauthorizedError):
             _logger.warning(
                 "Qwen Chrome session is logged out; quota refresh paused until re-login"
@@ -324,6 +341,11 @@ class QwenChromeSession(QObject):
             return
         if isinstance(outcome, QwenChromeLoginCancelledError):
             _logger.info("Qwen Chrome login window closed by the user; login abandoned")
+            if dismissal:
+                # The popup itself was dismissed: stop stealing focus for the
+                # rest of this run, the user is back in control of re-logging in.
+                self._auto_login_disabled = True
+                _logger.warning("Qwen auto-login disabled after the user dismissed the popup")
             return
         if isinstance(outcome, QwenChromeCancelledError):
             return
@@ -340,9 +362,13 @@ class QwenChromeSession(QObject):
 
         Recovery is exhausted when this fires: the refresh hit the login
         banner past every recheck and recopy chance. An explicit user logout
-        must never resurrect a popup.
+        must never resurrect a popup, and neither must a popup the user has
+        already dismissed once during this run.
         """
 
+        if self._auto_login_disabled:
+            _logger.debug("Qwen auto-login suppressed (dismissed by the user this run)")
+            return
         if self.login_state.logged_out_by_user():
             return
         now = self._auto_login_clock()
@@ -353,6 +379,7 @@ class QwenChromeSession(QObject):
             _logger.debug("Qwen auto-login popup suppressed by the rate limit")
             return
         self._last_auto_login_at = now
+        self._auto_login_in_flight = True
         _logger.warning("Qwen quota session expired; requesting an automatic login window")
         self.auto_login_requested.emit()
 
@@ -384,9 +411,12 @@ class QwenChromeSession(QObject):
     def _persist_success_origin(self) -> None:
         if self._login_phase == "visible":
             origin = KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
-        elif self._login_phase == "sync":
-            origin = KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
         else:
+            # Hidden work (periodic refresh or the sync-first login attempt):
+            # the origin only changes when the operation actually recopied the
+            # daily session. A plain success means the pre-existing cache is
+            # still live, so its provenance — and its protected recheck grace —
+            # must be kept rather than relabeled as a daily-session copy.
             recopy_performed = bool(getattr(self._active_operation, "recopy_performed", False))
             origin = (
                 KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY

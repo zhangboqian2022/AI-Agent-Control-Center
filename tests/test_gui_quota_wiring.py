@@ -850,6 +850,7 @@ class FakeQwenQuotaService(QObject):
     error_occurred = Signal(str)
     auto_login_requested = Signal()
     sync_started = Signal()
+    login_window_opening = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -917,6 +918,25 @@ def test_qwen_sync_started_shows_syncing(qtbot, tmp_path):
     service.sync_started.emit()
 
     assert "正在同步" in window.qwen_quota_bar.summary_label.text()
+
+
+def test_qwen_login_window_opening_shows_sync_failed(qtbot, tmp_path):
+    service = FakeQwenQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        qwen_web_quota_service=service,
+    )
+    assert window.qwen_quota_bar is not None
+
+    service.sync_started.emit()
+    service.login_window_opening.emit()
+
+    # The silent sync gave up and a window is on its way: the bar must stop
+    # claiming it is still syncing.
+    assert "同步失败" in window.qwen_quota_bar.summary_label.text()
+    assert "正在同步" not in window.qwen_quota_bar.summary_label.text()
 
 
 def test_qwen_bar_click_unauthorized_shows_pending_and_opens_login(qtbot, tmp_path):

@@ -406,3 +406,36 @@ def test_service_forwards_sync_started(qapp, tmp_path):
     session.sync_started.emit()
 
     assert received == [None]
+
+
+def test_service_forwards_login_window_opening(qapp, tmp_path):
+    del qapp
+    from PySide6.QtCore import QObject, Signal
+
+    from aacc.qwen_web_quota_service import QwenWebQuotaService
+
+    class FakeSession(QObject):
+        login_state_changed = Signal(bool)
+        quota_received = Signal(object)
+        error_occurred = Signal(str)
+        auto_login_requested = Signal()
+        sync_started = Signal()
+        login_window_opening = Signal()
+
+        def refresh(self) -> None: ...
+        def open_login(self, parent=None) -> None: ...
+        def logout(self) -> bool:
+            return True
+
+        def close(self) -> None: ...
+        def retranslate_ui(self) -> None: ...
+        def set_workspace_url(self, url: str) -> None: ...
+
+    session = FakeSession()
+    service = QwenWebQuotaService(tmp_path, session=session)
+    received: list[None] = []
+    service.login_window_opening.connect(lambda: received.append(None))
+
+    session.login_window_opening.emit()
+
+    assert received == [None]

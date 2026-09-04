@@ -2260,7 +2260,6 @@ def _make_recovery_operation(
     recopy_error: Exception | None = None,
     session_recopy=True,
     recheck_delay_seconds: float = 0.0,
-    eager_recopy: bool = False,
     sleep=None,
     visible_window_bounds: tuple[int, int, int, int] | None = None,
 ):
@@ -2311,7 +2310,6 @@ def _make_recovery_operation(
         session_recopy=recopy if session_recopy else None,
         session_origin=session_origin,
         recheck_delay_seconds=recheck_delay_seconds,
-        eager_recopy=eager_recopy,
         visible_window_bounds=visible_window_bounds,
     )
 
@@ -2392,17 +2390,23 @@ def test_manual_origin_recheck_cancel_surfaces_cancelled(
     # A cancel landing during the manual-origin recheck delay must end the
     # operation as a user cancel before any recheck reading or recopy runs.
     cancel = Event()
+    recopied: list[Path] = []
     operation = _make_recovery_operation(
         tmp_path,
         monkeypatch,
         evaluations=[{"kind": "unauthorized"}],
         session_origin=QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
-        recopied=[],
+        recopied=recopied,
         sleep=lambda _seconds: cancel.set(),
     )
 
     with pytest.raises(QwenChromeCancelledError):
         operation.run(visible=False, cancel=cancel)
+
+    # The cancel preempted the recovery: the daily session was never copied
+    # over a cache the user had just logged into.
+    assert recopied == []
+    assert operation.recopy_performed is False
 
 
 def test_manual_origin_without_recopy_surfaces_unauthorized_after_recheck(
@@ -2437,84 +2441,6 @@ def test_daily_origin_banner_recopies_immediately_without_recheck(
 
     assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
     assert recopied == [tmp_path / "config"]
-
-
-def test_eager_recopy_copies_before_refresh_and_reports_quota(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    recopied: list[Path] = []
-    operation = _make_recovery_operation(
-        tmp_path,
-        monkeypatch,
-        evaluations=[_quota_payload()],
-        session_origin=QWEN_SESSION_ORIGIN_DAILY_RECOPY,
-        recopied=recopied,
-        eager_recopy=True,
-    )
-
-    result = operation.run(visible=False, cancel=Event())
-
-    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
-    assert recopied == [tmp_path / "config"]
-    assert operation.recopy_performed is True
-
-
-def test_eager_recopy_failure_propagates_for_visible_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    operation = _make_recovery_operation(
-        tmp_path,
-        monkeypatch,
-        evaluations=[_quota_payload()],
-        session_origin=QWEN_SESSION_ORIGIN_DAILY_RECOPY,
-        recopied=[],
-        recopy_raises=True,
-        eager_recopy=True,
-    )
-
-    with pytest.raises(QwenChromeQuotaError):
-        operation.run(visible=False, cancel=Event())
-
-
-def test_eager_recopy_quota_error_propagates_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A quota error raised by the recopy itself must pass through with its
-    # original category instead of being re-wrapped: the session layer reads
-    # every eager failure as the cue to open the visible login window.
-    from aacc.qwen_web_error import QwenQuotaErrorCategory
-
-    operation = _make_recovery_operation(
-        tmp_path,
-        monkeypatch,
-        evaluations=[_quota_payload()],
-        session_origin=QWEN_SESSION_ORIGIN_DAILY_RECOPY,
-        recopied=[],
-        recopy_error=QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_TIMEOUT),
-        eager_recopy=True,
-    )
-
-    with pytest.raises(QwenChromeQuotaError) as excinfo:
-        operation.run(visible=False, cancel=Event())
-    assert excinfo.value.category is QwenQuotaErrorCategory.REFRESH_TIMEOUT
-
-
-def test_eager_recopy_unauthorized_does_not_recopy_twice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    recopied: list[Path] = []
-    operation = _make_recovery_operation(
-        tmp_path,
-        monkeypatch,
-        evaluations=[{"kind": "unauthorized"}],
-        session_origin=QWEN_SESSION_ORIGIN_DAILY_RECOPY,
-        recopied=recopied,
-        eager_recopy=True,
-    )
-
-    with pytest.raises(QwenChromeUnauthorizedError):
-        operation.run(visible=False, cancel=Event())
-    assert recopied == [tmp_path / "config"]  # exactly once
 
 
 def test_count_page_targets_counts_any_origin() -> None:

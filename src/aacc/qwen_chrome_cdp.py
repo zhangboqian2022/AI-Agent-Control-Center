@@ -1115,7 +1115,6 @@ class ManagedQwenChromeOperation:
         monotonic: Callable[[], float] = time.monotonic,
         session_recopy: Callable[[Path], None] | None = None,
         session_origin: str = QWEN_SESSION_ORIGIN_DAILY_RECOPY,
-        eager_recopy: bool = False,
         visible_window_bounds: tuple[int, int, int, int] | None = None,
         recheck_delay_seconds: float = _QWEN_MANUAL_RECHECK_DELAY_SECONDS,
     ) -> None:
@@ -1140,7 +1139,6 @@ class ManagedQwenChromeOperation:
         self._monotonic = monotonic
         self._session_recopy = session_recopy
         self._session_origin = session_origin
-        self._eager_recopy = eager_recopy
         self._visible_window_bounds = visible_window_bounds
         self._recheck_delay_seconds = max(0.0, recheck_delay_seconds)
         self.recopy_performed = False
@@ -1148,34 +1146,20 @@ class ManagedQwenChromeOperation:
     def run(self, *, visible: bool, cancel: Event) -> dict[str, object]:
         """Run one operation with origin-aware session recovery.
 
-        Visible logins never recopy. Hidden refreshes that hit the rendered
-        login banner recover by origin: a daily-recopy session is recopied
-        immediately (idempotent), while a manual-login session is rechecked
-        once first so a transient banner can never overwrite a fresh login.
+        Visible logins never recopy. Hidden work — periodic refresh and the
+        sync-first login attempt alike — runs a plain fetch first and recovers
+        by origin when the rendered login banner appears: a daily-recopy
+        session is recopied immediately (idempotent), while a manual-login
+        session is rechecked once first so a transient banner can never
+        overwrite a cache that may still be healthy.
         """
 
         if cancel.is_set():
             raise QwenChromeCancelledError
         if visible:
             return self._run_once(visible=True, cancel=cancel, fail_fast_unauthorized=False)
-        if self._eager_recopy and self._session_recopy is not None:
-            _logger.info("Qwen sync login recopying the daily Chrome session before refresh")
-            try:
-                self._session_recopy(self.config_dir)
-            except QwenChromeQuotaError:
-                raise
-            except Exception as error:
-                # Surface a sanitized failure instead of retrying: re-copying
-                # the same cookies is pointless, and the session layer reads
-                # any eager failure as the cue to fall back to visible login.
-                raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from error
-            self.recopy_performed = True
-            # Fail fast: a banner right after a fresh recopy proves the daily
-            # session itself is logged out; bubble the unauthorized error
-            # straight up without entering the recovery path.
-            return self._run_once(visible=False, cancel=cancel, fail_fast_unauthorized=True)
-        # Manual-login sessions fail fast into the recovery path as well: the
-        # origin-aware recheck there decides whether the banner is real, and
+        # Every hidden attempt fails fast into the recovery path: the
+        # origin-aware handling there decides whether the banner is real, and
         # the grace window must not keep re-polling a fresh login.
         fail_fast_unauthorized = (
             self._session_recopy is not None
@@ -1366,7 +1350,8 @@ class ManagedQwenChromeOperation:
             if browser is not None:
                 with suppress(Exception):
                     browser.close_browser()
-                browser.close()
+                with suppress(Exception):
+                    browser.close()
             if not self._shutdown_process(process):
                 _logger.error("Qwen Chrome process did not stop cleanly")
             self._verify_profile_processes_gone()

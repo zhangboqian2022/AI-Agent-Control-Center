@@ -74,9 +74,12 @@ class ManualThread:
 
 
 class FakeOperation:
-    def __init__(self, outcome: object) -> None:
+    def __init__(self, outcome: object, *, recopy_performed: bool = False) -> None:
         self.outcome = outcome
         self.calls: list[bool] = []
+        # ManagedQwenChromeOperation exposes this after a real daily-session
+        # recopy; the session reads it to decide the persisted session origin.
+        self.recopy_performed = recopy_performed
 
     def run(self, *, visible: bool, cancel: Event) -> dict[str, object]:
         assert not cancel.is_set()
@@ -383,10 +386,9 @@ def test_auto_session_recopy_flag_wires_operation(qapp, tmp_path, monkeypatch):
             config_dir,
             session_recopy=None,
             session_origin=None,
-            eager_recopy=False,
             visible_window_bounds=None,
         ):
-            del workspace_url, config_dir, session_origin, eager_recopy, visible_window_bounds
+            del workspace_url, config_dir, session_origin, visible_window_bounds
             constructed.append(session_recopy)
 
         def run(self, *, visible, cancel):
@@ -551,7 +553,10 @@ def test_orphan_cleanup_aborted_when_operation_started_before_worker_runs(qapp, 
 
 def test_open_login_syncs_first_when_daily_source_exists(qapp, tmp_path):
     del qapp
-    operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"})
+    # The safe order (plain fetch, banner, origin-aware recheck/recopy, retry)
+    # is what the hidden sync attempt runs; a success reporting recopy_performed
+    # means the dead cache really was replaced by the daily session.
+    operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"}, recopy_performed=True)
     session = make_session(
         tmp_path,
         operation,
@@ -566,6 +571,31 @@ def test_open_login_syncs_first_when_daily_source_exists(qapp, tmp_path):
     assert store.may_reuse() is True
     assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
     assert store.last_success_epoch() == 1725424224
+
+
+def test_open_login_sync_success_without_recopy_keeps_stored_origin(qapp, tmp_path):
+    del qapp
+    # Unification with refresh: the sync-first attempt is a plain hidden fetch
+    # first. When it succeeds without touching the daily session, the cached
+    # session (and its provenance) is still healthy — a manual login must not
+    # be relabeled daily_recopy, which would strip its protected recheck grace.
+    operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"}, recopy_performed=False)
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+    session.login_state.set_may_reuse(
+        True,
+        session_origin=KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN,
+    )
+
+    session.open_login()
+
+    assert operation.calls == [False]
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
 
 
 def test_open_login_falls_back_to_visible_when_sync_unauthorized(qapp, tmp_path):
@@ -588,10 +618,15 @@ def test_open_login_falls_back_to_visible_when_sync_unauthorized(qapp, tmp_path)
         auto_session_recopy=True,
         daily_source_probe=lambda: tmp_path / "daily-chrome",
     )
+    opening: list[None] = []
+    session.login_window_opening.connect(lambda: opening.append(None))
 
     session.open_login()
 
     assert operation.calls == [False, True]
+    # The bar is told the moment the silent sync gives up, so the user sees
+    # why a window is about to appear instead of a stale "syncing" line.
+    assert opening == [None]
     store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
     assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
 
@@ -756,6 +791,81 @@ def test_unauthorized_refresh_requests_auto_login_when_rate_limit_allows(qapp, t
     assert requests == [None]
 
 
+def test_dismissing_auto_login_popup_stops_future_auto_popups(qapp, tmp_path):
+    del qapp
+
+    class ScriptedOperation:
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def run(self, *, visible: bool, cancel: Event):
+            self.calls.append(visible)
+            if visible:
+                raise QwenChromeLoginCancelledError()
+            raise QwenChromeUnauthorizedError()
+
+    clock = [100.0]
+    session = make_session(
+        tmp_path,
+        ScriptedOperation(),
+        auto_session_recopy=True,
+        auto_login_clock=lambda: clock[0],
+    )
+    requests: list[None] = []
+    session.auto_login_requested.connect(lambda: requests.append(None))
+
+    session.refresh()  # recovery exhausted: the popup was requested
+    assert requests == [None]
+    assert session._auto_login_in_flight is True
+
+    session.open_login()  # the popup the user then closes without logging in
+    assert session._auto_login_disabled is True
+    assert session._auto_login_in_flight is False
+
+    # Even past the 30-minute rate window a dismissed popup must not come back
+    # and steal focus: the user opting out lasts the rest of the run.
+    clock[0] += 1801.0
+    session.refresh()
+    assert requests == [None]
+
+
+def test_successful_auto_login_keeps_future_auto_popups_available(qapp, tmp_path):
+    del qapp
+
+    class ScriptedOperation:
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def run(self, *, visible: bool, cancel: Event):
+            self.calls.append(visible)
+            if visible:
+                return {"fiveHourText": "5 小时\n0.04%"}
+            raise QwenChromeUnauthorizedError()
+
+    clock = [100.0]
+    session = make_session(
+        tmp_path,
+        ScriptedOperation(),
+        auto_session_recopy=True,
+        auto_login_clock=lambda: clock[0],
+    )
+    requests: list[None] = []
+    session.auto_login_requested.connect(lambda: requests.append(None))
+
+    session.refresh()
+    assert requests == [None]
+
+    session.open_login()  # the user completes the login in the popup
+    assert session._auto_login_disabled is False
+    assert session._auto_login_in_flight is False
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+
+    clock[0] += 1801.0
+    session.refresh()
+    assert requests == [None, None]
+
+
 def test_user_logout_never_requests_auto_login(qapp, tmp_path):
     del qapp
     operation = FakeOperation(QwenChromeUnauthorizedError())
@@ -780,6 +890,64 @@ def test_user_logout_guard_blocks_maybe_request_auto_login_directly(qapp, tmp_pa
     session._maybe_request_auto_login()
 
     assert requests == []
+
+
+def test_logout_clears_stale_login_phase(qapp, tmp_path):
+    del qapp
+    threads: list[ManualThread] = []
+
+    def make_thread(target: Callable[[], None]) -> ManualThread:
+        thread = ManualThread(target)
+        threads.append(thread)
+        return thread
+
+    session = make_session(
+        tmp_path,
+        FakeOperation({"fiveHourText": "5 小时\n0.04%"}, recopy_performed=True),
+        thread_factory=make_thread,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+    session.open_login()
+    assert session._login_phase == "sync"  # hidden sync attempt still in flight
+    assert len(threads) == 1
+
+    assert session.logout() is True
+    # An abandoned login must not leave "sync" behind: a later successful
+    # refresh would otherwise be relabeled from a phase the user has ended.
+    assert session._login_phase is None
+    assert session._auto_login_in_flight is False
+
+    threads[0].finish()  # the cancelled worker drains into the deferred cleanup
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.logged_out_by_user() is True
+    assert session._login_phase is None
+
+
+def test_operation_construction_failure_clears_login_phase(qapp, tmp_path, monkeypatch):
+    del qapp
+    import aacc.qwen_chrome_session as module
+
+    session = make_session(
+        tmp_path,
+        FakeOperation({"fiveHourText": "5 小时\n0.04%"}),
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+    session._operation = None
+    monkeypatch.setattr(
+        module,
+        "ManagedQwenChromeOperation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("invalid config")),
+    )
+    errors: list[str] = []
+    session.error_occurred.connect(errors.append)
+
+    session.open_login()
+
+    assert errors == [QwenQuotaErrorCategory.REFRESH_FAILED.value]
+    assert session._login_phase is None
+    assert session._busy is False
 
 
 def test_default_visible_window_bounds_without_screen_returns_none(qapp, monkeypatch):

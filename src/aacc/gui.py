@@ -960,6 +960,16 @@ class QwenQuotaBar(QFrame):
         )
         self.setToolTip(self.language_manager.text("qwen.auto_recovering"))
 
+    def show_login_opening(self) -> None:
+        self._display_state = "pending"
+        self._last_error = None
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('qwen.quota')}\n"
+            f"{self.language_manager.text('qwen.login_opening')}"
+        )
+        self.setToolTip(self.language_manager.text("qwen.login_opening"))
+
     def show_quota(self, quota: QwenQuota, *, preserve_errors: bool = False) -> None:
         self._last_quota = quota
         if not preserve_errors:
@@ -2379,6 +2389,9 @@ class MainWindow(QWidget):
                 self._on_qwen_auto_login_requested
             )
             self.qwen_web_quota_service.sync_started.connect(self._on_qwen_sync_started)
+            self.qwen_web_quota_service.login_window_opening.connect(
+                self._on_qwen_login_window_opening
+            )
         self._apply_quota_panel_visibility()
 
         self.discovery_warning = QFrame()
@@ -3012,6 +3025,10 @@ class MainWindow(QWidget):
     def _on_qwen_sync_started(self) -> None:
         if self.qwen_quota_bar is not None:
             self.qwen_quota_bar.show_syncing()
+
+    def _on_qwen_login_window_opening(self) -> None:
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_login_opening()
 
     def open_qwen_web_login(self) -> None:
         if self.qwen_web_quota_service is not None:

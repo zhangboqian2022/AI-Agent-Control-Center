@@ -104,6 +104,7 @@ class QwenWebQuotaService(QObject):
     error_occurred = Signal(str)
     auto_login_requested = Signal()
     sync_started = Signal()
+    login_window_opening = Signal()
 
     def __init__(
         self,
@@ -204,3 +205,6 @@ class QwenWebQuotaService(QObject):
         sync_started = getattr(session, "sync_started", None)
         if sync_started is not None:
             sync_started.connect(self.sync_started.emit)
+        login_window_opening = getattr(session, "login_window_opening", None)
+        if login_window_opening is not None:
+            login_window_opening.connect(self.login_window_opening.emit)

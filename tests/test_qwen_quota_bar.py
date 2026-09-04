@@ -208,3 +208,14 @@ def test_show_auto_recovering_renders_recovery_text(qtbot) -> None:
     bar = QwenQuotaBar()
     bar.show_auto_recovering()
     assert "自动恢复" in bar.summary_label.text()
+
+
+def test_show_login_opening_renders_sync_failed_text(qtbot) -> None:
+    bar = QwenQuotaBar()
+    bar.show_syncing()
+    bar.show_login_opening()
+    assert "同步失败" in bar.summary_label.text()
+    assert "正在打开登录窗" in bar.summary_label.text()
+    assert bar.toolTip() == "同步失败，正在打开登录窗…"
+    assert bar._display_state == "pending"
+    assert "Qwen Code 额度" in bar.summary_label.text()
