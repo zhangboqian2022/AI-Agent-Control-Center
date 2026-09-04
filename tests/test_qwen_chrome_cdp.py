@@ -2658,3 +2658,113 @@ def test_visible_login_applies_bounds_and_stealth(
     assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
     assert "Page.addScriptToEvaluateOnNewDocument" in commands
     assert "Browser.setWindowBounds" in commands
+
+
+def test_operation_force_kills_surviving_profile_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    survivor = FakeChromeProcess(stubborn=False, pid=9001)
+    state = {"shutdown_done": False, "forced": False}
+
+    def finder(_profile: Path) -> list[FakeChromeProcess]:
+        # Graceful shutdown has exited but one process is still alive; it
+        # disappears only once the forced-termination pass has run.
+        if state["shutdown_done"] and not state["forced"]:
+            return [survivor]
+        return []
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            return _quota_payload()
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+
+    def forced_terminator(_profile: Path, process_finder=None) -> None:
+        del process_finder
+        # The pre-launch cleanup also calls the terminator while the finder
+        # is empty; only mark the forced pass once a survivor is actually
+        # present (post-shutdown).
+        if finder(_profile):
+            state["forced"] = True
+
+    monkeypatch.setattr(module, "terminate_qwen_chrome_profile_processes", forced_terminator)
+
+    process = FakeProcess()
+
+    def marking_wait(timeout: float | None = None) -> int:
+        del timeout
+        state["shutdown_done"] = True
+        return 0
+
+    process.wait = marking_wait  # graceful shutdown reports success
+    clock = iter([0.0] * 64)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, process),
+        target_loader=lambda _origin: [_quota_page_target()],
+        socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=finder,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(clock, 61.0),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aacc.qwen_chrome_cdp"):
+        operation.run(visible=True, cancel=Event())
+
+    assert state["forced"] is True
+    assert any("remained" in record.message.casefold() for record in caplog.records)
+
+
+def test_verify_profile_processes_logs_error_for_stubborn_survivors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import aacc.qwen_chrome_cdp as module
+
+    stubborn = FakeChromeProcess(stubborn=True, pid=1)
+
+    def no_op_terminator(_profile: Path, process_finder=None) -> None:
+        del process_finder
+
+    monkeypatch.setattr(module, "terminate_qwen_chrome_profile_processes", no_op_terminator)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(_make_chrome_profile(tmp_path), FakeProcess()),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        chrome_process_finder=lambda _profile: [stubborn],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 0.0,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="aacc.qwen_chrome_cdp"):
+        operation._verify_profile_processes_gone()
+
+    assert any("survived" in record.message.casefold() for record in caplog.records)

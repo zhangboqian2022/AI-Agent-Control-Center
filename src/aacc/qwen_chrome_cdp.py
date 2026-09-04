@@ -1369,6 +1369,7 @@ class ManagedQwenChromeOperation:
                 browser.close()
             if not self._shutdown_process(process):
                 _logger.error("Qwen Chrome process did not stop cleanly")
+            self._verify_profile_processes_gone()
 
     def _setup_visible_login_page(self, page_sockets: Sequence[str]) -> None:
         """Center the login window and install stealth before the user types.
@@ -1473,9 +1474,11 @@ class ManagedQwenChromeOperation:
     def _shutdown_process(self, process: _ProcessLike) -> bool:
         try:
             process.wait(timeout=EDGE_SHUTDOWN_TIMEOUT_SECONDS)
+            _logger.debug("Qwen Chrome exited cleanly")
             return True
         except Exception:
             pass
+        _logger.warning("Qwen Chrome did not exit within the shutdown window; terminating the tree")
         try:
             self._process_tree_terminator(process)
         except Exception:
@@ -1483,7 +1486,44 @@ class ManagedQwenChromeOperation:
             return False
         try:
             process.wait(timeout=EDGE_SHUTDOWN_TIMEOUT_SECONDS)
+            _logger.info("Qwen Chrome terminated after escalation")
             return True
         except Exception:
             _logger.error("Qwen Chrome process remained alive after termination", exc_info=True)
             return False
+
+    def _verify_profile_processes_gone(self) -> None:
+        """Hard-verify the owned profile has no Chrome left after shutdown.
+
+        A browser that re-execs itself defeats the Popen-child exit check;
+        the profile process enumeration is the authoritative ownership
+        boundary, so re-scan it and force-terminate survivors.
+        """
+
+        try:
+            remaining = list(self._chrome_process_finder(self.profile))
+        except Exception:
+            _logger.warning("Qwen Chrome post-shutdown scan failed", exc_info=True)
+            return
+        if not remaining:
+            return
+        _logger.warning(
+            "Qwen Chrome processes remained after shutdown; forcing termination count=%d",
+            len(remaining),
+        )
+        try:
+            terminate_qwen_chrome_profile_processes(
+                self.profile, process_finder=self._chrome_process_finder
+            )
+        except Exception:
+            _logger.error("Qwen Chrome forced termination failed", exc_info=True)
+            return
+        try:
+            survivors = list(self._chrome_process_finder(self.profile))
+        except Exception:
+            return
+        if survivors:
+            _logger.error(
+                "Qwen Chrome processes survived forced termination count=%d",
+                len(survivors),
+            )
