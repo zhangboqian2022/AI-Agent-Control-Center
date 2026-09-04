@@ -102,8 +102,22 @@ Real-machine evidence with the installed 1.4.6-rc.1 build:
   was requested; the sync-first attempt failed in 2.8 seconds and the visible
   login window opened. Quitting AACC at 18:15 reaped every process it owns
   (a 21:21 re-check found none left).
+- 2026-09-04 22:01-23:01 (final build with the review fixes): the installed
+  1.4.6-rc.1 restored the quota on startup via a silent daily-session recopy
+  and, once the user's daily Chrome held a live Bailian login, kept refreshing
+  it unattended every cycle (state `session_origin=daily_recopy`); no visible
+  window appears while the daily session is live and the owned profile is left
+  with zero processes after each read. The user confirmed the quota auto-refresh
+  from the daily Chrome session is working. / 使用带评审修复的最终构建：装机后
+  首轮即通过静默同步日常 Chrome 会话恢复额度，且当日常 Chrome 持有有效百炼登录
+  时，之后每轮无需任何弹窗自动续期（状态 `session_origin=daily_recopy`），读取
+  结束后受管 profile 零进程残留。用户确认「已能自动刷新日常 Chrome 里的额度」。
 
-Scope marker / 范围说明: the final smoke test is still pending user
-confirmation of the centered login window; a controller finishes that step
-after the rebuild. / 最终冒烟仍待用户确认居中的可见登录窗，重建后由负责人补做
-该步骤。本记录不宣称已完成消费级 Windows 10/11 真机验证。
+Scope marker / 范围说明: the remaining un-confirmed item is the visual check
+that the automatically-opened login window is centered and that dismissing it
+stops further popups for the run — this only manifests once the daily Chrome
+session itself expires, and is covered by unit tests meanwhile. This record
+does not claim consumer Windows 10/11 hardware validation. / 唯一尚未肉眼确认
+的是：自动弹出的登录窗是否居中、以及关掉后本次运行不再弹——该现象只在日常
+Chrome 会话本身过期时才出现，目前已有单元测试覆盖。本记录不宣称已完成消费级
+Windows 10/11 真机验证。
