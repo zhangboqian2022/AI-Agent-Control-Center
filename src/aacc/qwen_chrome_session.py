@@ -31,6 +31,8 @@ from aacc.qwen_web_error import QwenQuotaErrorCategory
 
 _logger = logging.getLogger("aacc.qwen_chrome_session")
 
+QWEN_AUTO_LOGIN_MIN_INTERVAL_SECONDS = 1800.0
+
 
 class _OperationLike(Protocol):
     def run(self, *, visible: bool, cancel: Event) -> dict[str, object]: ...
@@ -76,6 +78,7 @@ class QwenChromeSession(QObject):
     quota_received = Signal(object)
     error_occurred = Signal(str)
     sync_started = Signal()
+    auto_login_requested = Signal()
     _operation_finished = Signal(int, object)
 
     def __init__(
@@ -95,6 +98,7 @@ class QwenChromeSession(QObject):
             _default_visible_window_bounds
         ),
         success_clock: Callable[[], int] = lambda: int(time.time()),
+        auto_login_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         super().__init__(parent)
         del language_manager
@@ -104,6 +108,8 @@ class QwenChromeSession(QObject):
         self._daily_source_probe = daily_source_probe
         self._visible_bounds_provider = visible_bounds_provider
         self._success_clock = success_clock
+        self._auto_login_clock = auto_login_clock
+        self._last_auto_login_at: float | None = None
         self._login_phase: str | None = None
         self._active_operation: object | None = None
         self.login_state = login_state or KimiWebLoginStateStore(
@@ -314,6 +320,7 @@ class QwenChromeSession(QObject):
             )
             self._persist_reuse(False, logged_out_by_user=False)
             self.login_state_changed.emit(False)
+            self._maybe_request_auto_login()
             return
         if isinstance(outcome, QwenChromeLoginCancelledError):
             _logger.info("Qwen Chrome login window closed by the user; login abandoned")
@@ -327,6 +334,27 @@ class QwenChromeSession(QObject):
         )
         _logger.warning("Qwen Chrome operation completed category=%s", category.value)
         self.error_occurred.emit(category.value)
+
+    def _maybe_request_auto_login(self) -> None:
+        """Ask the GUI to open the login automatically, rate-limited.
+
+        Recovery is exhausted when this fires: the refresh hit the login
+        banner past every recheck and recopy chance. An explicit user logout
+        must never resurrect a popup.
+        """
+
+        if self.login_state.logged_out_by_user():
+            return
+        now = self._auto_login_clock()
+        if (
+            self._last_auto_login_at is not None
+            and now - self._last_auto_login_at < QWEN_AUTO_LOGIN_MIN_INTERVAL_SECONDS
+        ):
+            _logger.debug("Qwen auto-login popup suppressed by the rate limit")
+            return
+        self._last_auto_login_at = now
+        _logger.warning("Qwen quota session expired; requesting an automatic login window")
+        self.auto_login_requested.emit()
 
     def _cancel_active(self, *, wait: bool) -> bool:
         self._generation += 1

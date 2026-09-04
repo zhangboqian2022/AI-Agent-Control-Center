@@ -940,6 +940,11 @@ class QwenQuotaBar(QFrame):
         )
         self.setToolTip(self.language_manager.text("quota.authorizing"))
 
+    def show_auto_recovering(self) -> None:
+        """Session expiry triggered an automatic login; reuse the pending look."""
+
+        self.show_pending()
+
     def show_quota(self, quota: QwenQuota, *, preserve_errors: bool = False) -> None:
         self._last_quota = quota
         if not preserve_errors:
@@ -2355,6 +2360,9 @@ class MainWindow(QWidget):
             self.qwen_web_quota_service.quota_updated.connect(self._on_qwen_quota_updated)
             self.qwen_web_quota_service.login_state_changed.connect(self._on_qwen_login_state)
             self.qwen_web_quota_service.error_occurred.connect(self._on_qwen_quota_error)
+            self.qwen_web_quota_service.auto_login_requested.connect(
+                self._on_qwen_auto_login_requested
+            )
         self._apply_quota_panel_visibility()
 
         self.discovery_warning = QFrame()
@@ -2952,6 +2960,8 @@ class MainWindow(QWidget):
         if self.qwen_web_quota_service is None:
             return
         if not self._qwen_authorized:
+            if self.qwen_quota_bar is not None:
+                self.qwen_quota_bar.show_pending()
             self.qwen_web_quota_service.open_login(self)
             return
         self.qwen_web_quota_service.refresh_now()
@@ -2976,8 +2986,17 @@ class MainWindow(QWidget):
         if self.qwen_quota_bar is not None:
             self.qwen_quota_bar.show_error(category)
 
+    def _on_qwen_auto_login_requested(self) -> None:
+        if self.qwen_web_quota_service is None:
+            return
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_auto_recovering()
+        self.qwen_web_quota_service.open_login(self)
+
     def open_qwen_web_login(self) -> None:
         if self.qwen_web_quota_service is not None:
+            if self.qwen_quota_bar is not None:
+                self.qwen_quota_bar.show_pending()
             self.qwen_web_quota_service.open_login(self)
 
     def qwen_logout(self) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 from threading import Event
@@ -100,6 +101,7 @@ def make_session(tmp_path: Path, operation: FakeOperation, **kwargs: object):
         daily_source_probe=kwargs.pop("daily_source_probe", lambda: None),
         visible_bounds_provider=kwargs.pop("visible_bounds_provider", lambda: None),
         success_clock=kwargs.pop("success_clock", lambda: 1725424224),
+        auto_login_clock=kwargs.pop("auto_login_clock", time.monotonic),
     )
     assert not kwargs
     session.set_workspace_url(WORKSPACE_URL)
@@ -633,3 +635,41 @@ def test_refresh_success_after_recopy_records_daily_origin(qapp, tmp_path):
 
     store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
     assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
+
+
+def test_unauthorized_refresh_requests_auto_login_when_rate_limit_allows(qapp, tmp_path):
+    del qapp
+    import time as _time
+
+    operation = FakeOperation(QwenChromeUnauthorizedError())
+    now = _time.monotonic()
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        auto_login_clock=lambda: now,
+    )
+    session.login_state.set_may_reuse(True)
+    requests: list[None] = []
+    session.auto_login_requested.connect(lambda: requests.append(None))
+
+    session.refresh()
+    assert requests == [None]
+
+    # Second exhaustion within the window stays silent.
+    session.login_state.set_may_reuse(True)
+    session.refresh()
+    assert requests == [None]
+
+
+def test_user_logout_never_requests_auto_login(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation(QwenChromeUnauthorizedError())
+    session = make_session(tmp_path, operation, auto_session_recopy=True)
+    session.logout()
+    requests: list[None] = []
+    session.auto_login_requested.connect(lambda: requests.append(None))
+
+    session.refresh()  # logged_out_by_user=True: refresh is skipped entirely
+
+    assert requests == []

@@ -343,3 +343,34 @@ def test_app_factory_threads_auto_recopy_from_config(tmp_path: Path) -> None:
     assert service is not None
     assert service.auto_session_recopy is True
     assert service.timer.isActive() is False
+
+
+def test_service_forwards_auto_login_requested(qapp, tmp_path):
+    del qapp
+    from PySide6.QtCore import QObject, Signal
+
+    from aacc.qwen_web_quota_service import QwenWebQuotaService
+
+    class FakeSession(QObject):
+        login_state_changed = Signal(bool)
+        quota_received = Signal(object)
+        error_occurred = Signal(str)
+        auto_login_requested = Signal()
+
+        def refresh(self) -> None: ...
+        def open_login(self, parent=None) -> None: ...
+        def logout(self) -> bool:
+            return True
+
+        def close(self) -> None: ...
+        def retranslate_ui(self) -> None: ...
+        def set_workspace_url(self, url: str) -> None: ...
+
+    session = FakeSession()
+    service = QwenWebQuotaService(tmp_path, session=session)
+    received: list[None] = []
+    service.auto_login_requested.connect(lambda: received.append(None))
+
+    session.auto_login_requested.emit()
+
+    assert received == [None]

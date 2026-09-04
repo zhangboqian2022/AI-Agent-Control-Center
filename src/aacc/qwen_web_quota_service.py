@@ -102,6 +102,7 @@ class QwenWebQuotaService(QObject):
     quota_updated = Signal(object)
     login_state_changed = Signal(bool)
     error_occurred = Signal(str)
+    auto_login_requested = Signal()
 
     def __init__(
         self,
@@ -196,3 +197,6 @@ class QwenWebQuotaService(QObject):
         session.login_state_changed.connect(self._on_login_state_changed)
         session.quota_received.connect(self._on_quota_received)
         session.error_occurred.connect(self._on_error)
+        auto_login = getattr(session, "auto_login_requested", None)
+        if auto_login is not None:
+            auto_login.connect(self.auto_login_requested.emit)
