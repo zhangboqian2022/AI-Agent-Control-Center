@@ -8,6 +8,8 @@ import psutil
 import pytest
 
 from aacc.qwen_chrome_cdp import (
+    QWEN_SESSION_ORIGIN_DAILY_RECOPY,
+    QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
     ManagedQwenChromeOperation,
     QwenChromeCancelledError,
     QwenChromeLoginCancelledError,
@@ -2227,3 +2229,138 @@ def test_refresh_teardown_closes_browser_and_process_on_cancel(
 
     assert browser_closes == ["close_browser"]
     assert process.waits >= 1
+
+
+def _make_recovery_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    evaluations: list[object],
+    session_origin: str,
+    recopied: list[Path],
+    recopy_raises: bool = False,
+    session_recopy=True,
+    recheck_delay_seconds: float = 0.0,
+):
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    cursor = iter(evaluations)
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            return next(cursor)
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+
+    def recopy(config_dir: Path) -> None:
+        if recopy_raises:
+            raise OSError("daily profile unreadable")
+        recopied.append(config_dir)
+
+    clock = iter([0.0] * 64)
+    return ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, FakeProcess()),
+        target_loader=lambda _origin: [_quota_page_target()],
+        socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(clock, 61.0),
+        session_recopy=recopy if session_recopy else None,
+        session_origin=session_origin,
+        recheck_delay_seconds=recheck_delay_seconds,
+    )
+
+
+def test_manual_origin_banner_rechecks_before_recopy_and_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recopied: list[Path] = []
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[{"kind": "unauthorized"}, _quota_payload()],
+        session_origin=QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
+        recopied=recopied,
+    )
+
+    result = operation.run(visible=False, cancel=Event())
+
+    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
+    assert recopied == []  # the recheck recovered; nothing was overwritten
+    assert operation.recopy_performed is False
+
+
+def test_manual_origin_confirmed_dead_falls_through_to_recopy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recopied: list[Path] = []
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[
+            {"kind": "unauthorized"},
+            {"kind": "unauthorized"},
+            _quota_payload(),
+        ],
+        session_origin=QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
+        recopied=recopied,
+    )
+
+    result = operation.run(visible=False, cancel=Event())
+
+    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
+    assert recopied == [tmp_path / "config"]
+    assert operation.recopy_performed is True
+
+
+def test_manual_origin_without_recopy_surfaces_unauthorized_after_recheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[{"kind": "unauthorized"}, {"kind": "unauthorized"}],
+        session_origin=QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
+        recopied=[],
+        session_recopy=False,
+    )
+
+    with pytest.raises(QwenChromeUnauthorizedError):
+        operation.run(visible=False, cancel=Event())
+
+
+def test_daily_origin_banner_recopies_immediately_without_recheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recopied: list[Path] = []
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[{"kind": "unauthorized"}, _quota_payload()],
+        session_origin=QWEN_SESSION_ORIGIN_DAILY_RECOPY,
+        recopied=recopied,
+    )
+
+    result = operation.run(visible=False, cancel=Event())
+
+    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
+    assert recopied == [tmp_path / "config"]

@@ -87,6 +87,12 @@ _QWEN_HIDDEN_STARTUP_MARKER = "--no-startup-window"
 # polls means the user closed the login window; shut Chrome down as a user
 # cancel instead of holding a windowless instance until the login deadline.
 _QWEN_LOGIN_WINDOW_MISSING_POLLS = 3
+QWEN_SESSION_ORIGIN_DAILY_RECOPY = "daily_recopy"
+QWEN_SESSION_ORIGIN_MANUAL_LOGIN = "manual_login"
+# A manual-login session hit by one login-banner observation is rechecked
+# once before any recopy may overwrite it: the 2026-09-04 incident destroyed
+# a nine-minute-old fresh login on a single banner reading.
+_QWEN_MANUAL_RECHECK_DELAY_SECONDS = 60.0
 _logger = logging.getLogger("aacc.qwen_chrome_cdp")
 
 
@@ -1050,6 +1056,8 @@ class ManagedQwenChromeOperation:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         session_recopy: Callable[[Path], None] | None = None,
+        session_origin: str = QWEN_SESSION_ORIGIN_DAILY_RECOPY,
+        recheck_delay_seconds: float = _QWEN_MANUAL_RECHECK_DELAY_SECONDS,
     ) -> None:
         _validate_workspace_url(workspace_url)
         self.workspace_url = workspace_url
@@ -1071,41 +1079,70 @@ class ManagedQwenChromeOperation:
         self._sleep = sleep
         self._monotonic = monotonic
         self._session_recopy = session_recopy
+        self._session_origin = session_origin
+        self._recheck_delay_seconds = max(0.0, recheck_delay_seconds)
+        self.recopy_performed = False
 
     def run(self, *, visible: bool, cancel: Event) -> dict[str, object]:
-        """Run one operation, transparently recopying an expired session.
+        """Run one operation with origin-aware session recovery.
 
-        Aliyun expires copied sessions server-side (~5.5 h), after which the
-        console renders an inline login banner. When a recopy callback is
-        configured, a hidden refresh that hits that banner rebuilds the
-        profile from the daily Chrome session and retries once instead of
-        surfacing the logout; the retry keeps the full grace behaviour.
+        Visible logins never recopy. Hidden refreshes that hit the rendered
+        login banner recover by origin: a daily-recopy session is recopied
+        immediately (idempotent), while a manual-login session is rechecked
+        once first so a transient banner can never overwrite a fresh login.
         """
 
         if cancel.is_set():
             raise QwenChromeCancelledError
-        fail_fast_unauthorized = not visible and self._session_recopy is not None
+        if visible:
+            return self._run_once(visible=True, cancel=cancel, fail_fast_unauthorized=False)
+        # Manual-login sessions fail fast into the recovery path as well: the
+        # origin-aware recheck there decides whether the banner is real, and
+        # the grace window must not keep re-polling a fresh login.
+        fail_fast_unauthorized = (
+            self._session_recopy is not None
+            or self._session_origin == QWEN_SESSION_ORIGIN_MANUAL_LOGIN
+        )
         try:
             return self._run_once(
-                visible=visible,
+                visible=False,
                 cancel=cancel,
                 fail_fast_unauthorized=fail_fast_unauthorized,
             )
         except QwenChromeUnauthorizedError:
-            if visible or self._session_recopy is None:
-                raise
+            return self._recover_expired_session(cancel)
+
+    def _recover_expired_session(self, cancel: Event) -> dict[str, object]:
+        if self._session_origin == QWEN_SESSION_ORIGIN_MANUAL_LOGIN:
             _logger.warning(
-                "Qwen hidden refresh found an expired session; "
-                "recopying the daily Chrome session before retrying"
+                "Qwen hidden refresh saw a login banner on a manual-login session; "
+                "rechecking before any recopy"
             )
+            self._sleep(self._recheck_delay_seconds)
+            if cancel.is_set():
+                raise QwenChromeCancelledError
             try:
-                self._session_recopy(self.config_dir)
-            except Exception:
-                _logger.warning("Qwen daily Chrome session recopy failed", exc_info=True)
-                # Surface the original logout: the retry never happened, so
-                # the session layer must prompt for a visible re-login.
-                raise QwenChromeUnauthorizedError from None
-            return self._run_once(visible=visible, cancel=cancel, fail_fast_unauthorized=False)
+                # One fresh banner observation is what the recheck tests for;
+                # fail fast so the grace window cannot re-poll the recheck
+                # into a false recovery.
+                return self._run_once(visible=False, cancel=cancel, fail_fast_unauthorized=True)
+            except QwenChromeUnauthorizedError:
+                _logger.warning("Qwen manual-login session confirmed expired")
+        if self._session_recopy is None:
+            raise QwenChromeUnauthorizedError
+        _logger.warning(
+            "Qwen hidden refresh found an expired session; "
+            "recopying the daily Chrome session before retrying"
+        )
+        try:
+            self._session_recopy(self.config_dir)
+        except Exception:
+            _logger.warning("Qwen daily Chrome session recopy failed", exc_info=True)
+            # Surface the logout: the retry never happened, so the session
+            # layer must prompt for a visible re-login.
+            raise QwenChromeUnauthorizedError from None
+        self.recopy_performed = True
+        return self._run_once(visible=False, cancel=cancel, fail_fast_unauthorized=False)
 
     def _run_once(
         self, *, visible: bool, cancel: Event, fail_fast_unauthorized: bool
