@@ -21,6 +21,7 @@ from aacc.qwen_chrome_cdp import (
     _launch_hidden_qwen_chrome_with_workspace,
     build_qwen_chrome_launch,
     clear_owned_qwen_chrome_profile,
+    count_qwen_page_targets,
     daily_chrome_session_source,
     find_qwen_chrome_executable,
     install_qwen_hidden_page_stealth,
@@ -2025,9 +2026,10 @@ def test_visible_login_never_triggers_session_recopy(
 def test_visible_login_window_close_cancels_cleanly_without_recopy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Closing the login window is the user's way to abandon the flow: the
-    # Bailian target disappears for good. The loop must detect a sustained
-    # absence (3 consecutive 2 s polls) and end as a user cancel — a clean
+    # Closing the login window is the user's way to abandon the flow: a page
+    # target exists first, then every page target disappears for good. The
+    # loop must detect a sustained absence (3 consecutive 2 s polls with
+    # zero page targets of any origin) and end as a user cancel — a clean
     # Browser.close shutdown with no recopy and no unauthorized outcome —
     # instead of holding a windowless Chrome in the Dock until the 15-minute
     # login deadline.
@@ -2037,6 +2039,13 @@ def test_visible_login_window_close_cancels_cleanly_without_recopy(
     process = FakeProcess()
     browser_closes: list[str] = []
     sleeps: list[float] = []
+    window_open = {"flag": True}
+
+    def target_loader(_origin: str) -> list[object]:
+        if window_open["flag"]:
+            window_open["flag"] = False
+            return [_quota_page_target()]
+        return []  # the user closed the window: zero page targets
 
     class FakeCdp:
         def __init__(self, _socket: object) -> None:
@@ -2044,6 +2053,10 @@ def test_visible_login_window_close_cancels_cleanly_without_recopy(
 
         def send_command(self, _method: str, _params: object) -> dict[str, object]:
             return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            # The window is closed while the user is still logging in.
+            return {"kind": "unauthorized"}
 
         def close_browser(self) -> None:
             browser_closes.append("close_browser")
@@ -2064,8 +2077,9 @@ def test_visible_login_window_close_cancels_cleanly_without_recopy(
         platform_name="darwin",
         protector=lambda _profile: None,
         process_factory=_fake_process_factory(profile, process),
-        target_loader=lambda _origin: [],
+        target_loader=target_loader,
         socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
         sleep=sleeps.append,
         chrome_process_finder=lambda _profile: [],
         monotonic=lambda: next(clock, 100_000.0),
@@ -2075,7 +2089,9 @@ def test_visible_login_window_close_cancels_cleanly_without_recopy(
     with pytest.raises(QwenChromeLoginCancelledError):
         operation.run(visible=True, cancel=Event())
 
-    assert sleeps == [2.0, 2.0]
+    # One unauthorized poll (page still open), then three zero-target polls;
+    # the third raises before sleeping.
+    assert sleeps == [2.0, 2.0, 2.0]
     assert recopied == []
     assert browser_closes == ["close_browser"]
     assert process.waits >= 1
@@ -2421,3 +2437,136 @@ def test_eager_recopy_unauthorized_does_not_recopy_twice(
     with pytest.raises(QwenChromeUnauthorizedError):
         operation.run(visible=False, cancel=Event())
     assert recopied == [tmp_path / "config"]  # exactly once
+
+
+def test_count_page_targets_counts_any_origin() -> None:
+    targets = [
+        {"type": "page", "url": "https://signin.aliyun.com/login"},
+        {"type": "page", "url": WORKSPACE_URL},
+        {"type": "iframe", "url": "https://example.com"},
+        "garbage",
+    ]
+    assert count_qwen_page_targets(targets) == 2
+    assert count_qwen_page_targets(None) == 0
+    assert count_qwen_page_targets("not a list") == 0
+
+
+def test_visible_login_survives_cross_origin_redirect_without_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    listings = iter(
+        [
+            # Poll 1..2: the page sits on the SMS origin — not Bailian, but a
+            # page target exists, so this must never count as a user cancel.
+            [
+                {
+                    "type": "page",
+                    "url": "https://signin.aliyun.com/sms",
+                    "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/sms",
+                }
+            ],
+            [
+                {
+                    "type": "page",
+                    "url": "https://signin.aliyun.com/sms",
+                    "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/sms",
+                }
+            ],
+            # Poll 3: back on Bailian with the quota rendered.
+            [_quota_page_target()],
+        ]
+    )
+    evaluations = {"count": 0}
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            evaluations["count"] += 1
+            return _quota_payload()
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    clock = iter([0.0] * 64)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, FakeProcess()),
+        target_loader=lambda _origin: next(listings),
+        socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(clock, 61.0),
+    )
+
+    result = operation.run(visible=True, cancel=Event())
+
+    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
+    assert evaluations["count"] == 1
+
+
+def test_visible_login_cancels_when_window_truly_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    seen_page = {"flag": False}
+
+    def target_loader(_origin: str) -> list[object]:
+        if not seen_page["flag"]:
+            seen_page["flag"] = True
+            return [_quota_page_target()]
+        return []  # the user closed the window: zero page targets
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, _method: str, _params: object) -> dict[str, object]:
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            return {"kind": "unauthorized"}  # keep polling: not yet logged in
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    clock = iter([0.0] * 64)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, FakeProcess()),
+        target_loader=target_loader,
+        socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(clock, 61.0),
+    )
+
+    with pytest.raises(QwenChromeLoginCancelledError):
+        operation.run(visible=True, cancel=Event())

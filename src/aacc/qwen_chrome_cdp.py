@@ -83,10 +83,17 @@ _QWEN_HIDDEN_WINDOW_OFFSET = -32000
 _QWEN_HIDDEN_WINDOW_WIDTH = 1100
 _QWEN_HIDDEN_WINDOW_HEIGHT = 700
 _QWEN_HIDDEN_STARTUP_MARKER = "--no-startup-window"
-# A visible login whose Bailian page stays missing across this many 2 s
+# A visible login whose page targets are all gone across this many 2 s
 # polls means the user closed the login window; shut Chrome down as a user
 # cancel instead of holding a windowless instance until the login deadline.
+# Pages that merely left the Bailian origin (SMS or baxia verification
+# hops) never count: only a window with zero page targets of any origin
+# can be a user cancel.
 _QWEN_LOGIN_WINDOW_MISSING_POLLS = 3
+# An instance that never opened a page has no "window was closed" signal to
+# wait for; after this grace from endpoint readiness, zero page targets
+# count toward the cancel exactly like a window the user closed.
+_QWEN_LOGIN_STARTUP_GRACE_SECONDS = 30.0
 QWEN_SESSION_ORIGIN_DAILY_RECOPY = "daily_recopy"
 QWEN_SESSION_ORIGIN_MANUAL_LOGIN = "manual_login"
 # A manual-login session hit by one login-banner observation is rechecked
@@ -623,6 +630,14 @@ def build_qwen_chrome_launch(
             _QWEN_HIDDEN_STARTUP_MARKER,
         ),
     )
+
+
+def count_qwen_page_targets(targets: object) -> int:
+    """Count page targets of any origin (a closed window has zero)."""
+
+    if not isinstance(targets, list):
+        return 0
+    return sum(1 for item in targets if isinstance(item, dict) and item.get("type") == "page")
 
 
 def select_qwen_page_sockets(targets: object, *, expected_port: int) -> list[str]:
@@ -1210,7 +1225,10 @@ class ManagedQwenChromeOperation:
             login_deadline = self._monotonic() + EDGE_LOGIN_TIMEOUT_SECONDS
             refresh_auth_deadline = self._monotonic() + _QWEN_REFRESH_AUTH_GRACE_SECONDS
             target_requested = visible
-            missing_target_polls = 0
+            missing_page_polls = 0
+            saw_page_target = False
+            visible_setup_done = False
+            endpoint_ready_at = self._monotonic()
             while True:
                 if cancel.is_set():
                     raise QwenChromeCancelledError
@@ -1234,39 +1252,46 @@ class ManagedQwenChromeOperation:
                         )
                         target_requested = True
                     targets = self._target_loader(endpoint.http_origin)
+                    page_count = count_qwen_page_targets(targets)
                     try:
                         page_sockets = select_qwen_page_sockets(targets, expected_port=port)
                     except QwenChromeUnauthorizedError:
                         if visible:
-                            # In the visible login the user abandons the flow
-                            # by closing the Bailian window, after which the
-                            # target never comes back. Treat a sustained
-                            # absence as a user cancel — a clean Browser.close
-                            # shutdown, never a recopy trigger — instead of
-                            # holding a windowless Chrome in the Dock until
-                            # the login deadline. The absence can also be
-                            # brief: cross-origin login redirects (the baxia
-                            # verification page, etc.) temporarily leave no
-                            # Bailian target, so the 3×2 s threshold is a
-                            # compromise between prompt shutdown and false
-                            # cancels during such hops.
-                            missing_target_polls += 1
-                            if missing_target_polls >= _QWEN_LOGIN_WINDOW_MISSING_POLLS:
-                                _logger.info(
-                                    "Qwen login window closed by the user; shutting Chrome down"
-                                )
-                                raise QwenChromeLoginCancelledError from None
+                            if page_count > 0:
+                                # Cross-origin login hops (SMS, baxia verification)
+                                # temporarily leave no Bailian target while a page
+                                # target still exists: wait, never count a cancel.
+                                saw_page_target = True
+                                missing_page_polls = 0
+                                self._sleep(2.0)
+                                continue
+                            # Zero page targets: either the user closed the window
+                            # or the instance never opened one. After the startup
+                            # grace both count toward a clean cancel — a clean
+                            # Browser.close shutdown, never a recopy trigger —
+                            # instead of holding a windowless Chrome in the Dock
+                            # until the login deadline.
+                            if saw_page_target or (
+                                self._monotonic() - endpoint_ready_at
+                                >= _QWEN_LOGIN_STARTUP_GRACE_SECONDS
+                            ):
+                                missing_page_polls += 1
+                                if missing_page_polls >= _QWEN_LOGIN_WINDOW_MISSING_POLLS:
+                                    _logger.info(
+                                        "Qwen login window closed by the user; shutting Chrome down"
+                                    )
+                                    raise QwenChromeLoginCancelledError from None
                             self._sleep(2.0)
                             continue
-                        # A missing Bailian page is a startup race (the page
-                        # is still loading, or an interstitial sits on
-                        # another origin), never proof of an expired
-                        # session. Only the rendered login banner — the
-                        # payload's explicit unauthorized marker below — may
-                        # trigger the fail-fast recopy; recopying on a race
-                        # would overwrite a healthy profile.
+                        # A missing Bailian page is a startup race, never proof of
+                        # an expired session (hidden path stays unchanged).
                         raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED) from None
-                    missing_target_polls = 0
+                    if visible:
+                        saw_page_target = True
+                    missing_page_polls = 0
+                    if visible and not visible_setup_done:
+                        visible_setup_done = True
+                        self._setup_visible_login_page(page_sockets)
                     return self._evaluate_page_candidates(page_sockets, visible=visible)
                 except QwenChromeUnauthorizedError:
                     if visible:
@@ -1299,6 +1324,9 @@ class ManagedQwenChromeOperation:
                 browser.close()
             if not self._shutdown_process(process):
                 _logger.error("Qwen Chrome process did not stop cleanly")
+
+    def _setup_visible_login_page(self, page_sockets: Sequence[str]) -> None:
+        del page_sockets
 
     def _evaluate_page_candidates(
         self, page_sockets: Sequence[str], *, visible: bool
