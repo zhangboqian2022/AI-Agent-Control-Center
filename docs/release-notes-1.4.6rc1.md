@@ -121,3 +121,10 @@ does not claim consumer Windows 10/11 hardware validation. / 唯一尚未肉眼�
 的是：自动弹出的登录窗是否居中、以及关掉后本次运行不再弹——该现象只在日常
 Chrome 会话本身过期时才出现，目前已有单元测试覆盖。本记录不宣称已完成消费级
 Windows 10/11 真机验证。
+
+rc acceptance loopback / rc 下载回环：the release DMG was re-downloaded from
+GitHub and verified — `shasum -a 256 -c` OK and `hdiutil verify` VALID; the
+release is marked a pre-release and carries `AACC-1.4.6-rc.1.dmg` with its
+`.sha256` sidecar. / rc 验收下载回环：发布页 DMG 已重新下载并校验通过
+（`shasum` OK、`hdiutil verify` VALID）；发布已标记 Pre-release，附
+`AACC-1.4.6-rc.1.dmg` 与配套 `.sha256`。
