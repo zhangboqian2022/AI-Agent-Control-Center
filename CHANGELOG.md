@@ -2,6 +2,32 @@
 
 [中文版本](CHANGELOG.zh-CN.md)
 
+## 1.4.6-rc.1 — 2026-09-04
+
+[Bilingual release notes](docs/release-notes-1.4.6rc1.md)
+
+- [Feat] Qwen login is now sync-first: clicking authorize first silently syncs
+  the daily Chrome Bailian session into the AACC-owned profile and fetches the
+  quota hidden; the visible login window opens only when the silent sync fails
+  to produce a live session.
+- [Fix] Origin-aware protected self-heal: a session created by a manual login
+  is rechecked after 60 seconds when a login banner is observed, before any
+  recopy may overwrite it. This fixes the incident where a 9-minute-old fresh
+  login was destroyed by a single banner observation.
+- [Feat] When the session is confirmed dead and automatic recovery is
+  exhausted, AACC now opens the centered Qwen login window by itself,
+  rate-limited to once per 30 minutes and never after an explicit user logout.
+- [Fix] The visible Qwen login window now opens centered on screen, and the
+  anti-detection (stealth) script is installed before the login page loads.
+- [Fix] Robust login cancel: cross-origin redirects such as SMS or risk-control
+  verification no longer trigger the false 14-second auto-cancel; the login is
+  cancelled only when every page target of the owned browser is gone.
+- [Fix] Zero-leftover guarantee: after every operation AACC verifies the owned
+  profile has no surviving Chrome processes and force-terminates any
+  survivors.
+- [Feat] The quota bar shows bilingual status texts for session syncing and
+  session-expired auto-recovery.
+
 ## 1.4.5 — 2026-08-29
 
 [Bilingual release notes](docs/release-notes-1.4.5.md)
