@@ -195,3 +195,16 @@ def test_bar_click_emits_signal(qtbot) -> None:
     )
     with qtbot.waitSignal(bar.clicked, timeout=1000):
         bar.mouseReleaseEvent(event)
+
+
+def test_show_syncing_renders_sync_text(qtbot) -> None:
+    bar = QwenQuotaBar()
+    bar.show_syncing()
+    assert "正在同步" in bar.summary_label.text()
+    assert bar.toolTip() != ""
+
+
+def test_show_auto_recovering_renders_recovery_text(qtbot) -> None:
+    bar = QwenQuotaBar()
+    bar.show_auto_recovering()
+    assert "自动恢复" in bar.summary_label.text()

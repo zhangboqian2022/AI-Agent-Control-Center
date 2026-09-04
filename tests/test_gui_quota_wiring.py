@@ -66,6 +66,7 @@ def make_window(
     codex_quota_service=None,
     web_quota_service=None,
     opencode_web_quota_service=None,
+    qwen_web_quota_service=None,
     language_manager=None,
 ):
     from aacc.automation import MacAutomation
@@ -99,6 +100,7 @@ def make_window(
         kimi_web_quota_service=web_quota_service,
         codex_quota_service=codex_quota_service,
         opencode_web_quota_service=opencode_web_quota_service,
+        qwen_web_quota_service=qwen_web_quota_service,
         language_manager=language_manager,
         open_url=opened.append,
     )
@@ -840,3 +842,94 @@ def test_settings_dialog_opencode_login_logout_buttons(qtbot, tmp_path):
     assert service.logins == 1
     logout.click()
     assert service.logouts == 1
+
+
+class FakeQwenQuotaService(QObject):
+    quota_updated = Signal(object)
+    login_state_changed = Signal(bool)
+    error_occurred = Signal(str)
+    auto_login_requested = Signal()
+    sync_started = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refreshes = 0
+        self.logins = 0
+        self.logouts = 0
+        self.closed = 0
+        self.started = 0
+        self.stopped = 0
+        self.workspace_urls: list[str] = []
+        self.auto_recopy: bool | None = None
+
+    def refresh_now(self) -> None:
+        self.refreshes += 1
+
+    def open_login(self, parent=None) -> None:
+        del parent
+        self.logins += 1
+
+    def logout(self) -> None:
+        self.logouts += 1
+
+    def close(self) -> None:
+        self.closed += 1
+
+    def set_workspace_url(self, url: str) -> None:
+        self.workspace_urls.append(url)
+
+    def set_auto_session_recopy(self, enabled: bool) -> None:
+        self.auto_recopy = enabled
+
+    def start(self) -> None:
+        self.started += 1
+
+    def stop(self) -> None:
+        self.stopped += 1
+
+
+def test_qwen_auto_login_requested_shows_recovering_and_opens_login(qtbot, tmp_path):
+    service = FakeQwenQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        qwen_web_quota_service=service,
+    )
+    assert window.qwen_quota_bar is not None
+
+    service.auto_login_requested.emit()
+
+    assert "自动恢复" in window.qwen_quota_bar.summary_label.text()
+    assert service.logins == 1
+
+
+def test_qwen_sync_started_shows_syncing(qtbot, tmp_path):
+    service = FakeQwenQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        qwen_web_quota_service=service,
+    )
+    assert window.qwen_quota_bar is not None
+
+    service.sync_started.emit()
+
+    assert "正在同步" in window.qwen_quota_bar.summary_label.text()
+
+
+def test_qwen_bar_click_unauthorized_shows_pending_and_opens_login(qtbot, tmp_path):
+    service = FakeQwenQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        qwen_web_quota_service=service,
+    )
+    assert window.qwen_quota_bar is not None
+
+    window.qwen_quota_bar.clicked.emit()
+
+    assert "授权中" in window.qwen_quota_bar.summary_label.text()
+    assert service.logins == 1

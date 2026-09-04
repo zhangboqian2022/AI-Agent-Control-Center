@@ -940,10 +940,25 @@ class QwenQuotaBar(QFrame):
         )
         self.setToolTip(self.language_manager.text("quota.authorizing"))
 
-    def show_auto_recovering(self) -> None:
-        """Session expiry triggered an automatic login; reuse the pending look."""
+    def show_syncing(self) -> None:
+        self._display_state = "pending"
+        self._last_error = None
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('qwen.quota')}\n"
+            f"{self.language_manager.text('qwen.syncing')}"
+        )
+        self.setToolTip(self.language_manager.text("qwen.syncing"))
 
-        self.show_pending()
+    def show_auto_recovering(self) -> None:
+        self._display_state = "pending"
+        self._last_error = None
+        self.dot.setStyleSheet("color: #e5c07b;")
+        self.summary_label.setText(
+            f"{self.language_manager.text('qwen.quota')}\n"
+            f"{self.language_manager.text('qwen.auto_recovering')}"
+        )
+        self.setToolTip(self.language_manager.text("qwen.auto_recovering"))
 
     def show_quota(self, quota: QwenQuota, *, preserve_errors: bool = False) -> None:
         self._last_quota = quota
@@ -2363,6 +2378,7 @@ class MainWindow(QWidget):
             self.qwen_web_quota_service.auto_login_requested.connect(
                 self._on_qwen_auto_login_requested
             )
+            self.qwen_web_quota_service.sync_started.connect(self._on_qwen_sync_started)
         self._apply_quota_panel_visibility()
 
         self.discovery_warning = QFrame()
@@ -2992,6 +3008,10 @@ class MainWindow(QWidget):
         if self.qwen_quota_bar is not None:
             self.qwen_quota_bar.show_auto_recovering()
         self.qwen_web_quota_service.open_login(self)
+
+    def _on_qwen_sync_started(self) -> None:
+        if self.qwen_quota_bar is not None:
+            self.qwen_quota_bar.show_syncing()
 
     def open_qwen_web_login(self) -> None:
         if self.qwen_web_quota_service is not None:

@@ -673,3 +673,16 @@ def test_user_logout_never_requests_auto_login(qapp, tmp_path):
     session.refresh()  # logged_out_by_user=True: refresh is skipped entirely
 
     assert requests == []
+
+
+def test_user_logout_guard_blocks_maybe_request_auto_login_directly(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"})
+    session = make_session(tmp_path, operation, auto_login_clock=lambda: 0.0)
+    session.login_state.set_may_reuse(False, logged_out_by_user=True)
+    requests: list[None] = []
+    session.auto_login_requested.connect(lambda: requests.append(None))
+
+    session._maybe_request_auto_login()
+
+    assert requests == []

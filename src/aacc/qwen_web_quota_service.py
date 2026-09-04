@@ -103,6 +103,7 @@ class QwenWebQuotaService(QObject):
     login_state_changed = Signal(bool)
     error_occurred = Signal(str)
     auto_login_requested = Signal()
+    sync_started = Signal()
 
     def __init__(
         self,
@@ -200,3 +201,6 @@ class QwenWebQuotaService(QObject):
         auto_login = getattr(session, "auto_login_requested", None)
         if auto_login is not None:
             auto_login.connect(self.auto_login_requested.emit)
+        sync_started = getattr(session, "sync_started", None)
+        if sync_started is not None:
+            sync_started.connect(self.sync_started.emit)
