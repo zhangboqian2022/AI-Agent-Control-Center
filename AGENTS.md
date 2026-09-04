@@ -90,9 +90,28 @@ ruff/mypy/pytest（`QT_QPA_PLATFORM=offscreen`）；mac 腿另跑 diff-cover
 - 证据边界：托管 Windows Server CI ≠ 消费级 Windows 10/11 真机验证，**不得宣称
   真机验证**（KNOWN_LIMITATIONS 双语有此声明，`test_packaging.py` 校验条目数对齐）。
 
-## 当前进度（2026-08-14）
+## 当前进度（2026-09-04）
 
-- **分支 `fix/codex-cli-discovery-qwen-dock`**（待合并）两块改动：
+- **分支 `fix/qwen-quota-sync-first-selfheal`（已完成，待合并）**：Qwen 百炼额度
+  会话生命周期改造，1.4.6rc1。核心：①**同步优先登录**——点授权先静默同步日常
+  Chrome 会话+隐藏取数，失败才弹**居中**可见登录窗（终审后进一步统一：同步与
+  刷新走同一条"普通取数→按来源恢复"安全链，绝不先覆盖缓存）；②**来源感知自愈**
+  ——状态存储记 `session_origin`/`last_success_epoch`，手动登录会话撞横幅先 60s
+  复检再允许重复制（修复 9 分钟新缓存被单次横幅摧毁的事故），不可信缓存
+  （may_reuse=False）自动降级为免复检；③**自动弹窗**（30 分钟限频、关掉即本次
+  运行不再弹、主动登出永不弹）；④可见登录装 stealth+居中；关窗判定只看"全部
+  页面目标清零"（跨域短信/风控页不再 14 秒误关）；⑤操作结束按 profile 硬校验
+  零进程残留+强杀。全量 1610 测试绿、diff-cover 100%、真机装机实测自动续期成功
+  （用户确认）；居中弹窗一眼确认留待日常会话过期时。设计/计划：
+  `docs/superpowers/{specs,plans}/2026-09-04-qwen-quota-sync-first-self-heal*.md`。
+- **待办**：隐藏会话为何从 5.5h 掉到 <15 分钟（8/29 构建后突变；候选：Chrome
+  152 指纹、风控收紧、并发出示）——设计 §3.3 探针 T1–T4 未做，需用户配合；
+  自动弹窗设置开关、retranslate 中间态措辞、`open_qwen_web_login` 无 UI 入口
+  均为后续小项。
+
+## 历史进度（2026-08-14）
+
+- **分支 `fix/codex-cli-discovery-qwen-dock`**（已合并进 1.4.5 线）两块改动：
   1. **Codex CLI 任务发现**：`_sessions()` 不再只读 `session_index.jsonl`
      （CLI 从不写、桌面 app 迁移 sqlite 后索引停更），补充扫描
      `~/.codex/sessions/**/*.jsonl` 文件系统枚举取并集（索引优先，只读
