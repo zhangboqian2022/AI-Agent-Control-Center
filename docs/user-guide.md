@@ -20,6 +20,16 @@ Codex 额度条会优先启动本机已安装的 Codex `app-server`，使用 Cod
 
 Kimi 按 `5H`、`WEEK`、`MONTH` 显示。Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置；Kimi Code OAuth 凭据由 AACC 凭据保护另行保存。一个协调器让网页源和 Kimi Code 备用源从同一个五分钟周期开始刷新；Kimi Code 只能为临时缺失的 `5H` 或 `WEEK` 补位，不能虚构 `MONTH`。额度查询不发送提示词，也不消耗生成 Token。
 
+## Qwen Code（阿里云百炼）额度与任务
+
+Qwen 额度行呈现百炼 token-plan 控制台：个人 5 小时 / 7 天用量窗口与团队总额度，每行带绝对重置时间，每 15 分钟刷新。取数只读取已渲染的额度文本——不碰 prompt、回复，也绝不读取浏览器密码。在 `config.yaml` 配置 `qwen_workspace_url`。
+
+点击额度行即可授权或刷新。当 `qwen_auto_session_recopy: true` 且日常 Google Chrome 正登录着百炼时，AACC 会先静默同步该登录态（只复制最小会话集——Cookie 与存储，绝不复制密码库——进 AACC 自有的仅本人可读目录）并直接显示额度，全程不弹任何窗；同步未开启或日常没登录时，才会弹出居中的 Chrome 登录窗（AACC 专属配置目录），按平常方式完成密码/扫码/RAM 用户/短信登录即可。
+
+阿里云会在服务端按较短且不定的周期使百炼网页会话过期，因此额度行可能自己变回“点击授权”。AACC 自动兜底：同步来源的会话直接重新同步；你手动登录的会话在被覆盖前必先复检一次。实在救不回时，居中登录窗最多 30 分钟自动弹一次；把自动弹出的窗口关掉，本次运行就不再自动弹。在面板里主动退出登录则停止一切自动恢复，直到你再次授权。每次读取结束都不会留下任何 Chrome 进程或窗口：后台刷新完全屏外运行、不碰 Dock、干净退出。
+
+任务监控：Qwen Code CLI 会话从 `~/.qwen/projects/…/chats/` 发现，带防 PID 复用的 runtime 校验（见 README）。可见性在设置里管理——Qwen 额度行与 Qwen Code 任务列表各有独立开关。
+
 ## macOS DMG
 
 当前安装包为 `AACC-1.4.6-rc.1.dmg`。双击后将 `AACC.app` 拖入“应用程序”文件夹。此社区版本使用 ad-hoc 签名且未经过 Apple 公证；先用 `shasum -a 256 AACC-1.4.6-rc.1.dmg` 对比配套 `.sha256`，再选择“仍要打开”。若标准路径仍失败，最后才用 `xattr -cr /Applications/AACC.app` 在本机移除隔离属性。

@@ -24,6 +24,16 @@ The Codex quota strip first starts the locally installed Codex `app-server` and 
 
 Kimi shows `5H`, `WEEK`, and `MONTH`. On Windows, the first sign-in opens Microsoft Edge with an isolated AACC-owned Edge profile at `%LOCALAPPDATA%\AACC\kimi-edge-profile`; AACC never reads the normal Edge profile. The dedicated session survives AACC and PC restarts until you sign out, Kimi expires it, or a security check fails. macOS keeps its native per-application web session. AACC stores a protected reuse decision and does not copy cookies, passwords, a website bearer token, account names, or quota values into configuration. Kimi Code OAuth credentials are stored separately under AACC credential protection. One coordinator starts the website source and Kimi Code fallback in the same five-minute cycle; Kimi Code can fill a fresh, temporarily missing `5H` or `WEEK`, but never invents `MONTH`. Quota lookups are metadata-only, send no prompt, and use no generation tokens. A known percentage without a trustworthy reset time remains visible while its reset displays `--`.
 
+## Qwen Code (Aliyun Bailian) quota and tasks
+
+The Qwen strip renders the Bailian token-plan console: personal 5-hour and 7-day usage windows plus the team-plan total, each with its absolute reset time, refreshed every 15 minutes. Quota extraction reads only the rendered quota text — prompts, replies, and browser passwords are never touched. Configure `qwen_workspace_url` in `config.yaml`.
+
+Clicking the strip authorizes or refreshes. When `qwen_auto_session_recopy: true` is set and your daily Google Chrome is currently signed in to Bailian, AACC first syncs that login silently (a minimal session set — cookies and storage, never the password vault — is copied into AACC's own owner-only profile directory) and shows the quota without opening any window. If sync is off or the daily login is missing, a centered Chrome window opens on the AACC-managed profile; sign in with password, QR, RAM user, or SMS as usual.
+
+Aliyun expires Bailian web sessions server-side after a short, account-dependent interval, so the strip can drop to “Authorize” on its own. AACC self-heals: a synced session is refreshed by re-syncing immediately, while a session you logged in by hand is re-checked once before anything is overwritten. When recovery is impossible, the centered login window reopens automatically at most once per 30 minutes; closing a window that popped up on its own stops further automatic popups for the current run. An explicit sign-out from the panel stops auto-recovery until you authorize again. No Chrome process or window stays behind after a read: background refreshes run fully off-screen, never touch the Dock, and exit cleanly.
+
+Task monitoring: Qwen Code CLI sessions are discovered from `~/.qwen/projects/…/chats/` with pid-recycle-safe runtime validation (see the README). Manage visibility in Settings — the Qwen quota strip and the Qwen Code task list each have their own toggle.
+
 ## macOS DMG
 
 The current installer is `AACC-1.4.6-rc.1.dmg`. Open it and drag `AACC.app` to Applications. The community build is ad-hoc signed and not notarized. Compare `shasum -a 256 AACC-1.4.6-rc.1.dmg` with its matching `.sha256` before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.

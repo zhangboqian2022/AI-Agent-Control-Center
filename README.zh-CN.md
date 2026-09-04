@@ -22,9 +22,11 @@ _AACC 1.4.4-rc.1 界面示意图，使用合成演示数据，不含真实账户
 - **中英文即时切换：** 首次启动跟随系统语言；面板头部的 `EN`/`中` 操作可在 macOS 与 Windows 上立即切换完整界面，明确选择会持久保存。紧凑模式保留在设置和托盘菜单。切换语言不会刷新额度，也不会改变监控任务或登录状态。
 - **明确的退出入口：** 头部电源按钮会完整退出应用。Windows 托盘图标左键显示/隐藏 AACC，右键打开持续可用的菜单，其中“退出 AACC”会关闭全部 AACC 后台服务。
 - **及时且克制的概括：** 每 5 秒检查 Codex 元数据，用“正在修改代码”“正在运行测试”等固定短语反馈活动，不展示原始载荷。
-- **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示；OpenCode 显示 Go 套餐滚动/每周/每月额度。每个可用重置时间都直接写在行内；真实 `0%` 明确显示为 `0%`，只有未知数据才显示 `--`。
+- **额度与重置时间一眼可见：** Codex 只显示 10080 分钟 `WEEK` 周窗口；Kimi 按 `5H`、`WEEK`、`MONTH` 显示；OpenCode 显示 Go 套餐滚动/每周/每月额度；Qwen Code 显示百炼 token-plan 个人 5 小时 / 7 天窗口与团队总额度。每个可用重置时间都直接写在行内；真实 `0%` 明确显示为 `0%`，只有未知数据才显示 `--`。
 - **OpenCode Go 套餐额度条：** macOS 使用自持网页视图，Windows 使用独立的 AACC 专用 Microsoft Edge 配置目录和 CDP；两边都登录 opencode.ai（GitHub/Google），从 /go 工作区页面提取已渲染的滚动/每周/每月额度（百分比 + 重置倒计时），三行展示在 Kimi 额度条下方。绝不读取 prompt、回复、工具命令或 reasoning 内容。在 `config.yaml` 配置 `opencode_workspace_url`。
 - **OpenCode CLI 任务发现：** 每 5 秒只读轮询 opencode 本地 SQLite 数据库，从消息部件快照推断任务状态：进程在且回合未结束（含缓慢或卡住的流式生成）→ 蓝灯“进行中”；有明确完成证据 → 绿灯“已完成”；进程消失但没有完成证据 → 停止态，不伪造完成。opencode 不会把权限请求写入数据库，因此无法推断授权等待，也永不误报黄色“等待”状态。Windows 优先读取 `%LOCALAPPDATA%\opencode\opencode.db`，并按会话工作目录定位终端。只读取部件类型/状态/时间戳——绝不读取文本内容。
+- **Qwen Code（阿里云百炼）额度条：** 通过 CDP 驱动 AACC 专属 Google Chrome 呈现 token-plan 控制台的个人 5 小时 / 7 天窗口与团队总额度，每 15 分钟刷新。点击授权时，若已开启 `qwen_auto_session_recopy` 且日常 Chrome 登录着百炼，AACC 先静默复用该登录态同步取数；同步不到才弹出居中的 Chrome 登录窗完成密码/扫码/短信登录。阿里云在服务端定期使网页会话过期，AACC 会自动重新同步或重开登录窗兜底（30 分钟至多一次；关掉弹出的窗口即本次运行不再打扰）。只读取已渲染的额度文本——不碰 prompt、回复与密码库；会话同步只把最小会话集复制进 AACC 自有受保护目录。在 `config.yaml` 配置 `qwen_workspace_url`。
+- **Qwen Code CLI 任务发现：** 从 `~/.qwen/projects/<路径编码>/chats/*.jsonl` 读取会话；同名 `<uuid>.runtime.json` 提供 pid 与工作目录，并用存活进程命令行校验，防止 PID 复用伪造“进行中”；无 runtime 文件时按 90 秒内的聊天活动判定活跃。input/output/cache 用量按本地会话记录聚合。
 - **Kimi 会员额度缓存：** Windows 首次登录会用隔离的 AACC 专用 Edge 配置目录 `%LOCALAPPDATA%\AACC\kimi-edge-profile` 打开 Microsoft Edge，绝不读取日常 Edge 配置。该独立会话会跨 AACC 和电脑重启保留，直到手动退出、Kimi 令其失效或安全检查失败；macOS 继续使用系统原生的每应用网页会话。AACC 只保存受保护的复用决定，不把 Cookie、密码、网页 Bearer Token、账户名或额度值复制进配置；Kimi Code OAuth 凭据由 AACC 凭据保护另行保存。网页源与 Kimi Code 备用源从同一个五分钟周期开始刷新；查询不消耗生成 Token。
 - **本机优先：** 只读取判断状态所需的本机任务元数据，不上传对话内容。
 - **可靠的完成判断：** 优先依据 Codex `task_started` 与 `task_complete` 会话事件，避免任务完成后仍错误显示“执行中”。
