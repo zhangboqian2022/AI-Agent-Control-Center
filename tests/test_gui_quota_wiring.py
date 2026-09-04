@@ -933,3 +933,26 @@ def test_qwen_bar_click_unauthorized_shows_pending_and_opens_login(qtbot, tmp_pa
 
     assert "授权中" in window.qwen_quota_bar.summary_label.text()
     assert service.logins == 1
+
+
+def test_open_qwen_web_login_shows_pending_and_opens_login(qtbot, tmp_path):
+    service = FakeQwenQuotaService()
+    window, _, _ = make_window(
+        qtbot,
+        tmp_path,
+        with_service=False,
+        qwen_web_quota_service=service,
+    )
+    assert window.qwen_quota_bar is not None
+
+    window.open_qwen_web_login()
+
+    assert "授权中" in window.qwen_quota_bar.summary_label.text()
+    assert service.logins == 1
+
+
+def test_qwen_auto_login_requested_without_service_is_noop(qtbot, tmp_path):
+    window, _, _ = make_window(qtbot, tmp_path, with_service=False)
+    assert window.qwen_web_quota_service is None
+
+    window._on_qwen_auto_login_requested()  # must not raise

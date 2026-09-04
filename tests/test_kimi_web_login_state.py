@@ -142,3 +142,38 @@ def test_qwen_state_file_accepts_origin_fields(tmp_path):
     )
     fresh = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
     assert fresh.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+
+
+def test_session_origin_unknown_value_fails_closed_to_manual(tmp_path):
+    # A corrupted or foreign origin string must never route a session into
+    # the destructive daily-recopy path; unknown provenance fails closed to
+    # the protected manual-login origin.
+    path = tmp_path / "kimi-web-session-state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reuse_native_session": True,
+                "session_origin": "bogus_origin",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert KimiWebLoginStateStore(tmp_path).session_origin() == (
+        KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+    )
+
+
+def test_set_may_reuse_rejects_unknown_origin(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path)
+
+    with pytest.raises(ValueError, match="origin"):
+        store.set_may_reuse(True, session_origin="bogus_origin")
+
+
+def test_set_may_reuse_rejects_non_integer_success_epoch(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path)
+
+    with pytest.raises(ValueError, match="integer"):
+        store.set_may_reuse(True, last_success_epoch=1725424224.5)

@@ -395,13 +395,23 @@ def test_auto_session_recopy_flag_wires_operation(qapp, tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "ManagedQwenChromeOperation", RecorderOperation)
 
-    enabled = QwenChromeSession(tmp_path, thread_factory=ManualThread, auto_session_recopy=True)
+    # daily_source_probe=lambda: None keeps both constructions on the visible
+    # path regardless of whether this machine has a daily Chrome profile; the
+    # test verifies recopy callback wiring, not the sync-first fallback.
+    enabled = QwenChromeSession(
+        tmp_path,
+        thread_factory=ManualThread,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: None,
+    )
     enabled.set_workspace_url(WORKSPACE_URL)
     enabled.open_login()
     assert constructed == [recopy_qwen_daily_chrome_session]
 
     constructed.clear()
-    disabled = QwenChromeSession(tmp_path, thread_factory=ManualThread)
+    disabled = QwenChromeSession(
+        tmp_path, thread_factory=ManualThread, daily_source_probe=lambda: None
+    )
     disabled.set_workspace_url(WORKSPACE_URL)
     disabled.open_login()
     assert constructed == [None]
@@ -586,6 +596,90 @@ def test_open_login_falls_back_to_visible_when_sync_unauthorized(qapp, tmp_path)
     assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
 
 
+def test_open_login_sync_quota_error_falls_back_to_visible(qapp, tmp_path):
+    del qapp
+
+    class ScriptedOperation:
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def run(self, *, visible: bool, cancel: Event):
+            self.calls.append(visible)
+            if visible:
+                return {"fiveHourText": "5 小时\n0.04%"}
+            raise QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_FAILED)
+
+    operation = ScriptedOperation()
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+    quotas: list[object] = []
+    errors: list[str] = []
+    session.quota_received.connect(quotas.append)
+    session.error_occurred.connect(errors.append)
+
+    session.open_login()
+
+    # A transient quota error during the silent sync is not a user action:
+    # the visible login window must open as the fallback, and its success is
+    # what reaches the bar — no error signal along the way.
+    assert operation.calls == [False, True]
+    assert quotas == [{"fiveHourText": "5 小时\n0.04%"}]
+    assert errors == []
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+
+
+def test_open_login_sync_cancelled_does_not_fall_back_to_visible(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation(QwenChromeCancelledError())
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+    errors: list[str] = []
+    states: list[bool] = []
+    session.error_occurred.connect(errors.append)
+    session.login_state_changed.connect(states.append)
+
+    session.open_login()
+
+    # A session-layer cancel ends the flow outright: opening a visible login
+    # window right after a cancel would resurrect work the user (or logout,
+    # or shutdown) just abandoned.
+    assert operation.calls == [False]
+    assert errors == []
+    assert states == []
+    assert session.login_state.may_reuse() is False
+
+
+def test_open_login_sync_login_cancelled_does_not_fall_back_to_visible(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation(QwenChromeLoginCancelledError())
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+    errors: list[str] = []
+    states: list[bool] = []
+    session.error_occurred.connect(errors.append)
+    session.login_state_changed.connect(states.append)
+
+    session.open_login()
+
+    assert operation.calls == [False]
+    assert errors == []
+    assert states == []
+    assert session.login_state.logged_out_by_user() is False
+
+
 def test_open_login_without_daily_source_goes_straight_to_visible(qapp, tmp_path):
     del qapp
     operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"})
@@ -686,3 +780,41 @@ def test_user_logout_guard_blocks_maybe_request_auto_login_directly(qapp, tmp_pa
     session._maybe_request_auto_login()
 
     assert requests == []
+
+
+def test_default_visible_window_bounds_without_screen_returns_none(qapp, monkeypatch):
+    del qapp
+    import PySide6.QtGui as qtgui
+
+    from aacc.qwen_chrome_session import _default_visible_window_bounds
+
+    class NoScreenApplication:
+        @staticmethod
+        def primaryScreen():
+            return None
+
+    monkeypatch.setattr(qtgui, "QGuiApplication", NoScreenApplication)
+
+    # A screen-less environment must degrade to the operation's own default
+    # placement, never raise into the login launch.
+    assert _default_visible_window_bounds() is None
+
+
+def test_default_visible_window_bounds_geometry_failure_returns_none(qapp, monkeypatch):
+    del qapp
+    import PySide6.QtGui as qtgui
+
+    from aacc.qwen_chrome_session import _default_visible_window_bounds
+
+    class BrokenScreen:
+        def availableGeometry(self):
+            raise RuntimeError("no display server")
+
+    class BrokenScreenApplication:
+        @staticmethod
+        def primaryScreen():
+            return BrokenScreen()
+
+    monkeypatch.setattr(qtgui, "QGuiApplication", BrokenScreenApplication)
+
+    assert _default_visible_window_bounds() is None

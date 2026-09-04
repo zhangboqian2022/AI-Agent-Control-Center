@@ -2257,9 +2257,12 @@ def _make_recovery_operation(
     session_origin: str,
     recopied: list[Path],
     recopy_raises: bool = False,
+    recopy_error: Exception | None = None,
     session_recopy=True,
     recheck_delay_seconds: float = 0.0,
     eager_recopy: bool = False,
+    sleep=None,
+    visible_window_bounds: tuple[int, int, int, int] | None = None,
 ):
     import aacc.qwen_chrome_cdp as module
 
@@ -2285,6 +2288,8 @@ def _make_recovery_operation(
     monkeypatch.setattr(module, "CdpConnection", FakeCdp)
 
     def recopy(config_dir: Path) -> None:
+        if recopy_error is not None:
+            raise recopy_error
         if recopy_raises:
             raise OSError("daily profile unreadable")
         recopied.append(config_dir)
@@ -2301,12 +2306,13 @@ def _make_recovery_operation(
         socket_factory=lambda _url: object(),
         expression_factory=lambda: "return quota",
         chrome_process_finder=lambda _profile: [],
-        sleep=lambda _seconds: None,
+        sleep=sleep if sleep is not None else (lambda _seconds: None),
         monotonic=lambda: next(clock, 61.0),
         session_recopy=recopy if session_recopy else None,
         session_origin=session_origin,
         recheck_delay_seconds=recheck_delay_seconds,
         eager_recopy=eager_recopy,
+        visible_window_bounds=visible_window_bounds,
     )
 
 
@@ -2350,6 +2356,53 @@ def test_manual_origin_confirmed_dead_falls_through_to_recopy(
     assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
     assert recopied == [tmp_path / "config"]
     assert operation.recopy_performed is True
+
+
+def test_manual_origin_confirmed_dead_recopy_failure_surfaces_unauthorized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The daily-origin recopy failure has its own test; this mirrors it for a
+    # manual-login session: two banner readings (initial + recheck) confirm a
+    # fresh login is truly dead before any recopy may run, and when that
+    # recopy then fails the logout must still surface — never a retry with
+    # the dead cookies and never a transient-error category.
+    sleeps: list[float] = []
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[{"kind": "unauthorized"}, {"kind": "unauthorized"}],
+        session_origin=QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
+        recopied=[],
+        recopy_raises=True,
+        recheck_delay_seconds=60.0,
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(QwenChromeUnauthorizedError):
+        operation.run(visible=False, cancel=Event())
+
+    # Exactly one recheck delay proves the manual-origin guard re-read the
+    # banner before the broken recopy was ever attempted.
+    assert sleeps == [60.0]
+
+
+def test_manual_origin_recheck_cancel_surfaces_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cancel landing during the manual-origin recheck delay must end the
+    # operation as a user cancel before any recheck reading or recopy runs.
+    cancel = Event()
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[{"kind": "unauthorized"}],
+        session_origin=QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
+        recopied=[],
+        sleep=lambda _seconds: cancel.set(),
+    )
+
+    with pytest.raises(QwenChromeCancelledError):
+        operation.run(visible=False, cancel=cancel)
 
 
 def test_manual_origin_without_recopy_surfaces_unauthorized_after_recheck(
@@ -2421,6 +2474,29 @@ def test_eager_recopy_failure_propagates_for_visible_fallback(
 
     with pytest.raises(QwenChromeQuotaError):
         operation.run(visible=False, cancel=Event())
+
+
+def test_eager_recopy_quota_error_propagates_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A quota error raised by the recopy itself must pass through with its
+    # original category instead of being re-wrapped: the session layer reads
+    # every eager failure as the cue to open the visible login window.
+    from aacc.qwen_web_error import QwenQuotaErrorCategory
+
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[_quota_payload()],
+        session_origin=QWEN_SESSION_ORIGIN_DAILY_RECOPY,
+        recopied=[],
+        recopy_error=QwenChromeQuotaError(QwenQuotaErrorCategory.REFRESH_TIMEOUT),
+        eager_recopy=True,
+    )
+
+    with pytest.raises(QwenChromeQuotaError) as excinfo:
+        operation.run(visible=False, cancel=Event())
+    assert excinfo.value.category is QwenQuotaErrorCategory.REFRESH_TIMEOUT
 
 
 def test_eager_recopy_unauthorized_does_not_recopy_twice(
@@ -2768,3 +2844,148 @@ def test_verify_profile_processes_logs_error_for_stubborn_survivors(
         operation._verify_profile_processes_gone()
 
     assert any("survived" in record.message.casefold() for record in caplog.records)
+
+
+def test_verify_profile_processes_tolerates_scan_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The post-shutdown scan is a hardening layer, not a critical path: a
+    # psutil failure must be logged and swallowed, never surfaced to the
+    # operation result.
+    import logging
+
+    def broken_finder(_profile: Path) -> list[FakeChromeProcess]:
+        raise OSError("psutil unavailable")
+
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(_make_chrome_profile(tmp_path), FakeProcess()),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        chrome_process_finder=broken_finder,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 0.0,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aacc.qwen_chrome_cdp"):
+        operation._verify_profile_processes_gone()  # must not raise
+
+    assert any("scan failed" in record.message.casefold() for record in caplog.records)
+
+
+def test_verify_profile_processes_tolerates_forced_termination_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    import aacc.qwen_chrome_cdp as module
+
+    survivor = FakeChromeProcess(stubborn=False, pid=42)
+
+    def broken_terminator(_profile: Path, process_finder=None) -> None:
+        del process_finder
+        raise OSError("cannot terminate")
+
+    monkeypatch.setattr(module, "terminate_qwen_chrome_profile_processes", broken_terminator)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(_make_chrome_profile(tmp_path), FakeProcess()),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        chrome_process_finder=lambda _profile: [survivor],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 0.0,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="aacc.qwen_chrome_cdp"):
+        operation._verify_profile_processes_gone()  # must not raise
+
+    assert any(
+        "forced termination failed" in record.message.casefold() for record in caplog.records
+    )
+
+
+def test_verify_profile_processes_tolerates_survivor_rescan_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    survivor = FakeChromeProcess(stubborn=False, pid=42)
+    scans = {"count": 0}
+
+    def flaky_finder(_profile: Path) -> list[FakeChromeProcess]:
+        scans["count"] += 1
+        if scans["count"] == 1:
+            return [survivor]
+        raise OSError("psutil vanished mid-verification")
+
+    def no_op_terminator(_profile: Path, process_finder=None) -> None:
+        del process_finder
+
+    monkeypatch.setattr(module, "terminate_qwen_chrome_profile_processes", no_op_terminator)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(_make_chrome_profile(tmp_path), FakeProcess()),
+        target_loader=lambda _origin: [],
+        socket_factory=lambda _url: object(),
+        chrome_process_finder=flaky_finder,
+        sleep=lambda _seconds: None,
+        monotonic=lambda: 0.0,
+    )
+
+    operation._verify_profile_processes_gone()  # must not raise
+
+    assert scans["count"] == 2
+
+
+def test_setup_visible_login_page_failure_degrades_to_plain_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Centering and stealth installation are best-effort: a broken page
+    # socket or CDP failure must degrade to a plain visible login, never
+    # abort the flow, and must still close the page connection it opened.
+    import logging
+
+    import aacc.qwen_chrome_cdp as module
+
+    operation = _make_recovery_operation(
+        tmp_path,
+        monkeypatch,
+        evaluations=[],
+        session_origin=QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
+        recopied=[],
+        visible_window_bounds=(100, 100, 1100, 700),
+    )
+
+    closes: list[str] = []
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def close(self) -> None:
+            closes.append("closed")
+
+    def broken_install(_page: object, _bounds: object) -> None:
+        raise OSError("CDP connection refused")
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    monkeypatch.setattr(module, "install_qwen_visible_login_page", broken_install)
+
+    with caplog.at_level(logging.WARNING, logger="aacc.qwen_chrome_cdp"):
+        operation._setup_visible_login_page(["ws://127.0.0.1:9222/devtools/page/login"])
+
+    assert closes == ["closed"]
+    assert any("setup failed" in record.message.casefold() for record in caplog.records)
