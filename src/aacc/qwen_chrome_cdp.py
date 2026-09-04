@@ -922,6 +922,49 @@ def install_qwen_hidden_page_stealth(page: CdpConnection) -> None:
         _logger.warning("Qwen hidden-page stealth installation failed", exc_info=True)
 
 
+def centered_window_bounds(
+    screen_width: int,
+    screen_height: int,
+    window_width: int = _QWEN_HIDDEN_WINDOW_WIDTH,
+    window_height: int = _QWEN_HIDDEN_WINDOW_HEIGHT,
+) -> tuple[int, int, int, int]:
+    """Return (left, top, width, height) centering the window on the screen."""
+
+    left = max(0, (screen_width - window_width) // 2)
+    top = max(0, (screen_height - window_height) // 2)
+    return (left, top, window_width, window_height)
+
+
+def install_qwen_visible_login_page(page: CdpConnection, bounds: tuple[int, int, int, int]) -> None:
+    """Center the visible login window and mask automation fingerprints.
+
+    The same stealth script as the hidden path is installed before the first
+    baxia read of the login page: a CDP-attached Chrome reports
+    ``navigator.webdriver`` as true, and masking it on the visible path keeps
+    the manually created session from being flagged at creation time. The
+    reload applies the script to the current document.
+    """
+
+    left, top, width, height = bounds
+    page.send_command("Page.enable", {})
+    page.send_command(
+        "Page.addScriptToEvaluateOnNewDocument",
+        {"source": qwen_hidden_page_stealth_script()},
+    )
+    response = page.send_command("Browser.getWindowForTarget", {})
+    result = response.get("result")
+    window_id = result.get("windowId") if isinstance(result, dict) else None
+    if window_id is not None:
+        page.send_command(
+            "Browser.setWindowBounds",
+            {
+                "windowId": window_id,
+                "bounds": {"left": left, "top": top, "width": width, "height": height},
+            },
+        )
+    page.send_command("Page.reload", {})
+
+
 def _find_qwen_chrome_processes_for_profile(
     profile: Path,
     *,
@@ -1073,6 +1116,7 @@ class ManagedQwenChromeOperation:
         session_recopy: Callable[[Path], None] | None = None,
         session_origin: str = QWEN_SESSION_ORIGIN_DAILY_RECOPY,
         eager_recopy: bool = False,
+        visible_window_bounds: tuple[int, int, int, int] | None = None,
         recheck_delay_seconds: float = _QWEN_MANUAL_RECHECK_DELAY_SECONDS,
     ) -> None:
         _validate_workspace_url(workspace_url)
@@ -1097,6 +1141,7 @@ class ManagedQwenChromeOperation:
         self._session_recopy = session_recopy
         self._session_origin = session_origin
         self._eager_recopy = eager_recopy
+        self._visible_window_bounds = visible_window_bounds
         self._recheck_delay_seconds = max(0.0, recheck_delay_seconds)
         self.recopy_performed = False
 
@@ -1326,7 +1371,24 @@ class ManagedQwenChromeOperation:
                 _logger.error("Qwen Chrome process did not stop cleanly")
 
     def _setup_visible_login_page(self, page_sockets: Sequence[str]) -> None:
-        del page_sockets
+        """Center the login window and install stealth before the user types.
+
+        Best-effort like the hidden stealth installation: a failure degrades
+        to a plain visible login, it must never abort the flow.
+        """
+
+        if self._visible_window_bounds is None or not page_sockets:
+            return
+        page: CdpConnection | None = None
+        try:
+            page = CdpConnection(self._socket_factory(page_sockets[0]))  # type: ignore[arg-type]
+            install_qwen_visible_login_page(page, self._visible_window_bounds)
+        except Exception:
+            _logger.warning("Qwen visible login page setup failed", exc_info=True)
+        finally:
+            if page is not None:
+                with suppress(Exception):
+                    page.close()
 
     def _evaluate_page_candidates(
         self, page_sockets: Sequence[str], *, visible: bool

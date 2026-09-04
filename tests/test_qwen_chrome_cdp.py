@@ -20,11 +20,13 @@ from aacc.qwen_chrome_cdp import (
     _find_qwen_chrome_processes_for_profile,
     _launch_hidden_qwen_chrome_with_workspace,
     build_qwen_chrome_launch,
+    centered_window_bounds,
     clear_owned_qwen_chrome_profile,
     count_qwen_page_targets,
     daily_chrome_session_source,
     find_qwen_chrome_executable,
     install_qwen_hidden_page_stealth,
+    install_qwen_visible_login_page,
     parse_qwen_chrome_payload,
     qwen_chrome_profile_path,
     qwen_dom_extract_expression,
@@ -2570,3 +2572,89 @@ def test_visible_login_cancels_when_window_truly_closed(
 
     with pytest.raises(QwenChromeLoginCancelledError):
         operation.run(visible=True, cancel=Event())
+
+
+def test_centered_window_bounds_centers_on_screen() -> None:
+    assert centered_window_bounds(2560, 1440, 1100, 700) == (730, 370, 1100, 700)
+    # A screen smaller than the window clamps to the origin, never negative.
+    assert centered_window_bounds(800, 600, 1100, 700) == (0, 0, 1100, 700)
+
+
+def test_install_visible_login_page_masks_webdriver_and_centers() -> None:
+    commands: list[tuple[str, object]] = []
+
+    class Page:
+        def send_command(self, method: str, params: object) -> dict[str, object]:
+            commands.append((method, params))
+            if method == "Browser.getWindowForTarget":
+                return {"result": {"windowId": 7}}
+            return {"result": {}}
+
+    install_qwen_visible_login_page(Page(), (100, 50, 1100, 700))
+
+    methods = [method for method, _ in commands]
+    assert "Page.enable" in methods
+    assert "Page.addScriptToEvaluateOnNewDocument" in methods
+    assert "Page.reload" in methods
+    bounds_commands = [params for method, params in commands if method == "Browser.setWindowBounds"]
+    assert bounds_commands == [
+        {"windowId": 7, "bounds": {"left": 100, "top": 50, "width": 1100, "height": 700}}
+    ]
+    script = dict(
+        (method, params)
+        for method, params in commands
+        if method == "Page.addScriptToEvaluateOnNewDocument"
+    )["Page.addScriptToEvaluateOnNewDocument"]
+    assert "webdriver" in script["source"]
+
+
+def test_visible_login_applies_bounds_and_stealth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aacc.qwen_chrome_cdp as module
+
+    profile = _make_chrome_profile(tmp_path)
+    commands: list[str] = []
+
+    class FakeCdp:
+        def __init__(self, _socket: object) -> None:
+            pass
+
+        def send_command(self, method: str, _params: object) -> dict[str, object]:
+            commands.append(method)
+            if method == "Browser.getWindowForTarget":
+                return {"result": {"windowId": 3}}
+            return {"result": {}}
+
+        def evaluate(self, _expression: str) -> object:
+            return _quota_payload()
+
+        def close_browser(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "CdpConnection", FakeCdp)
+    clock = iter([0.0] * 64)
+    operation = ManagedQwenChromeOperation(
+        WORKSPACE_URL,
+        config_dir=tmp_path / "config",
+        executable=Path("chrome"),
+        platform_name="darwin",
+        protector=lambda _profile: None,
+        process_factory=_fake_process_factory(profile, FakeProcess()),
+        target_loader=lambda _origin: [_quota_page_target()],
+        socket_factory=lambda _url: object(),
+        expression_factory=lambda: "return quota",
+        chrome_process_finder=lambda _profile: [],
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(clock, 61.0),
+        visible_window_bounds=(730, 370, 1100, 700),
+    )
+
+    result = operation.run(visible=True, cancel=Event())
+
+    assert result["personalFiveHourText"] == "5小时限额\n0.04%已用"
+    assert "Page.addScriptToEvaluateOnNewDocument" in commands
+    assert "Browser.setWindowBounds" in commands
