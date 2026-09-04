@@ -21,6 +21,10 @@ _STATE_VERSION = 1
 class KimiWebLoginStateStore:
     """Persist the user's permission to reuse the OS-owned Kimi web session."""
 
+    SESSION_ORIGIN_DAILY_RECOPY = "daily_recopy"
+    SESSION_ORIGIN_MANUAL_LOGIN = "manual_login"
+    _KNOWN_SESSION_ORIGINS = frozenset({SESSION_ORIGIN_DAILY_RECOPY, SESSION_ORIGIN_MANUAL_LOGIN})
+
     def __init__(
         self,
         config_dir: Path,
@@ -64,17 +68,67 @@ class KimiWebLoginStateStore:
             return False
         return isinstance(raw, dict) and raw.get("logged_out_by_user") is True
 
-    def set_may_reuse(self, value: bool, *, logged_out_by_user: bool | None = None) -> None:
+    def session_origin(self) -> str:
+        """Return how the most recent successful session was established.
+
+        Missing or unreadable state fails closed to the manual-login origin:
+        unknown provenance must take the protected (no immediate recopy)
+        path, never the destructive one.
+        """
+
+        raw = self._read_state()
+        if raw is None:
+            return self.SESSION_ORIGIN_MANUAL_LOGIN
+        origin = raw.get("session_origin")
+        if isinstance(origin, str) and origin in self._KNOWN_SESSION_ORIGINS:
+            return origin
+        return self.SESSION_ORIGIN_MANUAL_LOGIN
+
+    def last_success_epoch(self) -> int | None:
+        """Return the local epoch seconds of the most recent success."""
+
+        raw = self._read_state()
+        if raw is None:
+            return None
+        value = raw.get("last_success_epoch")
+        return value if type(value) is int else None
+
+    def _read_state(self) -> dict[str, Any] | None:
+        path = self._path()
+        try:
+            self._reject_unsafe_path(path)
+            raw: Any = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        return raw if isinstance(raw, dict) else None
+
+    def set_may_reuse(
+        self,
+        value: bool,
+        *,
+        logged_out_by_user: bool | None = None,
+        session_origin: str | None = None,
+        last_success_epoch: int | None = None,
+    ) -> None:
         """Atomically persist a reuse decision using AACC's file protections.
 
         ``logged_out_by_user`` records whether the logged-out state is an
-        explicit user logout; when omitted the previously persisted marker
-        is preserved.
+        explicit user logout; ``session_origin`` and ``last_success_epoch``
+        record how and when the newest successful session was established.
+        Omitted fields preserve the previously persisted values.
         """
 
         if not isinstance(value, bool):
             raise ValueError("Kimi web session reuse value must be boolean")
         marker = self.logged_out_by_user() if logged_out_by_user is None else logged_out_by_user
+        origin = self.session_origin() if session_origin is None else session_origin
+        if origin not in self._KNOWN_SESSION_ORIGINS:
+            raise ValueError("unknown web session origin")
+        success_epoch = (
+            self.last_success_epoch() if last_success_epoch is None else last_success_epoch
+        )
+        if success_epoch is not None and type(success_epoch) is not int:
+            raise ValueError("last success epoch must be an integer")
         path = self._path()
         self._reject_unsafe_path(path)
         if self._config_dir.is_symlink():
@@ -104,6 +158,8 @@ class KimiWebLoginStateStore:
                         "version": _STATE_VERSION,
                         "reuse_native_session": value,
                         "logged_out_by_user": marker,
+                        "session_origin": origin,
+                        "last_success_epoch": success_epoch,
                     },
                     handle,
                     separators=(",", ":"),

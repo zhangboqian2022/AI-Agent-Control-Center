@@ -100,3 +100,45 @@ def test_qwen_state_file_is_isolated_from_kimi_state(tmp_path):
 def test_unknown_state_file_name_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="unsupported"):
         KimiWebLoginStateStore(tmp_path, state_file_name="other.json")
+
+
+def test_session_origin_defaults_to_manual_login_when_missing(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path)
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+    assert store.last_success_epoch() is None
+
+
+def test_set_may_reuse_records_origin_and_success_epoch(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path)
+    store.set_may_reuse(
+        True,
+        session_origin=KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY,
+        last_success_epoch=1725424224,
+    )
+    assert store.may_reuse() is True
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
+    assert store.last_success_epoch() == 1725424224
+
+
+def test_set_may_reuse_preserves_origin_when_omitted(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path)
+    store.set_may_reuse(
+        True,
+        session_origin=KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY,
+        last_success_epoch=1725424224,
+    )
+    store.set_may_reuse(False)
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
+    assert store.last_success_epoch() == 1725424224
+    assert store.may_reuse() is False
+
+
+def test_qwen_state_file_accepts_origin_fields(tmp_path):
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    store.set_may_reuse(
+        True,
+        session_origin=KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN,
+        last_success_epoch=1725424224,
+    )
+    fresh = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert fresh.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
