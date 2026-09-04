@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QWidget
 from aacc.kimi_edge_cdp import EDGE_SHUTDOWN_TIMEOUT_SECONDS
 from aacc.kimi_web_login_state import KimiWebLoginStateStore
 from aacc.qwen_chrome_cdp import (
+    QWEN_SESSION_ORIGIN_DAILY_RECOPY,
     ManagedQwenChromeOperation,
     QwenChromeCancelledError,
     QwenChromeLoginCancelledError,
@@ -256,6 +257,14 @@ class QwenChromeSession(QObject):
         self._busy = True
         operation = self._operation
         if operation is None:
+            # A cache the store no longer trusts (may_reuse False) has nothing
+            # to protect, so an explicit login/sync must not pay the manual
+            # origin's 60 s protected recheck before recopying.
+            effective_origin = (
+                self.login_state.session_origin()
+                if self.login_state.may_reuse()
+                else QWEN_SESSION_ORIGIN_DAILY_RECOPY
+            )
             try:
                 operation = ManagedQwenChromeOperation(
                     self.workspace_url,
@@ -263,13 +272,14 @@ class QwenChromeSession(QObject):
                     session_recopy=(
                         recopy_qwen_daily_chrome_session if self.auto_session_recopy else None
                     ),
-                    session_origin=self.login_state.session_origin(),
+                    session_origin=effective_origin,
                     visible_window_bounds=(self._visible_bounds_provider() if visible else None),
                 )
             except Exception:
                 self._busy = False
                 self._cancel = None
                 self._login_phase = None
+                self._auto_login_in_flight = False
                 self.error_occurred.emit(QwenQuotaErrorCategory.REFRESH_FAILED.value)
                 return
         mode = "login" if visible else "refresh"

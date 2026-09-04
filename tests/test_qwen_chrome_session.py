@@ -419,6 +419,59 @@ def test_auto_session_recopy_flag_wires_operation(qapp, tmp_path, monkeypatch):
     assert constructed == [None]
 
 
+def test_operation_origin_downgraded_when_cache_not_trusted(qapp, tmp_path, monkeypatch):
+    del qapp
+    import aacc.qwen_chrome_cdp as cdp_module
+    import aacc.qwen_chrome_session as module
+    from aacc.qwen_chrome_session import QwenChromeSession
+
+    origins: list[str] = []
+
+    class RecorderOperation:
+        def __init__(
+            self,
+            workspace_url,
+            *,
+            config_dir,
+            session_recopy=None,
+            session_origin=None,
+            visible_window_bounds=None,
+        ):
+            del workspace_url, config_dir, session_recopy, visible_window_bounds
+            origins.append(session_origin)
+
+        def run(self, *, visible, cancel):
+            del visible, cancel
+            return {}
+
+    monkeypatch.setattr(module, "ManagedQwenChromeOperation", RecorderOperation)
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+
+    # A trusted manual-login cache keeps the protected (recheck-before-recopy)
+    # origin on the operation.
+    store.set_may_reuse(True, session_origin=KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN)
+    trusted = QwenChromeSession(
+        tmp_path, thread_factory=ManualThread, daily_source_probe=lambda: None
+    )
+    trusted.set_workspace_url(WORKSPACE_URL)
+    trusted.open_login()
+
+    # Once the store no longer trusts the cache there is nothing to protect:
+    # the operation must run with daily-recopy semantics, skipping the 60 s
+    # protected recheck on an explicit login/sync click.
+    store.set_may_reuse(False)
+    untrusted = QwenChromeSession(
+        tmp_path, thread_factory=ManualThread, daily_source_probe=lambda: None
+    )
+    untrusted.set_workspace_url(WORKSPACE_URL)
+    untrusted.open_login()
+
+    assert origins == [
+        cdp_module.QWEN_SESSION_ORIGIN_MANUAL_LOGIN,
+        cdp_module.QWEN_SESSION_ORIGIN_DAILY_RECOPY,
+    ]
+
+
 def test_refresh_recovers_from_expiry_when_auto_recopy_enabled(qapp, tmp_path):
     del qapp
     operation = FakeOperation(QwenChromeUnauthorizedError())
