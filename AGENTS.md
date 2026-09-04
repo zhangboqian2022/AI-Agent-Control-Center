@@ -92,8 +92,9 @@ ruff/mypy/pytest（`QT_QPA_PLATFORM=offscreen`）；mac 腿另跑 diff-cover
 
 ## 当前进度（2026-09-04）
 
-- **分支 `fix/qwen-quota-sync-first-selfheal`（已完成，待合并）**：Qwen 百炼额度
-  会话生命周期改造，1.4.6rc1。核心：①**同步优先登录**——点授权先静默同步日常
+- **Qwen 百炼额度会话生命周期改造（1.4.6rc1）已合并 main 并发布 Pre-Release
+  `v1.4.6-rc.1`**（中英 README/用户指南锚点已指向，DMG+sha256 已上载并完成
+  下载回环校验）。原分支 `fix/qwen-quota-sync-first-selfheal`。核心：①**同步优先登录**——点授权先静默同步日常
   Chrome 会话+隐藏取数，失败才弹**居中**可见登录窗（终审后进一步统一：同步与
   刷新走同一条"普通取数→按来源恢复"安全链，绝不先覆盖缓存）；②**来源感知自愈**
   ——状态存储记 `session_origin`/`last_success_epoch`，手动登录会话撞横幅先 60s
