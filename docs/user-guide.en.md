@@ -26,7 +26,7 @@ Kimi shows `5H`, `WEEK`, and `MONTH`. On Windows, the first sign-in opens Micros
 
 ## macOS DMG
 
-The current installer is `AACC-1.4.5.dmg`. Open it and drag `AACC.app` to Applications. The community build is ad-hoc signed and not notarized. Compare `shasum -a 256 AACC-1.4.5.dmg` with its matching `.sha256` before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.
+The current installer is `AACC-1.4.6-rc.1.dmg`. Open it and drag `AACC.app` to Applications. The community build is ad-hoc signed and not notarized. Compare `shasum -a 256 AACC-1.4.6-rc.1.dmg` with its matching `.sha256` before using **Open Anyway**. If that standard path still fails, `xattr -cr /Applications/AACC.app` is the last-resort local quarantine removal.
 
 ## Windows Setup
 
