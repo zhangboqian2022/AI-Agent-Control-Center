@@ -1039,3 +1039,67 @@ def test_default_visible_window_bounds_geometry_failure_returns_none(qapp, monke
     monkeypatch.setattr(qtgui, "QGuiApplication", BrokenScreenApplication)
 
     assert _default_visible_window_bounds() is None
+
+
+def test_user_clicked_login_cancel_keeps_auto_popups_available(qapp, tmp_path):
+    del qapp
+    # Dismissal only counts as an opt-out when the popup was auto-requested.
+    # A window the user opened themselves and then closed must never flip
+    # _auto_login_disabled.
+    operation = FakeOperation(QwenChromeLoginCancelledError())
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        auto_login_clock=lambda: 0.0,
+    )
+
+    session.open_login()
+
+    assert operation.calls == [True]  # no daily source: direct visible login
+    assert session._auto_login_in_flight is False
+    assert session._auto_login_disabled is False
+
+
+def test_auto_request_survives_sync_fallback_chain_until_dismissed(qapp, tmp_path):
+    del qapp
+    # The real production chain once a daily source exists: an exhausted
+    # refresh auto-requests (in flight), open_login enters the hidden sync
+    # phase, the sync fails and falls back to the visible window, and the
+    # user dismissing THAT window still counts as an opt-out. If anyone
+    # "helpfully" clears the in-flight flag on fallback, this test breaks.
+
+    class ChainOperation:
+        recopy_performed = False
+
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def run(self, *, visible: bool, cancel: Event):
+            del cancel
+            self.calls.append(visible)
+            if visible:
+                raise QwenChromeLoginCancelledError()  # user closes the window
+            raise QwenChromeUnauthorizedError()  # refresh + sync both exhausted
+
+    operation = ChainOperation()
+    clock = [0.0]
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+        auto_login_clock=lambda: clock[0],
+    )
+    session.login_state.set_may_reuse(True)
+    requests: list[None] = []
+    session.auto_login_requested.connect(lambda: requests.append(None))
+
+    session.refresh()  # unauthorized -> auto request, in flight
+    assert requests == [None]
+    assert session._auto_login_in_flight is True
+
+    session.open_login()  # sync (hidden) fails -> fallback to visible -> closed
+    assert operation.calls == [False, False, True]
+    assert session._auto_login_disabled is True
+    assert session._auto_login_in_flight is False
