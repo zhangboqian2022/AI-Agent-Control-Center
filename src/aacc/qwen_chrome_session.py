@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 from threading import Event, Thread
@@ -21,6 +22,7 @@ from aacc.qwen_chrome_cdp import (
     QwenChromeUnauthorizedError,
     cancel_pending_qwen_chrome_launches,
     clear_owned_qwen_chrome_profile,
+    daily_chrome_session_source,
     qwen_chrome_profile_path,
     recopy_qwen_daily_chrome_session,
     terminate_qwen_chrome_profile_processes,
@@ -46,12 +48,34 @@ def _make_thread(target: Callable[[], None]) -> _ThreadLike:
     return Thread(target=target, name="aacc-qwen-chrome", daemon=True)
 
 
+def _default_visible_window_bounds() -> tuple[int, int, int, int] | None:
+    """Center a 1100x700 login window on the primary screen, Qt-side.
+
+    Computed here (Qt thread) instead of inside the CDP module so the
+    operation stays platform-neutral and unit-testable.
+    """
+
+    try:
+        from PySide6.QtGui import QGuiApplication
+
+        from aacc.qwen_chrome_cdp import centered_window_bounds
+
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return None
+        geometry = screen.availableGeometry()
+        return centered_window_bounds(geometry.width(), geometry.height())
+    except Exception:
+        return None
+
+
 class QwenChromeSession(QObject):
     """Run Qwen Chrome work off the Qt thread and expose a stable session API."""
 
     login_state_changed = Signal(bool)
     quota_received = Signal(object)
     error_occurred = Signal(str)
+    sync_started = Signal()
     _operation_finished = Signal(int, object)
 
     def __init__(
@@ -66,12 +90,22 @@ class QwenChromeSession(QObject):
         profile_cleaner: Callable[[Path, Path], None] = clear_owned_qwen_chrome_profile,
         orphan_cleaner: Callable[[Path], None] = terminate_qwen_chrome_profile_processes,
         auto_session_recopy: bool = False,
+        daily_source_probe: Callable[[], Path | None] = daily_chrome_session_source,
+        visible_bounds_provider: Callable[[], tuple[int, int, int, int] | None] = (
+            _default_visible_window_bounds
+        ),
+        success_clock: Callable[[], int] = lambda: int(time.time()),
     ) -> None:
         super().__init__(parent)
         del language_manager
         self.config_dir = config_dir
         self.profile = qwen_chrome_profile_path(config_dir)
         self.auto_session_recopy = auto_session_recopy
+        self._daily_source_probe = daily_source_probe
+        self._visible_bounds_provider = visible_bounds_provider
+        self._success_clock = success_clock
+        self._login_phase: str | None = None
+        self._active_operation: object | None = None
         self.login_state = login_state or KimiWebLoginStateStore(
             config_dir,
             state_file_name="qwen-web-session-state.json",
@@ -102,6 +136,15 @@ class QwenChromeSession(QObject):
         if not self.workspace_url:
             self.error_occurred.emit(QwenQuotaErrorCategory.REFRESH_FAILED.value)
             return
+        if self.auto_session_recopy and self._daily_source_probe() is not None:
+            # Sync-first: silently recopy the daily Chrome session and fetch
+            # the quota hidden. Only a failure opens the visible login.
+            self._login_phase = "sync"
+            self.sync_started.emit()
+            _logger.info("Qwen login attempting silent daily-session sync first")
+            self._start(visible=False, eager_recopy=True)
+            return
+        self._login_phase = "visible"
         self._start(visible=True)
 
     def refresh(self) -> None:
@@ -188,7 +231,7 @@ class QwenChromeSession(QObject):
     def retranslate_ui(self) -> None:
         """Chrome owns the visible login UI; no Qt widget needs translation."""
 
-    def _start(self, *, visible: bool) -> None:
+    def _start(self, *, visible: bool, eager_recopy: bool = False) -> None:
         self._generation += 1
         generation = self._generation
         cancel = Event()
@@ -203,6 +246,9 @@ class QwenChromeSession(QObject):
                     session_recopy=(
                         recopy_qwen_daily_chrome_session if self.auto_session_recopy else None
                     ),
+                    session_origin=self.login_state.session_origin(),
+                    eager_recopy=eager_recopy,
+                    visible_window_bounds=(self._visible_bounds_provider() if visible else None),
                 )
             except Exception:
                 self._busy = False
@@ -229,6 +275,7 @@ class QwenChromeSession(QObject):
             self._operation_finished.emit(generation, outcome)
 
         thread = self._thread_factory(run)
+        self._active_operation = operation
         self._thread = thread
         thread.start()
 
@@ -246,12 +293,21 @@ class QwenChromeSession(QObject):
         self._thread = None
         self._cancel = None
         if isinstance(outcome, dict):
-            persisted = self._persist_reuse(True, logged_out_by_user=False)
-            if not persisted:
-                self.error_occurred.emit("state_save_failed")
+            self._persist_success_origin()
+            self._login_phase = None
             self.login_state_changed.emit(True)
             self.quota_received.emit(outcome)
             return
+        if self._login_phase == "sync" and not isinstance(
+            outcome, (QwenChromeCancelledError, QwenChromeLoginCancelledError)
+        ):
+            # The silent sync attempt failed (dead daily session, missing
+            # source files, or a failed hidden fetch): open the visible login.
+            _logger.info("Qwen silent sync failed; falling back to the visible login window")
+            self._login_phase = "visible"
+            self._start(visible=True)
+            return
+        self._login_phase = None
         if isinstance(outcome, QwenChromeUnauthorizedError):
             _logger.warning(
                 "Qwen Chrome session is logged out; quota refresh paused until re-login"
@@ -297,9 +353,41 @@ class QwenChromeSession(QObject):
             return False
         return succeeded
 
-    def _persist_reuse(self, value: bool, *, logged_out_by_user: bool | None = None) -> bool:
+    def _persist_success_origin(self) -> None:
+        if self._login_phase == "visible":
+            origin = KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+        elif self._login_phase == "sync":
+            origin = KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
+        else:
+            recopy_performed = bool(getattr(self._active_operation, "recopy_performed", False))
+            origin = (
+                KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
+                if recopy_performed
+                else self.login_state.session_origin()
+            )
+        if not self._persist_reuse(
+            True,
+            logged_out_by_user=False,
+            session_origin=origin,
+            last_success_epoch=self._success_clock(),
+        ):
+            self.error_occurred.emit("state_save_failed")
+
+    def _persist_reuse(
+        self,
+        value: bool,
+        *,
+        logged_out_by_user: bool | None = None,
+        session_origin: str | None = None,
+        last_success_epoch: int | None = None,
+    ) -> bool:
         try:
-            self.login_state.set_may_reuse(value, logged_out_by_user=logged_out_by_user)
+            self.login_state.set_may_reuse(
+                value,
+                logged_out_by_user=logged_out_by_user,
+                session_origin=session_origin,
+                last_success_epoch=last_success_epoch,
+            )
         except Exception:
             _logger.error("Qwen Chrome session state update failed")
             return False

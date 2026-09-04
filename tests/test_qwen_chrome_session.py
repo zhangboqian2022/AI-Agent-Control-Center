@@ -97,6 +97,9 @@ def make_session(tmp_path: Path, operation: FakeOperation, **kwargs: object):
         profile_cleaner=kwargs.pop("profile_cleaner", lambda *_args: None),
         orphan_cleaner=kwargs.pop("orphan_cleaner", lambda _profile: None),
         auto_session_recopy=kwargs.pop("auto_session_recopy", False),
+        daily_source_probe=kwargs.pop("daily_source_probe", lambda: None),
+        visible_bounds_provider=kwargs.pop("visible_bounds_provider", lambda: None),
+        success_clock=kwargs.pop("success_clock", lambda: 1725424224),
     )
     assert not kwargs
     session.set_workspace_url(WORKSPACE_URL)
@@ -371,8 +374,17 @@ def test_auto_session_recopy_flag_wires_operation(qapp, tmp_path, monkeypatch):
     constructed: list[object] = []
 
     class RecorderOperation:
-        def __init__(self, workspace_url, *, config_dir, session_recopy=None):
-            del workspace_url, config_dir
+        def __init__(
+            self,
+            workspace_url,
+            *,
+            config_dir,
+            session_recopy=None,
+            session_origin=None,
+            eager_recopy=False,
+            visible_window_bounds=None,
+        ):
+            del workspace_url, config_dir, session_origin, eager_recopy, visible_window_bounds
             constructed.append(session_recopy)
 
         def run(self, *, visible, cancel):
@@ -523,3 +535,101 @@ def test_orphan_cleanup_aborted_when_operation_started_before_worker_runs(qapp, 
 
     assert cleaned == []
     operation_thread.finish()
+
+
+def test_open_login_syncs_first_when_daily_source_exists(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"})
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+
+    session.open_login()
+
+    assert operation.calls == [False]  # hidden sync attempt, no window
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.may_reuse() is True
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
+    assert store.last_success_epoch() == 1725424224
+
+
+def test_open_login_falls_back_to_visible_when_sync_unauthorized(qapp, tmp_path):
+    del qapp
+
+    class ScriptedOperation:
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def run(self, *, visible: bool, cancel: Event):
+            self.calls.append(visible)
+            if visible:
+                return {"fiveHourText": "5 小时\n0.04%"}
+            raise QwenChromeUnauthorizedError()
+
+    operation = ScriptedOperation()
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+
+    session.open_login()
+
+    assert operation.calls == [False, True]
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+
+
+def test_open_login_without_daily_source_goes_straight_to_visible(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"})
+    session = make_session(tmp_path, operation, auto_session_recopy=True)
+
+    session.open_login()
+
+    assert operation.calls == [True]
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN
+
+
+def test_open_login_emits_sync_started_for_sync_phase(qapp, tmp_path):
+    del qapp
+    operation = FakeOperation({"fiveHourText": "5 小时\n0.04%"})
+    session = make_session(
+        tmp_path,
+        operation,
+        auto_session_recopy=True,
+        daily_source_probe=lambda: tmp_path / "daily-chrome",
+    )
+    hints: list[None] = []
+    session.sync_started.connect(lambda: hints.append(None))
+
+    session.open_login()
+
+    assert hints == [None]
+
+
+def test_refresh_success_after_recopy_records_daily_origin(qapp, tmp_path):
+    del qapp
+
+    class RecopyingOperation:
+        recopy_performed = True
+
+        def run(self, *, visible: bool, cancel: Event):
+            assert visible is False
+            return {"fiveHourText": "5 小时\n0.04%"}
+
+    session = make_session(tmp_path, RecopyingOperation())
+    session.login_state.set_may_reuse(
+        True,
+        session_origin=KimiWebLoginStateStore.SESSION_ORIGIN_MANUAL_LOGIN,
+    )
+
+    session.refresh()
+
+    store = KimiWebLoginStateStore(tmp_path, state_file_name="qwen-web-session-state.json")
+    assert store.session_origin() == KimiWebLoginStateStore.SESSION_ORIGIN_DAILY_RECOPY
